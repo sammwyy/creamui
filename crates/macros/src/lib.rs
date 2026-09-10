@@ -50,8 +50,12 @@ fn dynamic_path() -> TokenStream2 {
 fn apply_jsx_style_property(name: &str, output: TokenStream2, value: Expr) -> TokenStream2 {
     let core = core_path();
     match name {
-        "border" => quote!({ let (color, width) = #value; #core::Styled::border(#output, color, width) }),
-        "outline" => quote!({ let (color, width) = #value; #core::Styled::outline(#output, color, width) }),
+        "border" => {
+            quote!({ let (color, width) = #value; #core::Styled::border(#output, color, width) })
+        }
+        "outline" => {
+            quote!({ let (color, width) = #value; #core::Styled::outline(#output, color, width) })
+        }
         _ => {
             let method = format_ident!("{name}");
             quote!(#core::Styled::#method(#output, #value))

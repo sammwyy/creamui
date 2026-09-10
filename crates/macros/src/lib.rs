@@ -47,6 +47,50 @@ fn dynamic_path() -> TokenStream2 {
     crate_path("dynamic", "creamui_dynamic")
 }
 
+fn apply_jsx_style_property(name: &str, output: TokenStream2, value: Expr) -> TokenStream2 {
+    let core = core_path();
+    match name {
+        "border" => quote!({ let (color, width) = #value; #core::Styled::border(#output, color, width) }),
+        "outline" => quote!({ let (color, width) = #value; #core::Styled::outline(#output, color, width) }),
+        _ => {
+            let method = format_ident!("{name}");
+            quote!(#core::Styled::#method(#output, #value))
+        }
+    }
+}
+
+macro_rules! jsx_common_style_methods {
+    ($( $variant:ident($value:ty) => $name:literal |$target:ident, $field:ident| $apply:block => $builder:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
+        fn is_common_style_prop(name: &str) -> bool {
+            matches!(name, "style" | "hover_style" | "pressed_style" | "focus_style" | "disabled_style")
+                || matches!(name, $( stringify!($builder) )|*)
+        }
+
+        fn apply_common_style(&self, mut output: TokenStream2) -> Result<TokenStream2> {
+            if let Some(value) = self.prop("style")? {
+                let core = core_path();
+                output = quote!({
+                    let __creamui_style = #value;
+                    #core::Styled::with_style(#output, __creamui_style)
+                });
+            }
+            $(
+                if let Some(value) = self.prop(stringify!($builder))? {
+                    output = apply_jsx_style_property(stringify!($builder), output, value);
+                }
+            )*
+            for name in ["hover_style", "pressed_style", "focus_style", "disabled_style"] {
+                if let Some(value) = self.prop(name)? {
+                    let core = core_path();
+                    let method = format_ident!("{name}");
+                    output = quote!(#core::Styled::#method(#output, #value));
+                }
+            }
+            Ok(output)
+        }
+    };
+}
+
 /// Builds a CreamUI widget using JSX-like syntax.
 ///
 /// See the workspace README for the supported component and prop mapping.
@@ -288,78 +332,7 @@ impl Element {
         Ok(())
     }
 
-    fn is_common_style_prop(name: &str) -> bool {
-        matches!(
-            name,
-            "style"
-                | "background"
-                | "border"
-                | "corner_radius"
-                | "outline"
-                | "color"
-                | "font_size"
-                | "font_family"
-                | "text_align"
-                | "bold"
-                | "italic"
-                | "underline"
-                | "strikethrough"
-                | "hover_style"
-                | "pressed_style"
-                | "focus_style"
-                | "disabled_style"
-                | "width"
-                | "height"
-                | "min_width"
-                | "min_height"
-                | "max_width"
-                | "max_height"
-        )
-    }
-
-    fn apply_common_style(&self, mut output: TokenStream2) -> Result<TokenStream2> {
-        let core = core_path();
-        if let Some(value) = self.prop("style")? {
-            output = quote!({
-                let __creamui_style = #value;
-                #core::Styled::with_style(#output, __creamui_style)
-            });
-        }
-        for name in [
-            "background",
-            "corner_radius",
-            "color",
-            "font_size",
-            "font_family",
-            "text_align",
-            "bold",
-            "italic",
-            "underline",
-            "strikethrough",
-            "hover_style",
-            "pressed_style",
-            "focus_style",
-            "disabled_style",
-            "width",
-            "height",
-            "min_width",
-            "min_height",
-            "max_width",
-            "max_height",
-        ] {
-            if let Some(value) = self.prop(name)? {
-                let method = format_ident!("{name}");
-                output = quote!(#core::Styled::#method(#output, #value));
-            }
-        }
-        if let Some(value) = self.prop("border")? {
-            output = quote!({ let (color, width) = #value; #core::Styled::border(#output, color, width) });
-        }
-        if let Some(value) = self.prop("outline")? {
-            output = quote!({ let (color, width) = #value; #core::Styled::outline(#output, color, width) });
-        }
-        Ok(output)
-    }
+    creamui_core::creamui_style_property_schema!(jsx_common_style_methods);
 
     fn text_child(&self) -> Result<TokenStream2> {
         if self.children.len() != 1 {

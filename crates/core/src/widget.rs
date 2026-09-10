@@ -383,8 +383,6 @@ pub trait Widget {
     }
 }
 
-use crate::style::style_property_schema;
-
 macro_rules! define_styled_trait_builders {
     ($( $variant:ident($value:ty) => $css_name:literal |$target:ident, $field:ident| $apply:block => $name:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
         $(
@@ -468,7 +466,7 @@ pub trait Styled: Widget + Sized {
         self
     }
 
-    style_property_schema!(define_styled_trait_builders);
+    crate::creamui_style_property_schema!(define_styled_trait_builders);
 }
 
 pub type BoxedWidget = Box<dyn Widget>;

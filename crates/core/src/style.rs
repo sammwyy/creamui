@@ -322,10 +322,10 @@ pub struct StateStyle {
     pub typography: TypographyStyle,
 }
 
-/// Single source of truth for common, typed style properties. Consumers use
-/// this schema to generate `StyleProp`, `Style` builders, and `Styled`
-/// component builders.
-macro_rules! style_property_schema {
+/// Shared metadata for CreamUI's typed style declarations.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! creamui_style_property_schema {
     ($consumer:ident) => {
         $consumer! {
             Background(crate::ColorValue) => "background" |target, value| { target.paint.background = Some(value); } => background(color: impl Into<crate::ColorValue>) |style| { style.paint.background = Some(color.into()); };
@@ -349,7 +349,6 @@ macro_rules! style_property_schema {
         }
     };
 }
-pub(crate) use style_property_schema;
 
 macro_rules! common_value_builders {
     () => {
@@ -483,7 +482,7 @@ impl Style {
         self
     }
 
-    style_property_schema!(define_style_builders);
+    crate::creamui_style_property_schema!(define_style_builders);
 
     pub fn hover(mut self, style: StateStyle) -> Self {
         self.states.hover = style;
@@ -690,7 +689,7 @@ macro_rules! style_properties {
     };
 }
 
-style_property_schema!(style_properties);
+crate::creamui_style_property_schema!(style_properties);
 
 impl StyleProp {
     /// Parses one CSS-like name/value pair into a typed declaration.

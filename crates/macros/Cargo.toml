@@ -19,6 +19,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 proc-macro-crate = "3"
+creamui-core = { workspace = true }
 
 [dev-dependencies]
 creamui-core = { workspace = true }

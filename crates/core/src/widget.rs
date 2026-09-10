@@ -64,6 +64,23 @@ pub enum CursorIcon {
     Pointer,
     /// A "no" circle-with-a-line, shown over a disabled control.
     NotAllowed,
+    ResizeHorizontal,
+    ResizeVertical,
+    ResizeNwse,
+    ResizeNesw,
+}
+
+#[derive(Clone)]
+pub struct WindowDragHandle(Rc<dyn Fn()>);
+
+impl WindowDragHandle {
+    pub fn new(drag: impl Fn() + 'static) -> Self {
+        Self(Rc::new(drag))
+    }
+
+    pub fn start_drag(&self) {
+        (self.0)();
+    }
 }
 
 /// Backend-agnostic drawing surface a [`Widget`] paints itself onto.

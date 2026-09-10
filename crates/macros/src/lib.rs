@@ -219,6 +219,7 @@ impl Element {
         matches!(
             self.tag.to_string().as_str(),
             "Block"
+                | "CUIWindowDragArea"
                 | "RawView"
                 | "Flex"
                 | "Grid"
@@ -623,6 +624,66 @@ impl Element {
                 self.reject_unknown_props(&["style", "background", "corner_radius", "children"])?;
                 let style = self.required_prop("style")?;
                 let mut output = quote!(#widgets::raw::RawView::new(#style));
+                if let Some(background) = self.prop("background")? {
+                    output = quote!(#output.background(#background));
+                }
+                if let Some(radius) = self.prop("corner_radius")? {
+                    output = quote!(#output.corner_radius(#radius));
+                }
+                if let Some(children) = self.prop("children")? {
+                    if !self.children.is_empty() {
+                        return Err(Error::new_spanned(
+                            &self.tag,
+                            "`children` cannot be combined with nested JSX children",
+                        ));
+                    }
+                    Ok(quote!(#output.with_children(#children)))
+                } else {
+                    self.container_children(output)
+                }
+            }
+            "CUIWindowDragArea" => {
+                self.reject_unknown_props(&[
+                    "style",
+                    "size",
+                    "padding",
+                    "padding_xy",
+                    "margin",
+                    "fill",
+                    "grow",
+                    "background",
+                    "corner_radius",
+                    "children",
+                ])?;
+                let mut output = if let Some(style) = self.prop("style")? {
+                    quote!(#widgets::CUIWindowDragArea::with_style(#style))
+                } else {
+                    quote!(#widgets::CUIWindowDragArea::new())
+                };
+                if let Some(size) = self.prop("size")? {
+                    output = quote!({
+                        let (width, height) = #size;
+                        #output.size(width, height)
+                    });
+                }
+                if let Some(padding) = self.prop("padding")? {
+                    output = quote!(#output.padding(#padding));
+                }
+                if let Some(padding_xy) = self.prop("padding_xy")? {
+                    output = quote!({
+                        let (horizontal, vertical) = #padding_xy;
+                        #output.padding_xy(horizontal, vertical)
+                    });
+                }
+                if let Some(margin) = self.prop("margin")? {
+                    output = quote!(#output.margin(#margin));
+                }
+                if let Some(fill) = self.prop("fill")? {
+                    output = quote!(if #fill { #output.fill() } else { #output });
+                }
+                if let Some(grow) = self.prop("grow")? {
+                    output = quote!(#output.grow(#grow));
+                }
                 if let Some(background) = self.prop("background")? {
                     output = quote!(#output.background(#background));
                 }

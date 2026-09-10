@@ -24,10 +24,12 @@ use creamui_core::layout::{
 mod block;
 mod flex;
 mod grid;
+mod window_drag_area;
 
 pub use block::*;
 pub use flex::*;
 pub use grid::*;
+pub use window_drag_area::*;
 
 /// Alignment on a flex container's cross axis (`align-items`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

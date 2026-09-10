@@ -72,7 +72,7 @@ impl GpuState {
         })
     }
 
-    pub fn new(window: Arc<Window>, instance: &wgpu::Instance) -> Self {
+    pub fn new(window: Arc<Window>, instance: &wgpu::Instance, transparent: bool) -> Self {
         let t0 = std::time::Instant::now();
         let size = window.inner_size();
         log::debug!("creamui-render: instance ready: {:?}", t0.elapsed());
@@ -110,13 +110,25 @@ impl GpuState {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
+        let alpha_mode = if transparent {
+            [
+                wgpu::CompositeAlphaMode::PreMultiplied,
+                wgpu::CompositeAlphaMode::PostMultiplied,
+                wgpu::CompositeAlphaMode::Inherit,
+            ]
+            .into_iter()
+            .find(|mode| surface_caps.alpha_modes.contains(mode))
+            .unwrap_or(surface_caps.alpha_modes[0])
+        } else {
+            surface_caps.alpha_modes[0]
+        };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };

@@ -30,6 +30,8 @@ members = [
     "examples/fonts",
     "examples/flex",
     "examples/grid",
+    "examples/transparent-window",
+    "examples/frameless-window",
     "demo/showcase",
 ]
 

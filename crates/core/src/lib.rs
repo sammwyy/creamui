@@ -13,6 +13,7 @@ pub use geometry::{Point, Rect, Size};
 pub use scene::{render_frame, Renderer, Scene};
 pub use widget::{
     BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, TextAlign, Widget,
+    WindowDragHandle,
 };
 
 /// Re-exported so downstream crates can build `taffy::style::Style` values

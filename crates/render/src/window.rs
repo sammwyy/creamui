@@ -27,6 +27,7 @@ use crate::painter::SkiaPainter;
 use crate::web::WebState;
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Renderer, Scene, Size,
+    WindowDragHandle,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
@@ -44,7 +45,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{
-    CursorIcon as WinitCursorIcon, Window, WindowAttributes, WindowId, WindowLevel,
+    CursorIcon as WinitCursorIcon, ResizeDirection, Window, WindowAttributes, WindowId, WindowLevel,
 };
 
 /// How long the text-input caret stays in each visibility phase while
@@ -66,6 +67,19 @@ fn translate_cursor_icon(icon: CursorIcon) -> WinitCursorIcon {
         CursorIcon::Text => WinitCursorIcon::Text,
         CursorIcon::Pointer => WinitCursorIcon::Pointer,
         CursorIcon::NotAllowed => WinitCursorIcon::NotAllowed,
+        CursorIcon::ResizeHorizontal => WinitCursorIcon::EwResize,
+        CursorIcon::ResizeVertical => WinitCursorIcon::NsResize,
+        CursorIcon::ResizeNwse => WinitCursorIcon::NwseResize,
+        CursorIcon::ResizeNesw => WinitCursorIcon::NeswResize,
+    }
+}
+
+fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
+    match direction {
+        ResizeDirection::East | ResizeDirection::West => CursorIcon::ResizeHorizontal,
+        ResizeDirection::North | ResizeDirection::South => CursorIcon::ResizeVertical,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::ResizeNwse,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::ResizeNesw,
     }
 }
 
@@ -91,11 +105,8 @@ fn translate_key(key: &WinitKey) -> Option<Key> {
     }
 }
 
-/// Options for a window CreamUI opens, set once at startup.
-///
-/// This intentionally covers only what's needed to host anything from a
-/// full application window to a borderless desktop-shell widget
-/// (`decorations: false`, `transparent: true`).
+/// Options for a window CreamUI opens, set once at startup. Transparent
+/// windows need an alpha clear color and the GPU backend.
 #[derive(Debug, Clone)]
 pub struct WindowOptions {
     pub title: String,
@@ -196,9 +207,14 @@ fn build_ui_with_recovery(build: &Rc<dyn Fn(Size) -> BoxedWidget>, size: Size) -
     }
 }
 
-fn with_theme_scope<R>(theme: &ThemeProvider, f: impl FnOnce() -> R) -> R {
+fn with_theme_scope<R>(
+    theme: &ThemeProvider,
+    window_drag: &WindowDragHandle,
+    f: impl FnOnce() -> R,
+) -> R {
     creamui_reactive::with_context_scope(|| {
         creamui_reactive::provide_context(theme.clone());
+        creamui_reactive::provide_context(window_drag.clone());
         f()
     })
 }
@@ -266,6 +282,7 @@ type SharedWindow = Rc<RefCell<Option<Arc<Window>>>>;
 pub struct WindowHandle {
     window: SharedWindow,
     theme: ThemeProvider,
+    close_requested: Rc<Cell<bool>>,
 }
 
 impl WindowHandle {
@@ -297,6 +314,45 @@ impl WindowHandle {
         }
     }
 
+    /// Requests that this window close.
+    pub fn close(&self) {
+        self.close_requested.set(true);
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    /// Minimizes or restores the window.
+    pub fn set_minimized(&self, minimized: bool) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_minimized(minimized);
+        }
+    }
+
+    /// Minimizes the window.
+    pub fn minimize(&self) {
+        self.set_minimized(true);
+    }
+
+    /// Maximizes or restores the window.
+    pub fn set_maximized(&self, maximized: bool) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_maximized(maximized);
+        }
+    }
+
+    /// Maximizes the window.
+    pub fn maximize(&self) {
+        self.set_maximized(true);
+    }
+
+    /// Starts the platform's native window drag gesture.
+    pub fn drag_window(&self) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            let _ = window.drag_window();
+        }
+    }
+
     /// Reads the window's current theme.
     pub fn theme(&self) -> Theme {
         self.theme.get()
@@ -325,6 +381,7 @@ struct WindowSpec {
     scale_factor: Signal<f64>,
     frame: Rc<RefCell<FrameState>>,
     shared_window: SharedWindow,
+    close_requested: Rc<Cell<bool>>,
     theme_provider: ThemeProvider,
     focused: Rc<Cell<Option<usize>>>,
     caret_visible: Rc<Cell<bool>>,
@@ -421,6 +478,8 @@ struct WindowState {
     scale_factor: Signal<f64>,
     frame: Rc<RefCell<FrameState>>,
     window: SharedWindow,
+    close_requested: Rc<Cell<bool>>,
+    frameless_resizable: bool,
     presenter: Option<Presenter>,
     pointer_pos: Point,
     modifiers: ModifiersState,
@@ -467,6 +526,29 @@ struct WindowState {
 }
 
 impl WindowState {
+    fn resize_direction(&self) -> Option<ResizeDirection> {
+        if !self.frameless_resizable {
+            return None;
+        }
+        let size = self.viewport_from_window();
+        let edge = 8.0;
+        let left = self.pointer_pos.x <= edge;
+        let right = self.pointer_pos.x >= size.width - edge;
+        let top = self.pointer_pos.y <= edge;
+        let bottom = self.pointer_pos.y >= size.height - edge;
+        match (left, right, top, bottom) {
+            (true, _, true, _) => Some(ResizeDirection::NorthWest),
+            (_, true, true, _) => Some(ResizeDirection::NorthEast),
+            (true, _, _, true) => Some(ResizeDirection::SouthWest),
+            (_, true, _, true) => Some(ResizeDirection::SouthEast),
+            (true, _, _, _) => Some(ResizeDirection::West),
+            (_, true, _, _) => Some(ResizeDirection::East),
+            (_, _, true, _) => Some(ResizeDirection::North),
+            (_, _, _, true) => Some(ResizeDirection::South),
+            _ => None,
+        }
+    }
+
     fn viewport_from_window(&self) -> Size {
         let Some(window) = self.window.borrow().as_ref().cloned() else {
             return self.viewport.peek();
@@ -560,14 +642,17 @@ impl WindowState {
                 self.frame.borrow_mut().painter.pointer = Some(self.pointer_pos);
                 (self.repaint_light)();
 
-                let hovered_cursor = {
-                    let frame = self.frame.borrow();
-                    frame
-                        .scene
-                        .as_ref()
-                        .and_then(|scene| scene.cursor_hit_test(self.pointer_pos))
-                        .unwrap_or(CursorIcon::Default)
-                };
+                let hovered_cursor =
+                    self.resize_direction()
+                        .map(resize_cursor)
+                        .unwrap_or_else(|| {
+                            let frame = self.frame.borrow();
+                            frame
+                                .scene
+                                .as_ref()
+                                .and_then(|scene| scene.cursor_hit_test(self.pointer_pos))
+                                .unwrap_or(CursorIcon::Default)
+                        });
                 if hovered_cursor != self.current_cursor {
                     self.current_cursor = hovered_cursor;
                     if let Some(window) = self.window.borrow().as_ref() {
@@ -621,6 +706,12 @@ impl WindowState {
             } => {
                 self.frame.borrow_mut().painter.press_origin = Some(self.pointer_pos);
                 (self.repaint_light)();
+                if let Some(direction) = self.resize_direction() {
+                    if let Some(window) = self.window.borrow().as_ref() {
+                        let _ = window.drag_resize_window(direction);
+                    }
+                    return;
+                }
                 let frame = self.frame.borrow();
                 let Some(scene) = frame.scene.as_ref() else {
                     return;
@@ -859,7 +950,11 @@ impl ApplicationHandler for AppHandler {
                         .gpu_instance
                         .as_ref()
                         .expect("a window resolved to RenderBackend::Gpu but no shared wgpu::Instance was created");
-                    Presenter::Gpu(GpuState::new(window.clone(), instance))
+                    Presenter::Gpu(GpuState::new(
+                        window.clone(),
+                        instance,
+                        spec.options.transparent,
+                    ))
                 }
                 RenderBackend::Cpu => Presenter::Cpu(CpuState::new(window.clone())),
             };
@@ -885,9 +980,11 @@ impl ApplicationHandler for AppHandler {
             (spec.on_window_ready)(WindowHandle {
                 window: spec.shared_window.clone(),
                 theme: spec.theme_provider.clone(),
+                close_requested: spec.close_requested.clone(),
             });
 
             let window_id = window.id();
+            let frameless_resizable = !spec.options.decorations && spec.options.resizable;
             self.windows.insert(
                 window_id,
                 WindowState {
@@ -895,6 +992,8 @@ impl ApplicationHandler for AppHandler {
                     scale_factor: spec.scale_factor,
                     frame: spec.frame,
                     window: spec.shared_window.clone(),
+                    close_requested: spec.close_requested,
+                    frameless_resizable,
                     presenter: Some(presenter),
                     pointer_pos: Point::default(),
                     modifiers: ModifiersState::default(),
@@ -929,20 +1028,35 @@ impl ApplicationHandler for AppHandler {
         event: WindowEvent,
     ) {
         if matches!(event, WindowEvent::CloseRequested) {
-            log::debug!("creamui-render: close requested for window {window_id:?}");
-            self.windows.remove(&window_id);
-            if self.windows.is_empty() {
-                event_loop.exit();
-            }
+            self.close_window(event_loop, window_id);
             return;
         }
 
         if let Some(state) = self.windows.get_mut(&window_id) {
             state.handle_window_event(event);
         }
+        if self
+            .windows
+            .get(&window_id)
+            .is_some_and(|state| state.close_requested.get())
+        {
+            self.close_window(event_loop, window_id);
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let close_requests: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter_map(|(id, state)| state.close_requested.get().then_some(*id))
+            .collect();
+        for window_id in close_requests {
+            self.close_window(event_loop, window_id);
+        }
+        if self.windows.is_empty() {
+            return;
+        }
+
         let now = Instant::now();
         let mut next_wake: Option<Instant> = None;
         for state in self.windows.values_mut() {
@@ -981,6 +1095,18 @@ impl ApplicationHandler for AppHandler {
             Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
         });
+    }
+}
+
+impl AppHandler {
+    fn close_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+        log::debug!("creamui-render: close requested for window {window_id:?}");
+        if let Some(state) = self.windows.remove(&window_id) {
+            state.window.borrow_mut().take();
+        }
+        if self.windows.is_empty() {
+            event_loop.exit();
+        }
     }
 }
 
@@ -1126,6 +1252,15 @@ fn build_window_spec(
         devtools: devtools_for_new_window(),
     }));
     let shared_window: SharedWindow = Rc::new(RefCell::new(None));
+    let window_drag = WindowDragHandle::new({
+        let window = shared_window.clone();
+        move || {
+            if let Some(window) = window.borrow().as_ref() {
+                let _ = window.drag_window();
+            }
+        }
+    });
+    let close_requested = Rc::new(Cell::new(false));
     let theme_provider = ThemeProvider::new(options.theme);
     let build_ui: Rc<dyn Fn(Size) -> BoxedWidget> = Rc::from(build_ui);
     let focused: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
@@ -1160,8 +1295,9 @@ fn build_window_spec(
         let dirty = dirty.clone();
         let pending_root = pending_root.clone();
         let theme_provider = theme_provider.clone();
+        let window_drag = window_drag.clone();
         move || {
-            with_theme_scope(&theme_provider, || {
+            with_theme_scope(&theme_provider, &window_drag, || {
                 dirty.set(false);
                 // Widgets are laid out in logical pixels; the painter (and the
                 // presenter it feeds) is sized in physical pixels so HiDPI
@@ -1227,8 +1363,9 @@ fn build_window_spec(
         let focused = focused.clone();
         let caret_visible = caret_visible.clone();
         let theme_provider = theme_provider.clone();
+        let window_drag = window_drag.clone();
         move || {
-            with_theme_scope(&theme_provider, || {
+            with_theme_scope(&theme_provider, &window_drag, || {
                 let logical_size = viewport.peek();
                 let scale = scale_factor.peek();
                 let mut frame = frame.borrow_mut();
@@ -1272,8 +1409,9 @@ fn build_window_spec(
         let window = shared_window.clone();
         let dirty = dirty.clone();
         let theme_provider = theme_provider.clone();
+        let window_drag = window_drag.clone();
         move || {
-            with_theme_scope(&theme_provider, || {
+            with_theme_scope(&theme_provider, &window_drag, || {
                 let logical_size = viewport.peek();
                 *pending_root.borrow_mut() = Some(build_ui_with_recovery(&build_ui, logical_size));
                 // The first reactive run happens before winit has created the
@@ -1327,6 +1465,7 @@ fn build_window_spec(
         scale_factor,
         frame,
         shared_window,
+        close_requested,
         theme_provider,
         focused,
         caret_visible,
@@ -1366,6 +1505,8 @@ mod tests {
                     scale_factor: spec.scale_factor,
                     frame: spec.frame,
                     window: spec.shared_window,
+                    close_requested: spec.close_requested,
+                    frameless_resizable: false,
                     presenter: None,
                     pointer_pos: Point::default(),
                     modifiers: ModifiersState::default(),
@@ -1528,6 +1669,19 @@ mod tests {
 
         assert_eq!(clicks.get(), 1);
         assert_eq!(keys.get(), "x");
+    }
+
+    #[test]
+    fn frameless_windows_expose_resize_edges() {
+        let mut harness = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        harness.state.frameless_resizable = true;
+        harness.state.pointer_pos = Point { x: 2.0, y: 2.0 };
+        assert_eq!(
+            harness.state.resize_direction(),
+            Some(ResizeDirection::NorthWest)
+        );
+        harness.state.pointer_pos = Point { x: 50.0, y: 50.0 };
+        assert_eq!(harness.state.resize_direction(), None);
     }
 
     #[test]

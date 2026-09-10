@@ -10,6 +10,7 @@ mod components;
 mod controller;
 pub use components::{Choice, Icon, NavigationItem, Surface, SurfaceRole, Symbol};
 pub mod layout;
+pub use layout::CUIWindowDragArea;
 pub mod raw;
 mod text_metrics;
 pub mod themed;

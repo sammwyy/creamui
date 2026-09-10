@@ -205,7 +205,7 @@ macro_rules! layout_container_methods {
 
         /// Overrides the parent's `align-items` for this container.
         pub fn align_self(mut self, value: $crate::layout::Align) -> Self {
-            self.inner.style = self.inner.style.align_self(value.into());
+            self.inner.style = self.inner.style.align_self(value);
             self
         }
 

@@ -184,7 +184,7 @@ impl Grid {
 
     /// Sets `align-content` on the block axis.
     pub fn align_content(mut self, value: Justify) -> Self {
-        self.inner.style = self.inner.style.align_content(value.into());
+        self.inner.style = self.inner.style.align_content(value);
         self
     }
 

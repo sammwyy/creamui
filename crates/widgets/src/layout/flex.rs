@@ -78,7 +78,7 @@ impl Flex {
 
     /// Sets `align-content`, used when wrapped lines have extra cross-axis space.
     pub fn align_content(mut self, value: Justify) -> Self {
-        self.inner.style = self.inner.style.align_content(value.into());
+        self.inner.style = self.inner.style.align_content(value);
         self
     }
 

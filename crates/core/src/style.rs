@@ -791,6 +791,12 @@ impl StyleProp {
                 "invalid content alignment `{other}`"
             ))),
         };
+        let spacing = |value: &str| match value.parse::<LengthValue>()? {
+            LengthValue::Auto => Err(StyleParseError(format!(
+                "`auto` is not valid for this spacing property: `{value}`"
+            ))),
+            value => Ok(value),
+        };
 
         match name.trim() {
             "background" | "background-color" => Ok(Self::Background(value.parse()?)),
@@ -842,14 +848,14 @@ impl StyleProp {
             "flex-grow" => Ok(Self::FlexGrow(number(value)?)),
             "flex-shrink" => Ok(Self::FlexShrink(number(value)?)),
             "flex-basis" => Ok(Self::FlexBasis(value.parse()?)),
-            "gap" => Ok(Self::Gap(value.parse()?)),
-            "row-gap" => Ok(Self::RowGap(value.parse()?)),
-            "column-gap" => Ok(Self::ColumnGap(value.parse()?)),
-            "padding" => Ok(Self::Padding(value.parse()?)),
-            "padding-top" => Ok(Self::PaddingTop(value.parse()?)),
-            "padding-right" => Ok(Self::PaddingRight(value.parse()?)),
-            "padding-bottom" => Ok(Self::PaddingBottom(value.parse()?)),
-            "padding-left" => Ok(Self::PaddingLeft(value.parse()?)),
+            "gap" => Ok(Self::Gap(spacing(value)?)),
+            "row-gap" => Ok(Self::RowGap(spacing(value)?)),
+            "column-gap" => Ok(Self::ColumnGap(spacing(value)?)),
+            "padding" => Ok(Self::Padding(spacing(value)?)),
+            "padding-top" => Ok(Self::PaddingTop(spacing(value)?)),
+            "padding-right" => Ok(Self::PaddingRight(spacing(value)?)),
+            "padding-bottom" => Ok(Self::PaddingBottom(spacing(value)?)),
+            "padding-left" => Ok(Self::PaddingLeft(spacing(value)?)),
             "margin" => Ok(Self::Margin(value.parse()?)),
             "margin-top" => Ok(Self::MarginTop(value.parse()?)),
             "margin-right" => Ok(Self::MarginRight(value.parse()?)),
@@ -1014,6 +1020,12 @@ mod tests {
             style.layout.inset.top,
             crate::layout::LengthPercentageAuto::Percent(0.25)
         );
+    }
+
+    #[test]
+    fn parser_rejects_auto_for_padding_and_gap() {
+        assert!(StyleProp::parse("padding", "auto").is_err());
+        assert!(StyleProp::parse("gap", "auto").is_err());
     }
 
     #[test]

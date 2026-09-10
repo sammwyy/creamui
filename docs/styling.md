@@ -11,7 +11,7 @@ let card = Style::new()
     .property(StyleProp::parse("background", "primary")?);
 ```
 
-`StyleProp::parse` accepts a single supported property/value pair. Lengths use `px`, `%`, or `auto` where valid; colors accept `#rrggbb`, `#rrggbbaa`, and theme tokens such as `primary` or `var(--accent)`. It covers common paint and typography values plus layout declarations for size constraints, flex, grid display, gaps, spacing, alignment, and positioning.
+`StyleProp::parse` accepts a single supported property/value pair. Lengths use `px`, `%`, or `auto` where valid (`auto` is valid for margins and positioning, not padding or gaps); colors accept `#rrggbb`, `#rrggbbaa`, and theme tokens such as `primary` or `var(--accent)`. It covers common paint and typography values plus layout declarations for size constraints, flex, grid display, gaps, spacing, alignment, and positioning.
 
 There is intentionally no parser for stylesheets, selectors, specificity, cascade, inheritance, media queries, or CSS shorthands. For example, `padding: "8px 12px"` is not a supported declaration; use `.padding(...)` or the directional properties instead. Reusable styles are ordinary Rust values, and later builders or JSX inline props override the earlier declaration.
 

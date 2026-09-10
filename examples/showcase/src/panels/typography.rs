@@ -36,7 +36,8 @@ pub fn TypographyPanel(link_clicks: Signal<i32>) -> BoxedWidget {
         (TextSize::Sm, "Sm · h4"),
         (TextSize::Xs, "Xs · h5"),
     ];
-    let mut scale_children: Vec<BoxedWidget> = vec![jsx! { <FieldLabel text={"Heading scale".to_owned()} /> }];
+    let mut scale_children: Vec<BoxedWidget> =
+        vec![jsx! { <FieldLabel text={"Heading scale".to_owned()} /> }];
     for (size, label) in sizes {
         let caption = row_caption(label, 60.0);
         scale_children.push(Box::new(jsx! {

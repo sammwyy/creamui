@@ -9,7 +9,7 @@ use creamui_render::{run, WindowOptions};
 use creamui_theme::{use_theme, Color, ColorScheme, Theme};
 use creamui_widgets::layout::{column, fixed, full_width, padding, padding_xy, row};
 use creamui_widgets::{
-    Avatar, AutoScrollController, Badge, Icon, RawText, ScrollController, ScrollView, Symbol,
+    AutoScrollController, Avatar, Badge, Icon, RawText, ScrollController, ScrollView, Symbol,
     TextController, TextInput, TextSize, TypingIndicator,
 };
 use std::cell::{Cell, RefCell};
@@ -719,7 +719,8 @@ fn attachment_widget(attachment: &Attachment) -> BoxedWidget {
                 },
                 8.0,
             );
-            let icon: BoxedWidget = Box::new(Icon::new(Symbol::Attachment, theme.text_secondary).size(16.0));
+            let icon: BoxedWidget =
+                Box::new(Icon::new(Symbol::Attachment, theme.text_secondary).size(16.0));
             Box::new(jsx! {
                 <RawView style={style} background={theme.surface_elevated} corner_radius={theme.radius_small}>
                     {icon}
@@ -859,7 +860,9 @@ fn message_bubble(message: &ChatMessage) -> BoxedWidget {
             double: message.read,
         }));
     }
-    bubble_children.push(Box::new(jsx! { <RawView style={footer_style} children={footer_children} /> }));
+    bubble_children.push(Box::new(
+        jsx! { <RawView style={footer_style} children={footer_children} /> },
+    ));
 
     Box::new(jsx! {
         <RawView style={row_style}>
@@ -968,7 +971,9 @@ fn inline_attachment_chip(attachment: &Attachment, on_remove: impl Fn() + 'stati
             } else {
                 name.clone()
             };
-            chip_children.push(Box::new(Icon::new(Symbol::Attachment, theme.text_secondary).size(14.0)));
+            chip_children.push(Box::new(
+                Icon::new(Symbol::Attachment, theme.text_secondary).size(14.0),
+            ));
             chip_children.push(Box::new(jsx! {
                 <RawText color={theme.text_primary} font_size={11.0}>{short}</RawText>
             }));

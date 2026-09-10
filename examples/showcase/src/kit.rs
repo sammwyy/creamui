@@ -329,7 +329,9 @@ pub fn Tab(
     active: bool,
     on_click: Box<dyn Fn()>,
 ) -> BoxedWidget {
-    Box::new(creamui_widgets::Tab::new(colors, style, label, active, on_click))
+    Box::new(creamui_widgets::Tab::new(
+        colors, style, label, active, on_click,
+    ))
 }
 
 #[component]

@@ -128,9 +128,9 @@ fn main() {
                     Color::rgb(0x06, 0xb6, 0xd4),
                 ))),
             ];
-            let gallery =
-                Box::new(jsx! { <Grid grow={1.0} columns={gallery_columns} gap={GRID_GAP} children={gallery_items} /> })
-                    as BoxedWidget;
+            let gallery = Box::new(
+                jsx! { <Grid grow={1.0} columns={gallery_columns} gap={GRID_GAP} children={gallery_items} /> },
+            ) as BoxedWidget;
 
             let footer = Box::new(jsx! {
                 <Flex justify={Justify::End}>

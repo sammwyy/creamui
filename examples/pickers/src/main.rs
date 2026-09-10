@@ -89,25 +89,46 @@ fn main() {
             });
 
             let raw_date_picker: BoxedWidget = Box::new(
-                RawDateTimePicker::new(raw_date_style, raw_value, theme.text_primary, theme.border, move |next| date_set.set(next))
-                    .background(theme.surface_elevated)
-                    .hover_background(theme.surface_hover)
-                    .border(theme.accent, 1.)
-                    .corner_radius(2.)
-                    .focus_color(theme.accent),
+                RawDateTimePicker::new(
+                    raw_date_style,
+                    raw_value,
+                    theme.text_primary,
+                    theme.border,
+                    move |next| date_set.set(next),
+                )
+                .background(theme.surface_elevated)
+                .hover_background(theme.surface_hover)
+                .border(theme.accent, 1.)
+                .corner_radius(2.)
+                .focus_color(theme.accent),
             );
             let raw_color_picker: BoxedWidget = Box::new(
-                RawColorPicker::new(raw_color_style, selected_raw_color, theme.border, theme.text_primary, move |next| raw_color_set.set(next))
-                    .background(theme.surface_elevated)
-                    .corner_radius(2.)
-                    .focus_color(theme.accent),
+                RawColorPicker::new(
+                    raw_color_style,
+                    selected_raw_color,
+                    theme.border,
+                    theme.text_primary,
+                    move |next| raw_color_set.set(next),
+                )
+                .background(theme.surface_elevated)
+                .corner_radius(2.)
+                .focus_color(theme.accent),
             );
             let raw_file_picker: BoxedWidget = Box::new(
-                RawFilePicker::new(raw_file_style, raw_file_label, theme.text_primary, theme.text_disabled, theme.border, move || raw_file_set.set("Raw picker activated — connect your asset source".into()))
-                    .background(theme.surface_elevated)
-                    .hover_background(theme.surface_hover)
-                    .corner_radius(2.)
-                    .focus_color(theme.accent),
+                RawFilePicker::new(
+                    raw_file_style,
+                    raw_file_label,
+                    theme.text_primary,
+                    theme.text_disabled,
+                    theme.border,
+                    move || {
+                        raw_file_set.set("Raw picker activated — connect your asset source".into())
+                    },
+                )
+                .background(theme.surface_elevated)
+                .hover_background(theme.surface_hover)
+                .corner_radius(2.)
+                .focus_color(theme.accent),
             );
             let raw_column: BoxedWidget = Box::new(jsx! {
                 <RawView style={column(10.)}>

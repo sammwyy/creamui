@@ -1,0 +1,12 @@
+[package]
+name = "universal-styles"
+publish = false
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+creamui-core = { workspace = true }
+creamui-reactive = { workspace = true }
+creamui-render = { workspace = true }
+creamui-theme = { workspace = true }
+creamui-widgets = { workspace = true }

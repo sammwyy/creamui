@@ -35,6 +35,7 @@ members = [
     "examples/frameless-window",
     "examples/tray",
     "examples/interaction-styles",
+    "examples/universal-styles",
     "demo/showcase",
 ]
 

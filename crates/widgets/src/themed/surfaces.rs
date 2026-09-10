@@ -3,6 +3,7 @@ use super::*;
 pub struct Card {
     inner: RawView,
 }
+impl_styled_inner!(Card);
 
 /// Shared visual tokens for application menu bars and popovers. Apps can
 /// derive these from a theme and override individual colors without copying
@@ -40,6 +41,7 @@ impl MenuColors {
 pub struct MenuBar {
     inner: RawView,
 }
+impl_styled_inner!(MenuBar);
 
 impl MenuBar {
     pub fn new(colors: MenuColors, style: Style) -> Self {
@@ -70,6 +72,7 @@ impl Widget for MenuBar {
 pub struct MenuPopup {
     inner: RawView,
 }
+impl_styled_inner!(MenuPopup);
 
 impl MenuPopup {
     pub fn new(colors: MenuColors, style: Style) -> Self {
@@ -102,6 +105,7 @@ impl Widget for MenuPopup {
 pub struct MenuItem {
     inner: RawButton,
 }
+impl_styled_inner!(MenuItem);
 
 impl MenuItem {
     pub fn new(
@@ -121,8 +125,8 @@ impl MenuItem {
             },
             13.0,
         )
-        .align(TextAlign::Start)
-        .layout_style(style.clone());
+        .text_align(TextAlign::Start)
+        .layout(style.clone());
         Self {
             inner: RawButton::new(style, on_click)
                 .background(color)

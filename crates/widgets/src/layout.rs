@@ -229,19 +229,6 @@ macro_rules! layout_container_methods {
             self
         }
 
-        /// Gives the container a background without introducing a themed
-        /// surface.
-        pub fn background(mut self, color: creamui_theme::Color) -> Self {
-            self.inner = self.inner.background(color);
-            self
-        }
-
-        /// Rounds the optional background's corners.
-        pub fn corner_radius(mut self, radius: f32) -> Self {
-            self.inner = self.inner.corner_radius(radius);
-            self
-        }
-
         /// Adds a child widget.
         pub fn child(mut self, child: creamui_core::BoxedWidget) -> Self {
             self.inner = self.inner.child(child);

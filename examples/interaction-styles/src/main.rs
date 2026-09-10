@@ -59,7 +59,7 @@ fn main() {
                     <Text font_size={24.0}>"Interaction styles"</Text>
                     <Text color={theme.text_secondary}>"The first button changes background, border, and radius."</Text>
                     {custom_button}
-                    <RawButton style={button_layout} background={theme.surface_elevated} hover_background={theme.surface_hover} pressed_background={theme.border_strong} corner_radius={8.0} on_click={|| {}}>
+                    <RawButton style={button_layout} background={theme.surface_elevated} hover_style={StateStyle::new().background(theme.surface_hover)} pressed_style={StateStyle::new().background(theme.border_strong)} corner_radius={8.0} on_click={|| {}}>
                         <RawText color={theme.text_primary} font_size={14.0} align={TextAlign::Center}>"JSX convenience props"</RawText>
                     </RawButton>
                     <Text color={theme.text_secondary}>{format!("Clicks: {count}")}</Text>

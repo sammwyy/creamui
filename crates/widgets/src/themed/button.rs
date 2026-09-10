@@ -8,6 +8,7 @@ pub struct Button {
     state: ButtonState,
     enabled_children: Option<Vec<BoxedWidget>>,
 }
+impl_styled_inner!(Button);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonSize {
@@ -119,17 +120,21 @@ impl Button {
             .corner_radius(theme.button_radius.min(size.height() / 4.))
             .child(child);
         inner = inner
-            .hover_background(if variant == ButtonVariant::Primary {
-                theme.accent_hover
-            } else {
-                background.mix(theme.text_primary, 0.07)
-            })
-            .pressed_background(if variant == ButtonVariant::Primary {
-                theme.accent_pressed
-            } else {
-                background.mix(theme.text_primary, 0.14)
-            })
-            .focus_color(theme.accent);
+            .hover_style(creamui_core::StateStyle::new().background(
+                if variant == ButtonVariant::Primary {
+                    theme.accent_hover
+                } else {
+                    background.mix(theme.text_primary, 0.07)
+                },
+            ))
+            .pressed_style(creamui_core::StateStyle::new().background(
+                if variant == ButtonVariant::Primary {
+                    theme.accent_pressed
+                } else {
+                    background.mix(theme.text_primary, 0.14)
+                },
+            ))
+            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0));
         let mut button = Self {
             inner,
             theme,
@@ -176,20 +181,6 @@ impl Button {
             ButtonState::Normal,
             on_click,
         )
-    }
-
-    /// A themed button with caller-controlled layout. Its colors and radius
-    /// still come from `theme`, so an application-wide theme change remains
-    /// consistent while each button can choose its own size, margin, or flex
-    /// placement.
-    pub fn with_style(
-        style: Style,
-        label: impl Into<String>,
-        on_click: impl Fn() + 'static,
-    ) -> Self {
-        let mut button = Self::new(label, on_click);
-        button.inner.style.layout = style;
-        button
     }
 
     /// Disable activation and apply the shared muted control treatment.

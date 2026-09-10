@@ -39,16 +39,6 @@ impl RawListView {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
     pub fn divider(mut self, color: Color, width: f32) -> Self {
         self.divider_color = Some(color);
         self.divider_width = width.max(0.0);
@@ -291,8 +281,8 @@ impl RawTable {
         for column in &self.columns {
             header = header.child(Box::new(
                 RawText::new(column.label.clone(), self.header_text_color, 13.0)
-                    .align(TextAlign::Start)
-                    .layout_style(cell_style(column.width, self.cell_padding)),
+                    .text_align(TextAlign::Start)
+                    .layout(cell_style(column.width, self.cell_padding)),
             ));
         }
         Box::new(header)
@@ -312,8 +302,8 @@ impl RawTable {
         for (column, text) in self.columns.iter().zip(cells.iter()) {
             cell_widgets.push(Box::new(
                 RawText::new(text.clone(), self.cell_text_color, 13.0)
-                    .align(TextAlign::Start)
-                    .layout_style(cell_style(column.width, self.cell_padding)),
+                    .text_align(TextAlign::Start)
+                    .layout(cell_style(column.width, self.cell_padding)),
             ) as BoxedWidget);
         }
         if let Some(on_click) = &self.on_row_click {

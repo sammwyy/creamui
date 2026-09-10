@@ -3,8 +3,8 @@
 //! Enable only the decoders an application uses: `png` (default), `jpeg`,
 //! and/or `webp`.
 
-use creamui_core::layout::{Dimension, Style};
-use creamui_core::{Painter, Rect, Widget};
+use creamui_core::layout::Dimension;
+use creamui_core::{Painter, Rect, Style, Styled, Widget};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -118,42 +118,26 @@ pub struct Image {
     data: ImageData,
     style: Style,
     fit: ImageFit,
-    corner_radius: f32,
 }
 
 impl Image {
     pub fn new(data: ImageData) -> Self {
         Self {
-            style: Style {
+            style: creamui_core::layout::Style {
                 size: creamui_core::layout::Size {
                     width: Dimension::Length(data.width as f32),
                     height: Dimension::Length(data.height as f32),
                 },
                 ..Default::default()
-            },
+            }
+            .into(),
             data,
             fit: ImageFit::Cover,
-            corner_radius: 0.0,
-        }
-    }
-
-    pub fn with_style(data: ImageData, style: Style) -> Self {
-        Self {
-            style,
-            ..Self::new(data)
         }
     }
 
     pub fn fit(mut self, fit: ImageFit) -> Self {
         self.fit = fit;
-        self
-    }
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius.max(0.0);
-        self
-    }
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
         self
     }
     pub fn data(&self) -> &ImageData {
@@ -182,12 +166,13 @@ impl Image {
 
 impl Widget for Image {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if matches!(self.fit, ImageFit::Cover) || self.corner_radius > 0.0 {
-            painter.push_clip_rounded(rect, self.corner_radius);
+        let corner_radius = self.style.paint.corner_radius.unwrap_or(0.0);
+        if matches!(self.fit, ImageFit::Cover) || corner_radius > 0.0 {
+            painter.push_clip_rounded(rect, corner_radius);
             painter.draw_rgba_image(
                 self.destination(rect),
                 self.data.pixels(),
@@ -203,6 +188,12 @@ impl Widget for Image {
                 self.data.height,
             );
         }
+    }
+}
+
+impl Styled for Image {
+    fn set_style(&mut self, style: Style) {
+        self.style = style;
     }
 }
 
@@ -227,17 +218,15 @@ mod tests {
     #[test]
     fn contain_preserves_the_source_aspect_ratio() {
         let data = ImageData::from_rgba(4, 2, vec![255; 32]).unwrap();
-        let image = Image::with_style(
-            data,
-            Style {
+        let image = Image::new(data)
+            .layout(creamui_core::layout::Style {
                 size: creamui_core::layout::Size {
                     width: Dimension::Length(100.),
                     height: Dimension::Length(100.),
                 },
                 ..Default::default()
-            },
-        )
-        .fit(ImageFit::Contain);
+            })
+            .fit(ImageFit::Contain);
         let mut painter = PainterSpy::default();
         render_frame(
             Box::new(image),

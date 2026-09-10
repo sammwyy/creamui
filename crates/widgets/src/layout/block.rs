@@ -10,16 +10,17 @@ use creamui_core::{BoxedWidget, Painter, Rect, Widget};
 pub struct Block {
     inner: crate::raw::RawView,
 }
+impl_styled_inner!(Block);
 
 impl Block {
     /// Creates an empty block-layout container.
     pub fn new() -> Self {
-        Self::with_style(Style::default())
+        Self::from_layout(Style::default())
     }
 
     /// Creates a block container from a Taffy style. `display` is always
     /// normalized to `Block` so the component keeps its semantic contract.
-    pub fn with_style(mut style: Style) -> Self {
+    fn from_layout(mut style: Style) -> Self {
         style.display = Display::Block;
         Self {
             inner: crate::raw::RawView::new(shrinkable(style)),
@@ -55,7 +56,7 @@ mod tests {
 
     #[test]
     fn block_is_always_a_block_layout_container() {
-        let style = Block::with_style(Style {
+        let style = Block::from_layout(Style {
             display: creamui_core::layout::Display::Flex,
             ..Default::default()
         })

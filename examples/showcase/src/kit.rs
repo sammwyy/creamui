@@ -41,8 +41,8 @@ pub fn PreviewCard(style: Style, children: Vec<BoxedWidget>) -> BoxedWidget {
 pub fn FieldLabel(text: String) -> BoxedWidget {
     Box::new(
         Text::secondary(text)
-            .align(TextAlign::Start)
-            .style(label_style()),
+            .text_align(TextAlign::Start)
+            .layout(label_style()),
     )
 }
 
@@ -83,7 +83,11 @@ pub fn CardRow(children: Vec<BoxedWidget>) -> BoxedWidget {
 /// A bold [`RawText`] run — `bold` isn't one of `jsx!`'s `RawText` props.
 #[component]
 pub fn BoldText(text: String, color: Color, font_size: f32, align: TextAlign) -> BoxedWidget {
-    Box::new(RawText::new(text, color, font_size).bold(true).align(align))
+    Box::new(
+        RawText::new(text, color, font_size)
+            .bold(true)
+            .text_align(align),
+    )
 }
 
 #[component]
@@ -339,15 +343,13 @@ pub fn Switch(checked: bool, on_click: Box<dyn Fn()>) -> BoxedWidget {
     Box::new(creamui_widgets::Switch::new(checked, on_click))
 }
 
-/// A `TextInput` whose border color is overridden — `border` isn't one of
-/// `jsx!`'s `TextInput` props.
+/// A `TextInput` whose common border is overridden.
 #[component]
 pub fn BorderedInput(border: Color) -> BoxedWidget {
-    Box::new(TextInput::new("", |_| {}).border(border))
+    Box::new(TextInput::new("", |_| {}).border(border, 1.0))
 }
 
-/// One `Text` weight/decoration sample — `bold`/`italic`/`underline`/
-/// `strikethrough` aren't among `jsx!`'s `Text` props.
+/// One `Text` weight/decoration sample.
 #[component]
 pub fn StyledText(
     text: String,
@@ -356,7 +358,7 @@ pub fn StyledText(
     underline: bool,
     strikethrough: bool,
 ) -> BoxedWidget {
-    let mut widget = Text::new(text).align(TextAlign::Start);
+    let mut widget = Text::new(text).text_align(TextAlign::Start);
     if bold {
         widget = widget.bold(true);
     }
@@ -386,3 +388,4 @@ pub fn StyledButton(
 ) -> BoxedWidget {
     Box::new(Button::styled(variant, size, label, state, on_click).disabled(disabled))
 }
+use creamui_core::Styled as _;

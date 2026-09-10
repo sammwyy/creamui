@@ -126,15 +126,15 @@ Existing `creamui::core::layout::Style` values still work anywhere a common
 style is accepted through the `From`/`Into` adapter. This keeps existing Taffy
 struct literals valid while applications migrate declarations incrementally.
 
-Strings are accepted only at the declaration boundary through
-`StyleProp::parse`. They are immediately compiled into typed `ColorValue` and
-`LengthValue` values; widgets and the renderer never interpret CSS strings.
+Strings are accepted at declaration/build time (`.width("10px")`,
+`.color("accent")`, or `StyleProp::parse`). They are immediately compiled into
+typed `ColorValue` and `LengthValue` values; widgets and the renderer never
+interpret CSS strings.
 Semantic `ColorToken`s are resolved against the window's current color scheme
 at paint time, so a stored style follows theme changes without being rebuilt.
 
-Every widget also implements the `Styled` extension trait automatically. A
-component does not need its own `width`, `background`, or `font_size`
-forwarders:
+Every built-in component implements the `Styled` extension trait. A component
+does not need its own `width`, `background`, or `font_size` forwarders:
 
 ```rust
 use creamui::core::layout::Style as LayoutStyle;
@@ -148,10 +148,23 @@ let button = RawButton::new(LayoutStyle::default(), || {})
     .corner_radius(8.0);
 ```
 
-The first call creates a transparent `StyledWidget`; the rest mutate that
-same declaration. Painting, children, measurement, focus, pointer and keyboard
-handlers are delegated to the original widget without adding a layout node.
-For configuration loaded from strings, use `.property(StyleProp::parse(...)?)`.
+Each builder updates the declaration owned by the concrete component and keeps
+its type, so component-specific methods remain chainable. A custom `Widget`
+opts in by implementing only `Styled::set_style`. For configuration loaded
+from strings, use `.property(StyleProp::parse(...)?)`.
+
+The same model is available in JSX. `style` applies a reusable Rust
+declaration, then inline common properties override it:
+
+```rust
+let card = Style::new().width("100%").background(ColorToken::Surface);
+
+let view = jsx! {
+    <Block style={card.clone()} corner_radius={12.0}>
+        <Text color={ColorToken::TextPrimary} font_size={16.0}>"Shared style"</Text>
+    </Block>
+};
+```
 
 Box paint is centralized: the renderer draws the resolved background, border,
 radius, and outline before calling a widget's content-specific `paint` method.

@@ -3,7 +3,7 @@ use crate::layout::padding;
 use crate::RawText;
 use creamui_core::layout::{AlignItems, Style};
 use creamui_core::{
-    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, TextAlign, Widget,
+    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, Styled, TextAlign, Widget,
 };
 use creamui_theme::{use_theme, Color, Theme};
 use std::rc::Rc;
@@ -272,8 +272,9 @@ pub struct NavigationItem {
     label: String,
     active: bool,
     click: Rc<dyn Fn()>,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(NavigationItem);
 impl NavigationItem {
     pub fn new(
         symbol: Symbol,
@@ -295,12 +296,9 @@ impl NavigationItem {
                 },
                 flex_shrink: 0.,
                 ..Default::default()
-            },
+            }
+            .into(),
         }
-    }
-    pub fn style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
     }
 }
 fn activation(click: Rc<dyn Fn()>) -> Rc<dyn Fn(KeyInput)> {
@@ -312,7 +310,7 @@ fn activation(click: Rc<dyn Fn()>) -> Rc<dyn Fn(KeyInput)> {
 }
 impl Widget for NavigationItem {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let t = self.theme;
@@ -390,6 +388,7 @@ impl Widget for NavigationItem {
 pub struct Choice {
     inner: crate::RawButton,
 }
+impl_styled_inner!(Choice);
 impl Choice {
     pub fn new(label: impl Into<String>, selected: bool, click: impl Fn() + 'static) -> Self {
         let theme = use_theme();
@@ -428,9 +427,15 @@ impl Choice {
                 12.,
             )));
         inner = inner
-            .hover_background(background.mix(theme.text_primary, 0.04))
-            .pressed_background(background.mix(theme.text_primary, 0.09))
-            .focus_color(theme.accent);
+            .hover_style(
+                creamui_core::StateStyle::new()
+                    .background(background.mix(theme.text_primary, 0.04)),
+            )
+            .pressed_style(
+                creamui_core::StateStyle::new()
+                    .background(background.mix(theme.text_primary, 0.09)),
+            )
+            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0));
         Self { inner }
     }
 }

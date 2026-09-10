@@ -88,6 +88,7 @@ impl From<GridFlow> for GridAutoFlow {
 pub struct Grid {
     inner: crate::raw::RawView,
 }
+impl_styled_inner!(Grid);
 
 impl Grid {
     /// Creates an empty grid. Configure columns/rows with [`Grid::columns`],

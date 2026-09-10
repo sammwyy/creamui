@@ -33,40 +33,6 @@ impl RawView {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-
-    /// Replaces the layout style. Useful when a base style is refined by a
-    /// reusable component before it is returned.
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
-    /// Applies a complete common style. RawView consumes layout and paint;
-    /// typography remains available for text-producing components.
-    pub fn common_style(mut self, style: creamui_core::Style) -> Self {
-        self.style = style;
-        self
-    }
-
-    /// Alias for [`Self::common_style`] with conventional builder naming.
-    pub fn with_style(self, style: creamui_core::Style) -> Self {
-        self.common_style(style)
-    }
-
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
         self
@@ -97,74 +63,16 @@ pub struct RawText {
 }
 
 impl RawText {
-    pub fn new(text: impl Into<String>, color: Color, font_size: f32) -> Self {
+    /// Creates text with semantic defaults, ready to receive a shared style.
+    pub fn unstyled(text: impl Into<String>) -> Self {
         RawText {
             text: text.into(),
-            style: creamui_core::Style::new()
-                .color(color)
-                .font_size(font_size)
-                .text_align(TextAlign::Center),
+            style: creamui_core::Style::new().text_align(TextAlign::Center),
         }
     }
 
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.style.typography.font_family = Some(family.into());
-        self
-    }
-
-    pub fn color(mut self, color: Color) -> Self {
-        self.style.typography.color = Some(color.into());
-        self
-    }
-
-    pub fn bold(mut self, bold: bool) -> Self {
-        self.style.typography.bold = Some(bold);
-        self
-    }
-
-    /// Synthesized by shearing the glyph raster (no italic face is
-    /// bundled), so it combines freely with [`RawText::bold`].
-    pub fn italic(mut self, italic: bool) -> Self {
-        self.style.typography.italic = Some(italic);
-        self
-    }
-
-    pub fn underline(mut self, underline: bool) -> Self {
-        self.style.typography.underline = Some(underline);
-        self
-    }
-
-    pub fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.style.typography.strikethrough = Some(strikethrough);
-        self
-    }
-
-    pub fn font_size(mut self, font_size: f32) -> Self {
-        self.style.typography.font_size = Some(font_size);
-        self
-    }
-
-    pub fn align(mut self, align: TextAlign) -> Self {
-        self.style.typography.align = Some(align);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
-    /// Applies layout and typography from CreamUI's common style. Paint
-    /// properties are intentionally ignored because RawText paints glyphs,
-    /// not a containing surface.
-    pub fn common_style(mut self, style: creamui_core::Style) -> Self {
-        self.style = style;
-        self
-    }
-
-    /// Alias for [`Self::common_style`] with conventional builder naming.
-    pub fn with_style(self, style: creamui_core::Style) -> Self {
-        self.common_style(style)
+    pub fn new(text: impl Into<String>, color: Color, font_size: f32) -> Self {
+        Self::unstyled(text).color(color).font_size(font_size)
     }
 }
 

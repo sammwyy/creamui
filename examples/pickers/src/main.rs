@@ -2,7 +2,7 @@
 //! their raw headless building blocks. Run with `cargo run -p pickers`.
 
 use creamui_core::layout::{Dimension, Style};
-use creamui_core::{BoxedWidget, Size, TextAlign};
+use creamui_core::{BoxedWidget, Size, StateStyle, TextAlign};
 use creamui_macros::jsx;
 use creamui_reactive::Signal;
 use creamui_render::{run, WindowOptions};
@@ -17,7 +17,7 @@ fn heading(theme: &Theme, text: &str) -> BoxedWidget {
     Box::new(
         RawText::new(text, theme.text_primary, theme.typography.section)
             .bold(true)
-            .align(TextAlign::Start),
+            .text_align(TextAlign::Start),
     )
 }
 
@@ -97,10 +97,10 @@ fn main() {
                     move |next| date_set.set(next),
                 )
                 .background(theme.surface_elevated)
-                .hover_background(theme.surface_hover)
+                .hover_style(StateStyle::new().background(theme.surface_hover))
                 .border(theme.accent, 1.)
                 .corner_radius(2.)
-                .focus_color(theme.accent),
+                .focus_style(StateStyle::new().outline(theme.accent, 2.0)),
             );
             let raw_color_picker: BoxedWidget = Box::new(
                 RawColorPicker::new(
@@ -112,7 +112,7 @@ fn main() {
                 )
                 .background(theme.surface_elevated)
                 .corner_radius(2.)
-                .focus_color(theme.accent),
+                .focus_style(StateStyle::new().outline(theme.accent, 2.0)),
             );
             let raw_file_picker: BoxedWidget = Box::new(
                 RawFilePicker::new(
@@ -126,9 +126,9 @@ fn main() {
                     },
                 )
                 .background(theme.surface_elevated)
-                .hover_background(theme.surface_hover)
+                .hover_style(StateStyle::new().background(theme.surface_hover))
                 .corner_radius(2.)
-                .focus_color(theme.accent),
+                .focus_style(StateStyle::new().outline(theme.accent, 2.0)),
             );
             let raw_column: BoxedWidget = Box::new(jsx! {
                 <RawView style={column(10.)}>
@@ -151,3 +151,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

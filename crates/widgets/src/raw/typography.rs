@@ -21,16 +21,6 @@ impl RawQuote {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
         self
@@ -89,23 +79,8 @@ impl RawPre {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
     pub fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
-        self
-    }
-
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.style.typography.font_family = Some(family.into());
         self
     }
 }
@@ -205,23 +180,8 @@ impl RawLink {
         self
     }
 
-    pub fn underline(mut self, underline: bool) -> Self {
-        self.style.typography.underline = Some(underline);
-        self
-    }
-
-    pub fn align(mut self, align: TextAlign) -> Self {
-        self.style.typography.align = Some(align);
-        self
-    }
-
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
-        self
-    }
-
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.style.typography.font_family = Some(family.into());
         self
     }
 }

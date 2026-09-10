@@ -135,7 +135,7 @@ fn CustomTabBar(active: Signal<usize>) -> BoxedWidget {
         let is_active = active.get() == index;
         let select = active.clone();
         let text_color = if is_active { TEXT_ACTIVE } else { TEXT_MUTED };
-        let text = RawText::new(section.label, text_color, 13.0).layout_style(pill_style.clone());
+        let text = RawText::new(section.label, text_color, 13.0).layout(pill_style.clone());
         // Every pill always paints a same-size background — only its color
         // changes — so selecting a tab recolors it in place instead of a
         // pill popping in where nothing was drawn before.
@@ -279,3 +279,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

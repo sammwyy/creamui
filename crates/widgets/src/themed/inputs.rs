@@ -3,6 +3,7 @@ use super::*;
 pub struct TextInput {
     inner: RawTextInput,
 }
+impl_styled_inner!(TextInput);
 
 impl TextInput {
     /// The style used when none is given explicitly: a fixed 200x36 box,
@@ -18,12 +19,12 @@ impl TextInput {
     }
 
     pub fn new(value: impl Into<String>, on_change: impl Fn(String) + 'static) -> Self {
-        Self::with_style(Self::default_style(), value, on_change)
+        Self::from_layout(Self::default_style(), value, on_change)
     }
 
     /// Same as [`TextInput::new`], but with full control over layout
     /// instead of the fixed 200x36 default.
-    pub fn with_style(
+    fn from_layout(
         style: Style,
         value: impl Into<String>,
         on_change: impl Fn(String) + 'static,
@@ -43,31 +44,6 @@ impl TextInput {
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         let theme = use_theme();
         self.inner = self.inner.placeholder(text, theme.text_disabled);
-        self
-    }
-
-    /// Overrides the theme's default family stack for this input.
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.inner = self.inner.font_family(family);
-        self
-    }
-
-    /// Overrides the outline for validation states such as warning/error.
-    pub fn border(mut self, color: creamui_theme::Color) -> Self {
-        let width = self
-            .inner
-            .style
-            .paint
-            .border
-            .map_or(1.0, |border| border.width);
-        self.inner = self.inner.border(color, width);
-        self
-    }
-
-    /// Overrides the fill color, e.g. to sit a pill-shaped input on a
-    /// differently-colored bar instead of the theme's default input surface.
-    pub fn background(mut self, color: creamui_theme::Color) -> Self {
-        self.inner = self.inner.background(color);
         self
     }
 
@@ -95,7 +71,7 @@ impl TextInput {
     /// Same as [`TextInput::controlled`], but with full control over layout.
     pub fn controlled_with_style(style: Style, controller: &crate::TextController) -> Self {
         let set = controller.clone();
-        Self::with_style(style, controller.value(), move |next| set.set_value(next))
+        Self::from_layout(style, controller.value(), move |next| set.set_value(next))
             .cursor(controller.cursor(), {
                 let set = controller.clone();
                 move |cursor| set.set_cursor(cursor)
@@ -168,6 +144,7 @@ impl Widget for TextInput {
 pub struct TextArea {
     inner: RawTextArea,
 }
+impl_styled_inner!(TextArea);
 
 impl TextArea {
     pub fn default_style() -> Style {
@@ -180,9 +157,9 @@ impl TextArea {
         }
     }
     pub fn new(value: impl Into<String>, on_change: impl Fn(String) + 'static) -> Self {
-        Self::with_style(Self::default_style(), value, on_change)
+        Self::from_layout(Self::default_style(), value, on_change)
     }
-    pub fn with_style(
+    fn from_layout(
         style: Style,
         value: impl Into<String>,
         on_change: impl Fn(String) + 'static,
@@ -204,12 +181,6 @@ impl TextArea {
         self
     }
 
-    /// Overrides the theme's default family stack for this editor.
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.inner = self.inner.font_family(family);
-        self
-    }
-
     pub fn alternating_line_background(mut self, color: creamui_theme::Color) -> Self {
         self.inner = self.inner.alternating_line_background(color);
         self
@@ -217,19 +188,6 @@ impl TextArea {
 
     pub fn active_line_background(mut self, color: creamui_theme::Color) -> Self {
         self.inner = self.inner.active_line_background(color);
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.inner = self.inner.corner_radius(radius);
-        self
-    }
-
-    /// Sets the editor outline width. Use `0.0` for an edge-to-edge editor.
-    pub fn border_width(mut self, width: f32) -> Self {
-        if let Some(border) = self.inner.style.paint.border {
-            self.inner.style.paint.border = Some(creamui_core::Border::new(border.color, width));
-        }
         self
     }
 
@@ -290,7 +248,7 @@ impl TextArea {
         let value_set = controller.clone();
         let cursor_set = controller.clone();
         let selection_set = controller.clone();
-        Self::with_style(style, controller.value(), move |next| {
+        Self::from_layout(style, controller.value(), move |next| {
             value_set.set_value(next)
         })
         .cursor(controller.cursor(), move |next| cursor_set.set_cursor(next))
@@ -332,6 +290,7 @@ impl Widget for TextArea {
 pub struct Slider {
     inner: RawSlider,
 }
+impl_styled_inner!(Slider);
 
 impl Slider {
     /// The style used when none is given explicitly: a fixed 160x20 box,
@@ -347,12 +306,12 @@ impl Slider {
     }
 
     pub fn new(value: f32, on_change: impl Fn(f32) + 'static) -> Self {
-        Self::with_style(Self::default_style(), value, on_change)
+        Self::from_layout(Self::default_style(), value, on_change)
     }
 
     /// Same as [`Slider::new`], but with full control over layout instead
     /// of the fixed 160x20 default.
-    pub fn with_style(style: Style, value: f32, on_change: impl Fn(f32) + 'static) -> Self {
+    fn from_layout(style: Style, value: f32, on_change: impl Fn(f32) + 'static) -> Self {
         let theme = use_theme();
         let inner = RawSlider::new(
             style,

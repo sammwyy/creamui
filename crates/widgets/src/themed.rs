@@ -16,7 +16,9 @@ use crate::raw::{
 use creamui_core::layout::{
     AlignItems, Dimension, JustifyContent, LengthPercentage, Rect as LayoutRect, Style,
 };
-use creamui_core::{BoxedWidget, CursorIcon, KeyInput, Painter, Point, Rect, TextAlign, Widget};
+use creamui_core::{
+    BoxedWidget, CursorIcon, KeyInput, Painter, Point, Rect, Styled, TextAlign, Widget,
+};
 use creamui_theme::{use_theme, Color, SelectionStyle, Theme};
 use std::rc::Rc;
 

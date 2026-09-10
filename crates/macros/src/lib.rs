@@ -31,6 +31,10 @@ fn widgets_path() -> TokenStream2 {
     crate_path("widgets", "creamui_widgets")
 }
 
+fn core_path() -> TokenStream2 {
+    crate_path("core", "creamui_core")
+}
+
 fn jsx_path() -> TokenStream2 {
     crate_path("jsx_runtime", "creamui_jsx")
 }
@@ -269,7 +273,9 @@ impl Element {
 
     fn reject_unknown_props(&self, allowed: &[&str]) -> Result<()> {
         for attribute in &self.attributes {
-            if !allowed.iter().any(|allowed| attribute.name == allowed) {
+            if !allowed.iter().any(|allowed| attribute.name == allowed)
+                && !Self::is_common_style_prop(&attribute.name.to_string())
+            {
                 return Err(Error::new_spanned(
                     &attribute.name,
                     format!(
@@ -280,6 +286,79 @@ impl Element {
             }
         }
         Ok(())
+    }
+
+    fn is_common_style_prop(name: &str) -> bool {
+        matches!(
+            name,
+            "style"
+                | "background"
+                | "border"
+                | "corner_radius"
+                | "outline"
+                | "color"
+                | "font_size"
+                | "font_family"
+                | "text_align"
+                | "bold"
+                | "italic"
+                | "underline"
+                | "strikethrough"
+                | "hover_style"
+                | "pressed_style"
+                | "focus_style"
+                | "disabled_style"
+                | "width"
+                | "height"
+                | "min_width"
+                | "min_height"
+                | "max_width"
+                | "max_height"
+        )
+    }
+
+    fn apply_common_style(&self, mut output: TokenStream2) -> Result<TokenStream2> {
+        let core = core_path();
+        if let Some(value) = self.prop("style")? {
+            output = quote!({
+                let __creamui_style = #value;
+                #core::Styled::with_style(#output, __creamui_style)
+            });
+        }
+        for name in [
+            "background",
+            "corner_radius",
+            "color",
+            "font_size",
+            "font_family",
+            "text_align",
+            "bold",
+            "italic",
+            "underline",
+            "strikethrough",
+            "hover_style",
+            "pressed_style",
+            "focus_style",
+            "disabled_style",
+            "width",
+            "height",
+            "min_width",
+            "min_height",
+            "max_width",
+            "max_height",
+        ] {
+            if let Some(value) = self.prop(name)? {
+                let method = format_ident!("{name}");
+                output = quote!(#core::Styled::#method(#output, #value));
+            }
+        }
+        if let Some(value) = self.prop("border")? {
+            output = quote!({ let (color, width) = #value; #core::Styled::border(#output, color, width) });
+        }
+        if let Some(value) = self.prop("outline")? {
+            output = quote!({ let (color, width) = #value; #core::Styled::outline(#output, color, width) });
+        }
+        Ok(output)
     }
 
     fn text_child(&self) -> Result<TokenStream2> {
@@ -329,8 +408,9 @@ impl Element {
 
     fn expand(&self) -> Result<TokenStream2> {
         let widgets = widgets_path();
+        let core = core_path();
         let image = image_path();
-        match self.tag.to_string().as_str() {
+        let output = match self.tag.to_string().as_str() {
             "Block" => {
                 self.reject_unknown_props(&[
                     "style",
@@ -344,11 +424,7 @@ impl Element {
                     "corner_radius",
                     "children",
                 ])?;
-                let mut output = if let Some(style) = self.prop("style")? {
-                    quote!(#widgets::layout::Block::with_style(#style))
-                } else {
-                    quote!(#widgets::layout::Block::new())
-                };
+                let mut output = quote!(#widgets::layout::Block::new());
                 if let Some(size) = self.prop("size")? {
                     output = quote!({
                         let (width, height) = #size;
@@ -372,12 +448,6 @@ impl Element {
                 }
                 if let Some(grow) = self.prop("grow")? {
                     output = quote!(#output.grow(#grow));
-                }
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
                 }
                 if let Some(children) = self.prop("children")? {
                     if !self.children.is_empty() {
@@ -476,12 +546,6 @@ impl Element {
                 if let Some(align_self) = self.prop("align_self")? {
                     output = quote!(#output.align_self(#align_self));
                 }
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
-                }
                 if let Some(children) = self.prop("children")? {
                     if !self.children.is_empty() {
                         return Err(Error::new_spanned(
@@ -567,12 +631,6 @@ impl Element {
                 if let Some(grow) = self.prop("grow")? {
                     output = quote!(#output.grow(#grow));
                 }
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
-                }
                 if let Some(children) = self.prop("children")? {
                     if !self.children.is_empty() {
                         return Err(Error::new_spanned(
@@ -622,14 +680,7 @@ impl Element {
             }
             "RawView" => {
                 self.reject_unknown_props(&["style", "background", "corner_radius", "children"])?;
-                let style = self.required_prop("style")?;
-                let mut output = quote!(#widgets::raw::RawView::new(#style));
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
-                }
+                let output = quote!(#widgets::raw::RawView::new(#core::Style::default()));
                 if let Some(children) = self.prop("children")? {
                     if !self.children.is_empty() {
                         return Err(Error::new_spanned(
@@ -655,11 +706,7 @@ impl Element {
                     "corner_radius",
                     "children",
                 ])?;
-                let mut output = if let Some(style) = self.prop("style")? {
-                    quote!(#widgets::CUIWindowDragArea::with_style(#style))
-                } else {
-                    quote!(#widgets::CUIWindowDragArea::new())
-                };
+                let mut output = quote!(#widgets::CUIWindowDragArea::new());
                 if let Some(size) = self.prop("size")? {
                     output = quote!({
                         let (width, height) = #size;
@@ -684,12 +731,6 @@ impl Element {
                 if let Some(grow) = self.prop("grow")? {
                     output = quote!(#output.grow(#grow));
                 }
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
-                }
                 if let Some(children) = self.prop("children")? {
                     if !self.children.is_empty() {
                         return Err(Error::new_spanned(
@@ -704,15 +745,10 @@ impl Element {
             }
             "RawText" => {
                 self.reject_unknown_props(&["color", "font_size", "align", "style"])?;
-                let color = self.required_prop("color")?;
-                let font_size = self.required_prop("font_size")?;
                 let text = self.text_child()?;
-                let mut output = quote!(#widgets::raw::RawText::new(#text, #color, #font_size));
+                let mut output = quote!(#widgets::raw::RawText::unstyled(#text));
                 if let Some(align) = self.prop("align")? {
-                    output = quote!(#output.align(#align));
-                }
-                if let Some(style) = self.prop("style")? {
-                    output = quote!(#output.layout_style(#style));
+                    output = quote!(#core::Styled::text_align(#output, #align));
                 }
                 Ok(output)
             }
@@ -721,34 +757,14 @@ impl Element {
                     "style",
                     "on_click",
                     "background",
-                    "hover_background",
-                    "pressed_background",
                     "hover_style",
                     "pressed_style",
                     "corner_radius",
                     "disabled",
                 ])?;
-                let style = self.required_prop("style")?;
                 let on_click = self.required_prop("on_click")?;
-                let mut output = quote!(#widgets::raw::RawButton::new(#style, #on_click));
-                if let Some(background) = self.prop("background")? {
-                    output = quote!(#output.background(#background));
-                }
-                if let Some(background) = self.prop("hover_background")? {
-                    output = quote!(#output.hover_background(#background));
-                }
-                if let Some(background) = self.prop("pressed_background")? {
-                    output = quote!(#output.pressed_background(#background));
-                }
-                if let Some(style) = self.prop("hover_style")? {
-                    output = quote!(#output.hover_style(#style));
-                }
-                if let Some(style) = self.prop("pressed_style")? {
-                    output = quote!(#output.pressed_style(#style));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
-                }
+                let mut output =
+                    quote!(#widgets::raw::RawButton::new(#core::Style::default(), #on_click));
                 if let Some(disabled) = self.prop("disabled")? {
                     output = quote!(#output.disabled(#disabled));
                 }
@@ -756,11 +772,10 @@ impl Element {
             }
             "ScrollView" => {
                 self.reject_unknown_props(&["style", "scroll_y", "on_scroll"])?;
-                let style = self.required_prop("style")?;
                 let scroll_y = self.required_prop("scroll_y")?;
                 let on_scroll = self.required_prop("on_scroll")?;
                 self.container_children(
-                    quote!(#widgets::themed::ScrollView::new(#style, #scroll_y, #on_scroll)),
+                    quote!(#widgets::themed::ScrollView::new(#core::layout::Style::default(), #scroll_y, #on_scroll)),
                 )
             }
             "Text" => {
@@ -779,23 +794,11 @@ impl Element {
                 } else {
                     quote!(#widgets::themed::Text::new(#text))
                 };
-                if let Some(font_size) = self.prop("font_size")? {
-                    output = quote!(#output.font_size(#font_size));
-                }
                 if let Some(size) = self.prop("size")? {
                     output = quote!(#output.size(#size));
                 }
                 if let Some(align) = self.prop("align")? {
-                    output = quote!(#output.align(#align));
-                }
-                if let Some(color) = self.prop("color")? {
-                    output = quote!(#output.color(#color));
-                }
-                if let Some(font_family) = self.prop("font_family")? {
-                    output = quote!(#output.font_family(#font_family));
-                }
-                if let Some(style) = self.prop("style")? {
-                    output = quote!(#output.style(#style));
+                    output = quote!(#core::Styled::text_align(#output, #align));
                 }
                 Ok(output)
             }
@@ -808,16 +811,7 @@ impl Element {
                     quote!(#widgets::themed::Heading::new(#text))
                 };
                 if let Some(align) = self.prop("align")? {
-                    output = quote!(#output.align(#align));
-                }
-                if let Some(color) = self.prop("color")? {
-                    output = quote!(#output.color(#color));
-                }
-                if let Some(font_family) = self.prop("font_family")? {
-                    output = quote!(#output.font_family(#font_family));
-                }
-                if let Some(style) = self.prop("style")? {
-                    output = quote!(#output.style(#style));
+                    output = quote!(#core::Styled::text_align(#output, #align));
                 }
                 Ok(output)
             }
@@ -825,11 +819,7 @@ impl Element {
                 self.reject_unknown_props(&["on_click", "style", "disabled"])?;
                 let on_click = self.required_prop("on_click")?;
                 let label = self.text_child()?;
-                let mut output = if let Some(style) = self.prop("style")? {
-                    quote!(#widgets::themed::Button::with_style(#style, #label, #on_click))
-                } else {
-                    quote!(#widgets::themed::Button::new(#label, #on_click))
-                };
+                let mut output = quote!(#widgets::themed::Button::new(#label, #on_click));
                 if let Some(disabled) = self.prop("disabled")? {
                     output = quote!(#output.disabled(#disabled));
                 }
@@ -863,18 +853,9 @@ impl Element {
                         "`TextInput` cannot have children",
                     ));
                 }
-                let style = self.prop("style")?;
                 let mut output = match (self.prop("controller")?, self.prop("value")?, self.prop("on_change")?) {
-                    (Some(controller), None, None) => if let Some(style) = &style {
-                        quote!(#widgets::themed::TextInput::controlled_with_style(#style, #controller))
-                    } else {
-                        quote!(#widgets::themed::TextInput::controlled(#controller))
-                    },
-                    (None, Some(value), Some(on_change)) => if let Some(style) = &style {
-                        quote!(#widgets::themed::TextInput::with_style(#style, #value, #on_change))
-                    } else {
-                        quote!(#widgets::themed::TextInput::new(#value, #on_change))
-                    },
+                    (Some(controller), None, None) => quote!(#widgets::themed::TextInput::controlled(#controller)),
+                    (None, Some(value), Some(on_change)) => quote!(#widgets::themed::TextInput::new(#value, #on_change)),
                     (None, None, None) => return Err(Error::new_spanned(&self.tag, "`TextInput` requires either a `controller` prop or both `value` and `on_change`")),
                     _ => return Err(Error::new_spanned(&self.tag, "`TextInput`'s `controller` prop cannot be combined with `value`/`on_change`")),
                 };
@@ -883,9 +864,6 @@ impl Element {
                 }
                 if let Some(enabled) = self.prop("clipboard_enabled")? {
                     output = quote!(#output.clipboard_enabled(#enabled));
-                }
-                if let Some(font_family) = self.prop("font_family")? {
-                    output = quote!(#output.font_family(#font_family));
                 }
                 Ok(output)
             }
@@ -919,7 +897,6 @@ impl Element {
                         "`TextArea` cannot have children",
                     ));
                 }
-                let style = self.prop("style")?;
                 let controller = self.prop("controller")?;
                 if let Some(controller) = &controller {
                     for name in [
@@ -937,19 +914,11 @@ impl Element {
                     let _ = controller;
                 }
                 let mut output = if let Some(controller) = &controller {
-                    if let Some(style) = &style {
-                        quote!(#widgets::themed::TextArea::controlled_with_style(#style, #controller))
-                    } else {
-                        quote!(#widgets::themed::TextArea::controlled(#controller))
-                    }
+                    quote!(#widgets::themed::TextArea::controlled(#controller))
                 } else {
                     let value = self.required_prop("value")?;
                     let on_change = self.required_prop("on_change")?;
-                    if let Some(style) = &style {
-                        quote!(#widgets::themed::TextArea::with_style(#style, #value, #on_change))
-                    } else {
-                        quote!(#widgets::themed::TextArea::new(#value, #on_change))
-                    }
+                    quote!(#widgets::themed::TextArea::new(#value, #on_change))
                 };
                 if let Some(placeholder) = self.prop("placeholder")? {
                     output = quote!(#output.placeholder(#placeholder));
@@ -959,9 +928,6 @@ impl Element {
                 }
                 if let Some(color) = self.prop("active_line_background")? {
                     output = quote!(#output.active_line_background(#color));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
                 }
                 if let Some(width) = self.prop("border_width")? {
                     output = quote!(#output.border_width(#width));
@@ -1005,9 +971,6 @@ impl Element {
                 if let Some(wrap) = self.prop("wrap")? {
                     output = quote!(#output.wrap(#wrap));
                 }
-                if let Some(font_family) = self.prop("font_family")? {
-                    output = quote!(#output.font_family(#font_family));
-                }
                 Ok(output)
             }
             "Slider" => {
@@ -1020,11 +983,7 @@ impl Element {
                 }
                 let value = self.required_prop("value")?;
                 let on_change = self.required_prop("on_change")?;
-                if let Some(style) = self.prop("style")? {
-                    Ok(quote!(#widgets::themed::Slider::with_style(#style, #value, #on_change)))
-                } else {
-                    Ok(quote!(#widgets::themed::Slider::new(#value, #on_change)))
-                }
+                Ok(quote!(#widgets::themed::Slider::new(#value, #on_change)))
             }
             "ColorPicker" => {
                 self.reject_unknown_props(&[
@@ -1044,11 +1003,7 @@ impl Element {
                 let controller = self.required_prop("controller")?;
                 let value = self.required_prop("value")?;
                 let on_change = self.required_prop("on_change")?;
-                let mut output = if let Some(style) = self.prop("style")? {
-                    quote!(#widgets::themed::ColorPicker::controlled_with_style(#style, #value, #controller, #on_change))
-                } else {
-                    quote!(#widgets::themed::ColorPicker::controlled(#value, #controller, #on_change))
-                };
+                let mut output = quote!(#widgets::themed::ColorPicker::controlled(#value, #controller, #on_change));
                 if let Some(width) = self.prop("popup_width")? {
                     output = quote!(#output.popup_width(#width));
                 }
@@ -1066,16 +1021,9 @@ impl Element {
                     ));
                 }
                 let data = self.required_prop("data")?;
-                let mut output = if let Some(style) = self.prop("style")? {
-                    quote!(#image::Image::with_style(#data, #style))
-                } else {
-                    quote!(#image::Image::new(#data))
-                };
+                let mut output = quote!(#image::Image::new(#data));
                 if let Some(fit) = self.prop("fit")? {
                     output = quote!(#output.fit(#fit));
-                }
-                if let Some(radius) = self.prop("corner_radius")? {
-                    output = quote!(#output.corner_radius(#radius));
                 }
                 Ok(output)
             }
@@ -1096,28 +1044,18 @@ impl Element {
                     ));
                 }
                 let controller = self.required_prop("controller")?;
-                let style = self.prop("style")?;
                 let tag = self.tag.to_string();
                 if tag != "DateTimePicker"
                     && (self.prop("show_date")?.is_some() || self.prop("show_time")?.is_some())
                 {
                     return Err(Error::new_spanned(&self.tag, "`show_date`/`show_time` belong to `DateTimePicker`; use the matching DateInput or TimeInput tag"));
                 }
-                let constructor = match (tag.as_str(), style) {
-                    ("DateTimePicker", Some(style)) => {
-                        quote!(#widgets::themed::DateTimePicker::controlled_with_style(#style, #controller))
-                    }
-                    ("DateTimePicker", None) => {
+                let constructor = match tag.as_str() {
+                    "DateTimePicker" => {
                         quote!(#widgets::themed::DateTimePicker::controlled(#controller))
                     }
-                    ("DateInput", Some(style)) => {
-                        quote!(#widgets::themed::DateInput::controlled_with_style(#style, #controller))
-                    }
-                    ("DateInput", None) => {
+                    "DateInput" => {
                         quote!(#widgets::themed::DateInput::controlled(#controller))
-                    }
-                    ("TimeInput", Some(style)) => {
-                        quote!(#widgets::themed::TimeInput::controlled_with_style(#style, #controller))
                     }
                     _ => {
                         quote!(#widgets::themed::TimeInput::controlled(#controller))
@@ -1141,8 +1079,9 @@ impl Element {
                 }
                 Ok(output)
             }
-            _ => self.expand_user_component(),
-        }
+            _ => return self.expand_user_component(),
+        }?;
+        self.apply_common_style(output)
     }
 
     fn expand_user_component(&self) -> Result<TokenStream2> {

@@ -5,7 +5,7 @@
 
 use creamui_core::layout::Style;
 use creamui_core::{
-    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, TextAlign, Widget,
+    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, Styled, TextAlign, Widget,
 };
 use creamui_theme::Color;
 use std::cell::Cell;
@@ -145,3 +145,40 @@ pub use scroll::*;
 pub use spinner::*;
 pub use text_input::*;
 pub use typography::*;
+
+macro_rules! impl_direct_styled {
+    ($($widget:ty),+ $(,)?) => {
+        $(
+            impl creamui_core::Styled for $widget {
+                fn set_style(&mut self, style: creamui_core::Style) {
+                    self.style = style;
+                }
+            }
+        )+
+    };
+}
+
+impl_direct_styled!(
+    RawButton,
+    RawCheckbox,
+    RawColorPicker,
+    RawDateTimePicker,
+    RawFilePicker,
+    RawLink,
+    RawListView,
+    RawPre,
+    RawQuote,
+    RawScrollView,
+    RawScrollbar,
+    RawSidebar,
+    RawSlider,
+    RawSpinner,
+    RawSwitch,
+    RawTab,
+    RawTable,
+    RawTabs,
+    RawText,
+    RawTextArea,
+    RawTextInput,
+    RawView,
+);

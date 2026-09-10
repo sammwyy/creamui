@@ -6,6 +6,7 @@ use crate::raw::{RawLink, RawPre, RawQuote};
 pub struct Quote {
     inner: RawQuote,
 }
+impl_styled_inner!(Quote);
 
 impl Quote {
     pub fn new(text: impl Into<String>) -> Self {
@@ -26,17 +27,10 @@ impl Quote {
         };
         let content = RawText::new(text, theme.text_secondary, theme.typography.body)
             .italic(true)
-            .align(TextAlign::Start);
+            .text_align(TextAlign::Start);
         Quote {
             inner: RawQuote::new(style, theme.accent, bar_width).child(Box::new(content)),
         }
-    }
-
-    /// Gives the quote a layout style for width, margin, flex/grid
-    /// placement, etc.
-    pub fn style(mut self, style: Style) -> Self {
-        self.inner.style.layout = style;
-        self
     }
 }
 
@@ -60,6 +54,7 @@ impl Widget for Quote {
 pub struct Pre {
     inner: RawPre,
 }
+impl_styled_inner!(Pre);
 
 impl Pre {
     pub fn new(text: impl Into<String>) -> Self {
@@ -78,19 +73,6 @@ impl Pre {
                 .corner_radius(theme.radius_medium)
                 .padding(theme.spacing_medium),
         }
-    }
-
-    /// Gives the block a layout style for width, margin, flex/grid
-    /// placement, etc.
-    pub fn style(mut self, style: Style) -> Self {
-        self.inner.style.layout = style;
-        self
-    }
-
-    /// Overrides the theme's default family stack for this code block.
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.inner = self.inner.font_family(family);
-        self
     }
 }
 
@@ -113,6 +95,7 @@ impl Widget for Pre {
 pub struct Link {
     inner: RawLink,
 }
+impl_styled_inner!(Link);
 
 impl Link {
     pub fn new(text: impl Into<String>, on_click: impl Fn() + 'static) -> Self {
@@ -131,21 +114,8 @@ impl Link {
         }
     }
 
-    /// Gives the link a layout style for width, margin, flex/grid
-    /// placement, etc.
-    pub fn style(mut self, style: Style) -> Self {
-        self.inner.style.layout = style;
-        self
-    }
-
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.inner.disabled = disabled;
-        self
-    }
-
-    /// Overrides the theme's default family stack for this link.
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.inner = self.inner.font_family(family);
         self
     }
 }

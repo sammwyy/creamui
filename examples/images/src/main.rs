@@ -38,7 +38,7 @@ fn image_card(title: &str, description: &str, image: Image) -> BoxedWidget {
         .child(Box::new(
             RawText::new(title, theme.text_primary, theme.typography.section)
                 .bold(true)
-                .align(TextAlign::Start),
+                .text_align(TextAlign::Start),
         ))
         .child(Box::new(image))
         .child(Box::new(jsx! {
@@ -77,19 +77,23 @@ fn main() {
             let png_card = image_card(
                 "PNG · square",
                 "Cover fit without clipping the corners.",
-                Image::with_style(png.clone(), image_style(190., 190.)).fit(ImageFit::Cover),
+                Image::new(png.clone())
+                    .layout(image_style(190., 190.))
+                    .fit(ImageFit::Cover),
             );
             let jpeg_card = image_card(
                 "JPEG · rounded",
                 "A 4:3 crop with the active theme's radius.",
-                Image::with_style(jpeg.clone(), image_style(230., 172.))
+                Image::new(jpeg.clone())
+                    .layout(image_style(230., 172.))
                     .fit(ImageFit::Cover)
                     .corner_radius(theme.card_radius),
             );
             let webp_card = image_card(
                 "WebP · circle",
                 "A square crop clipped into a complete circle.",
-                Image::with_style(webp.clone(), image_style(190., 190.))
+                Image::new(webp.clone())
+                    .layout(image_style(190., 190.))
                     .fit(ImageFit::Cover)
                     .corner_radius(95.),
             );
@@ -106,3 +110,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

@@ -5,7 +5,7 @@ use creamui_core::layout::{LengthPercentageAuto, Position, Rect as InsetRect};
 /// border, and an optional status dot anchored at the bottom-right corner.
 ///
 /// `.image(child)` expects `child` to already be sized to fill the avatar's
-/// own box (e.g. `Image::with_style(data, fixed(size, size)).fit(ImageFit::Cover)`) —
+/// own box (e.g. `Image::new(data).layout(fixed(size, size)).fit(ImageFit::Cover)`) —
 /// `Avatar` only clips it into a circle, it does not resize it.
 pub struct Avatar {
     size: f32,
@@ -34,7 +34,7 @@ impl Avatar {
     }
 
     /// Fallback fill color shown behind initials, or while no image is set.
-    pub fn background(mut self, color: Color) -> Self {
+    pub fn fallback_color(mut self, color: Color) -> Self {
         self.background = color;
         self
     }

@@ -11,8 +11,9 @@ pub struct Select {
     theme: Theme,
     options: Vec<String>,
     controller: crate::SelectController,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(Select);
 
 impl Select {
     pub fn controlled(options: &[&str], controller: crate::SelectController) -> Self {
@@ -21,7 +22,7 @@ impl Select {
             theme,
             options: options.iter().map(|option| (*option).to_owned()).collect(),
             controller,
-            style: Self::default_style(),
+            style: Self::default_style().into(),
         }
     }
 
@@ -31,11 +32,6 @@ impl Select {
             flex_shrink: 0.0,
             ..Default::default()
         }
-    }
-
-    pub fn with_style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
     }
 
     fn selected_label(&self) -> &str {
@@ -52,7 +48,7 @@ impl Select {
 
 impl Widget for Select {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let hovered = painter.hovered(rect);
@@ -176,15 +172,15 @@ impl Widget for Select {
                 .corner_radius(self.theme.menu_item_radius)
                 .child(Box::new(
                     RawText::new(label, foreground, self.theme.typography.body)
-                        .align(TextAlign::Start),
+                        .text_align(TextAlign::Start),
                 ));
             item = item
-                .hover_background(if selected {
+                .hover_style(creamui_core::StateStyle::new().background(if selected {
                     self.theme.accent_hover
                 } else {
                     self.theme.surface_hover
-                })
-                .focus_color(self.theme.accent);
+                }))
+                .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0));
             popup = popup.child(Box::new(item));
         }
         let dismiss = self.controller.clone();
@@ -241,9 +237,10 @@ pub struct Radio {
     theme: Theme,
     label: String,
     selected: bool,
-    style: Style,
+    style: creamui_core::Style,
     on_click: Rc<dyn Fn()>,
 }
+impl_styled_field!(Radio);
 
 impl Radio {
     pub fn new(label: impl Into<String>, selected: bool, on_click: impl Fn() + 'static) -> Self {
@@ -252,7 +249,7 @@ impl Radio {
             theme,
             label: label.into(),
             selected,
-            style: Self::default_style(),
+            style: Self::default_style().into(),
             on_click: Rc::new(on_click),
         }
     }
@@ -262,15 +259,11 @@ impl Radio {
             ..Default::default()
         }
     }
-    pub fn with_style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
-    }
 }
 
 impl Widget for Radio {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let diameter = 18.0;
@@ -353,8 +346,9 @@ pub struct RadioGroup {
     selected: usize,
     on_change: Rc<dyn Fn(usize)>,
     options: Vec<String>,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(RadioGroup);
 
 impl RadioGroup {
     pub fn new(selected: usize, on_change: impl Fn(usize) + 'static) -> Self {
@@ -363,22 +357,18 @@ impl RadioGroup {
             selected,
             on_change: Rc::new(on_change),
             options: Vec::new(),
-            style: column(theme.spacing_small),
+            style: column(theme.spacing_small).into(),
         }
     }
     pub fn option(mut self, label: impl Into<String>) -> Self {
         self.options.push(label.into());
         self
     }
-    pub fn with_style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
-    }
 }
 
 impl Widget for RadioGroup {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, _: &mut dyn Painter, _: Rect) {}
     fn children(&mut self) -> Vec<BoxedWidget> {
@@ -405,8 +395,9 @@ pub struct SegmentedControl {
     selected: usize,
     on_change: Rc<dyn Fn(usize)>,
     options: Vec<String>,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(SegmentedControl);
 
 impl SegmentedControl {
     pub fn new(selected: usize, on_change: impl Fn(usize) + 'static) -> Self {
@@ -415,22 +406,18 @@ impl SegmentedControl {
             selected,
             on_change: Rc::new(on_change),
             options: Vec::new(),
-            style: row(theme.spacing_small),
+            style: row(theme.spacing_small).into(),
         }
     }
     pub fn option(mut self, label: impl Into<String>) -> Self {
         self.options.push(label.into());
         self
     }
-    pub fn with_style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
-    }
 }
 
 impl Widget for SegmentedControl {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, _: &mut dyn Painter, _: Rect) {}
     fn children(&mut self) -> Vec<BoxedWidget> {
@@ -460,13 +447,14 @@ impl Widget for SegmentedControl {
 /// column-based data, see [`crate::themed::TreeView`] instead.
 pub struct ListBox {
     theme: Theme,
-    style: Style,
+    style: creamui_core::Style,
     scroll: ScrollController,
     options: Vec<String>,
     selected: usize,
     on_change: Rc<dyn Fn(usize)>,
     row_height: f32,
 }
+impl_styled_field!(ListBox);
 
 impl ListBox {
     pub fn new(
@@ -478,7 +466,7 @@ impl ListBox {
         let theme = use_theme();
         Self {
             theme,
-            style,
+            style: style.into(),
             scroll,
             options: Vec::new(),
             selected,
@@ -505,7 +493,7 @@ impl ListBox {
 
 impl Widget for ListBox {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -542,14 +530,14 @@ impl Widget for ListBox {
             };
             let mut item =
                 RawButton::new(row_style, move || on_change(index)).background(background);
-            item = item.hover_background(if selected {
+            item = item.hover_style(creamui_core::StateStyle::new().background(if selected {
                 self.theme.accent_hover
             } else {
                 self.theme.surface_hover
-            });
+            }));
             item = item.child(Box::new(
                 RawText::new(label.clone(), foreground, self.theme.typography.body)
-                    .align(TextAlign::Start),
+                    .text_align(TextAlign::Start),
             ));
             scroll_view = scroll_view.child(Box::new(item));
         }

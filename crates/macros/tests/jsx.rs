@@ -1,5 +1,8 @@
 use creamui_core::layout::{FlexDirection, Style};
-use creamui_core::{render_frame, BoxedWidget, Painter, Rect, Size, TextAlign};
+use creamui_core::{
+    render_frame, BoxedWidget, Painter, Rect, Size, StateStyle, Style as CommonStyle, TextAlign,
+    Widget,
+};
 use creamui_macros::{abi_jsx, component, jsx};
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
@@ -131,7 +134,7 @@ fn jsx_exposes_headless_text_and_buttons_with_layout_props() {
         creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
         let root: BoxedWidget = Box::new(jsx! {
             <RawView style={Style::default()}>
-                <RawButton style={Style::default()} background={Color::rgb(20, 20, 20)} hover_background={Color::rgb(30, 30, 30)} pressed_background={Color::rgb(10, 10, 10)} corner_radius={12.0} on_click={|| {}}>
+                <RawButton style={Style::default()} background={Color::rgb(20, 20, 20)} hover_style={StateStyle::new().background(Color::rgb(30, 30, 30))} pressed_style={StateStyle::new().background(Color::rgb(10, 10, 10))} corner_radius={12.0} on_click={|| {}}>
                     <RawText color={Color::rgb(255, 200, 0)} font_size={18.0} align={TextAlign::End} style={Style::default()}>"Raw label"</RawText>
                 </RawButton>
                 <Text color={Color::rgb(120, 220, 255)} align={TextAlign::Start} style={Style::default()}>"Themed label"</Text>
@@ -148,6 +151,35 @@ fn jsx_exposes_headless_text_and_buttons_with_layout_props() {
         );
         assert_eq!(painter.0, ["Raw label", "Themed label"]);
     });
+}
+
+#[test]
+fn jsx_reuses_common_styles_and_inline_props_override_them() {
+    let shared = CommonStyle::new()
+        .width("120px")
+        .background(Color::rgb(10, 20, 30))
+        .corner_radius(4.0);
+
+    let first = jsx! {
+        <RawView style={shared.clone()} width={"50%"} background={Color::rgb(40, 50, 60)} />
+    };
+    let second = jsx! { <RawView style={shared} /> };
+
+    let first_style = Widget::style(&first);
+    let second_style = Widget::style(&second);
+    assert_eq!(
+        first_style.layout.size.width,
+        creamui_core::layout::Dimension::Percent(0.5)
+    );
+    assert_eq!(
+        first_style.paint.background,
+        Some(Color::rgb(40, 50, 60).into())
+    );
+    assert_eq!(
+        second_style.layout.size.width,
+        creamui_core::layout::Dimension::Length(120.0)
+    );
+    assert_eq!(second_style.paint.corner_radius, Some(4.0));
 }
 
 #[test]

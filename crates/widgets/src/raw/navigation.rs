@@ -26,21 +26,6 @@ impl RawTabs {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
         self
@@ -85,21 +70,6 @@ impl RawSidebar {
             style: style.into(),
             children: Vec::new(),
         }
-    }
-
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
     }
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {
@@ -164,36 +134,6 @@ impl RawTab {
             on_hover: None,
             disabled: false,
         }
-    }
-
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn hover_background(mut self, color: Color) -> Self {
-        self.style.states.hover.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn pressed_background(mut self, color: Color) -> Self {
-        self.style.states.pressed.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {

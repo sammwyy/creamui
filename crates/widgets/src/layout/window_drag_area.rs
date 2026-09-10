@@ -7,13 +7,14 @@ pub struct CUIWindowDragArea {
     inner: crate::raw::RawView,
     drag: Option<WindowDragHandle>,
 }
+impl_styled_inner!(CUIWindowDragArea);
 
 impl CUIWindowDragArea {
     pub fn new() -> Self {
-        Self::with_style(Style::default())
+        Self::from_layout(Style::default())
     }
 
-    pub fn with_style(style: Style) -> Self {
+    fn from_layout(style: Style) -> Self {
         Self {
             inner: crate::raw::RawView::new(shrinkable(style)),
             drag: creamui_reactive::try_use_context(),

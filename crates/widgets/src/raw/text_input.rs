@@ -163,11 +163,6 @@ impl RawTextArea {
         self
     }
 
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.style.typography.font_family = Some(family.into());
-        self
-    }
-
     fn font_size(&self) -> f32 {
         self.style.typography.font_size.unwrap_or(14.0)
     }
@@ -184,18 +179,6 @@ impl RawTextArea {
             .unwrap_or(Color::rgb(0, 0, 0))
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
     pub fn placeholder(mut self, text: impl Into<String>, color: Color) -> Self {
         self.placeholder = text.into();
         self.placeholder_color = color;
@@ -825,29 +808,9 @@ impl RawTextInput {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
     pub fn placeholder(mut self, text: impl Into<String>, color: Color) -> Self {
         self.placeholder = text.into();
         self.placeholder_color = color;
-        self
-    }
-
-    pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.style.typography.font_family = Some(family.into());
         self
     }
 

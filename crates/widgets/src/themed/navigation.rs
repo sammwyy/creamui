@@ -85,6 +85,7 @@ impl TabColors {
 pub struct Tabs {
     inner: RawTabs,
 }
+impl_styled_inner!(Tabs);
 
 impl Tabs {
     /// The supplied [`Style`] is preserved exactly, including `gap`, width,
@@ -98,21 +99,6 @@ impl Tabs {
     }
 
     /// Replaces the container layout style after construction.
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.inner.style.layout = style;
-        self
-    }
-
-    pub fn background(mut self, color: Color) -> Self {
-        self.inner.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.inner.style.paint.corner_radius = Some(radius);
-        self
-    }
-
     /// Sets horizontal and vertical space between tab entries.
     pub fn gap(mut self, gap: f32) -> Self {
         self.inner.style.gap = creamui_core::layout::Size {
@@ -152,6 +138,7 @@ impl Widget for Tabs {
 pub struct Tab {
     inner: RawTab,
 }
+impl_styled_inner!(Tab);
 
 /// How a group of tabs receives horizontal space.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -214,8 +201,8 @@ impl Tab {
             colors.muted_text
         };
         let text = RawText::new(label, text_color, 14.0)
-            .align(TextAlign::Center)
-            .layout_style(style.clone());
+            .text_align(TextAlign::Center)
+            .layout(style.clone());
         let mut inner = RawTab::new(style, active, on_click)
             .corner_radius(colors.radius)
             .child(Box::new(text));
@@ -280,6 +267,7 @@ impl Widget for Tab {
 pub struct Sidebar {
     inner: RawSidebar,
 }
+impl_styled_inner!(Sidebar);
 
 impl Sidebar {
     pub fn new(colors: TabColors, style: Style) -> Self {
@@ -288,11 +276,6 @@ impl Sidebar {
                 .background(colors.background)
                 .corner_radius(colors.container_radius),
         }
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.inner.style.layout = style;
-        self
     }
 
     pub fn gap(mut self, gap: f32) -> Self {
@@ -332,6 +315,7 @@ impl Widget for Sidebar {
 pub struct SidebarItem {
     inner: RawTab,
 }
+impl_styled_inner!(SidebarItem);
 
 /// A divider for groups inside a [`Sidebar`]. Its label is optional; when
 /// supplied it becomes the small, muted section title used by settings apps.
@@ -485,7 +469,7 @@ impl SidebarItem {
         } else {
             colors.muted_text
         };
-        let text = RawText::new(label, text_color, 14.0).align(TextAlign::Start);
+        let text = RawText::new(label, text_color, 14.0).text_align(TextAlign::Start);
         let content: BoxedWidget = if let Some(icon_color) = icon_color {
             let content_style = Style {
                 size: creamui_core::layout::Size {
@@ -520,10 +504,10 @@ impl SidebarItem {
                             .background(icon_color)
                             .corner_radius(colors.icon_radius),
                     ))
-                    .child(Box::new(text.layout_style(text_style))),
+                    .child(Box::new(text.layout(text_style))),
             )
         } else {
-            Box::new(text.layout_style(style.clone()))
+            Box::new(text.layout(style.clone()))
         };
         let mut inner = RawTab::new(style, active, on_click)
             .corner_radius(colors.radius)

@@ -143,30 +143,6 @@ impl RawDateTimePicker {
         }
     }
 
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-    pub fn hover_background(mut self, color: Color) -> Self {
-        self.style.states.hover.paint.background = Some(color.into());
-        self
-    }
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
-        self
-    }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -353,26 +329,6 @@ impl RawColorPicker {
             disabled: false,
         }
     }
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
-        self
-    }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -538,32 +494,8 @@ impl RawFilePicker {
             disabled: false,
         }
     }
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         self.placeholder = text.into();
-        self
-    }
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-    pub fn hover_background(mut self, color: Color) -> Self {
-        self.style.states.hover.paint.background = Some(color.into());
-        self
-    }
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {

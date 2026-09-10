@@ -4,6 +4,7 @@ use super::*;
 pub struct Checkbox {
     inner: RawCheckbox,
 }
+impl_styled_inner!(Checkbox);
 
 impl Checkbox {
     pub fn new(checked: bool, on_click: impl Fn() + 'static) -> Self {
@@ -50,6 +51,7 @@ impl Widget for Checkbox {
 pub struct Spinner {
     inner: RawSpinner,
 }
+impl_styled_inner!(Spinner);
 impl Spinner {
     pub fn new() -> Self {
         let theme = use_theme();
@@ -84,6 +86,7 @@ impl Widget for Spinner {
 pub struct Switch {
     inner: RawSwitch,
 }
+impl_styled_inner!(Switch);
 impl Switch {
     pub fn new(checked: bool, on_click: impl Fn() + 'static) -> Self {
         let theme = use_theme();

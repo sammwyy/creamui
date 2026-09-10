@@ -18,14 +18,8 @@ fn every_widget_gets_common_builders_without_component_forwarders() {
         .background(Color::rgb(12, 34, 56))
         .corner_radius(6.0);
 
-    assert_eq!(
-        widget.style_ref().layout.size.width,
-        Dimension::Length(80.0)
-    );
-    assert_eq!(
-        widget.style_ref().layout.size.height,
-        Dimension::Length(32.0)
-    );
+    assert_eq!(widget.style().layout.size.width, Dimension::Length(80.0));
+    assert_eq!(widget.style().layout.size.height, Dimension::Length(32.0));
 
     let mut painter = RecordingPainter::default();
     let scene = render_frame(
@@ -625,7 +619,7 @@ fn raw_controls_preserve_tokens_and_disabled_state() {
         ..Default::default()
     };
     let checkbox = RawCheckbox::new(18.0, false, Color::rgb(1, 2, 3), Color::rgb(4, 5, 6), || {})
-        .layout_style(style.clone())
+        .layout(style.clone())
         .background(Color::rgb(7, 8, 9))
         .disabled(true);
     assert_eq!(checkbox.style().size, style.size);
@@ -639,7 +633,7 @@ fn raw_controls_preserve_tokens_and_disabled_state() {
         Color::rgb(255, 255, 255),
         || {},
     )
-    .layout_style(style.clone())
+    .layout(style.clone())
     .disabled(true);
     assert_eq!(switch.style().size, style.size);
     assert!(switch.on_key().is_none());

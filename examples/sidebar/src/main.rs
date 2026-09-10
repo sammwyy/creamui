@@ -146,8 +146,8 @@ fn CustomSidebar(active: Signal<usize>) -> BoxedWidget {
         let text_color = if is_active { TEXT_ACTIVE } else { TEXT_MUTED };
         let label = format!("> {}", section.label);
         let text = RawText::new(label, text_color, 13.0)
-            .align(TextAlign::Start)
-            .layout_style(item_style.clone());
+            .text_align(TextAlign::Start)
+            .layout(item_style.clone());
         // No background fill: a full-row block popping in and out on every
         // click reads as the whole row changing size, not just selection.
         // Only the text color and a thin indicator bar change.
@@ -308,3 +308,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

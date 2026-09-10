@@ -115,3 +115,4 @@ fn tray_icon() -> TrayIcon {
     }
     TrayIcon::from_rgba(rgba, SIZE, SIZE).expect("the generated tray icon is valid RGBA")
 }
+use creamui_core::Styled as _;

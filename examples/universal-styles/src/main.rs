@@ -22,7 +22,7 @@ fn action_style() -> Style {
 
 fn action(label: impl Into<String>, style: &Style, on_click: impl Fn() + 'static) -> BoxedWidget {
     let label = RawText::new(label, Theme::dark().text_primary, 14.0)
-        .align(TextAlign::Center)
+        .text_align(TextAlign::Center)
         .width(220.0);
     Box::new(
         RawButton::new(Layout::default(), on_click)

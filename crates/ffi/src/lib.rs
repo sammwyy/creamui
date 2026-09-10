@@ -20,7 +20,7 @@ use creamui_core::layout::{
     AlignItems, Dimension, FlexDirection, JustifyContent, LengthPercentage, LengthPercentageAuto,
     Rect as LayoutRect, Size as LayoutSize, Style,
 };
-use creamui_core::{BoxedWidget, Size};
+use creamui_core::{BoxedWidget, Size, Styled};
 use creamui_reactive::Signal;
 use creamui_render::{AppBuilder as RenderAppBuilder, WindowHandle};
 use creamui_theme::{Color, ColorScheme, Theme};
@@ -722,7 +722,7 @@ pub unsafe extern "C" fn creamui_text_input_new(
     let value = cstr_to_string(value);
     let theme_owned: Theme = theme_from_c(theme);
     let inner = with_theme_scope(theme_owned, || {
-        ThemedTextInput::with_style(style_from_c(style), value, move |next: String| {
+        ThemedTextInput::new(value, move |next: String| {
             // CString::new fails only on interior NULs, which a text input's
             // keystroke-built value can never contain (Key::Char never yields
             // '\0'), so this is infallible in practice.
@@ -730,6 +730,7 @@ pub unsafe extern "C" fn creamui_text_input_new(
                 on_change(c_next.as_ptr(), userdata.0);
             }
         })
+        .layout(style_from_c(style))
     });
     Box::into_raw(Box::new(CWidget(WidgetKind::ThemedTextInput(inner))))
 }
@@ -776,11 +777,12 @@ pub unsafe extern "C" fn creamui_text_area_new(
     let value = cstr_to_string(value);
     let theme_owned: Theme = theme_from_c(theme);
     let area = with_theme_scope(theme_owned, || {
-        ThemedTextArea::with_style(style_from_c(style), value, move |next: String| {
+        ThemedTextArea::new(value, move |next: String| {
             if let Ok(c_next) = CString::new(next) {
                 on_change(c_next.as_ptr(), userdata.0);
             }
         })
+        .layout(style_from_c(style))
     });
     Box::into_raw(Box::new(CWidget(WidgetKind::ThemedTextArea(area))))
 }
@@ -853,9 +855,10 @@ pub unsafe extern "C" fn creamui_slider_new(
 
     let theme: Theme = theme_from_c(theme);
     let slider = with_theme_scope(theme, || {
-        ThemedSlider::with_style(style_from_c(style), value, move |next| {
+        ThemedSlider::new(value, move |next| {
             on_change(next, userdata.0);
         })
+        .layout(style_from_c(style))
     });
     Box::into_raw(Box::new(CWidget(WidgetKind::ThemedSlider(slider))))
 }

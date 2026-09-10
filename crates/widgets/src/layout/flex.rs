@@ -15,6 +15,7 @@ use creamui_core::{BoxedWidget, Painter, Rect, Widget};
 pub struct Flex {
     inner: crate::raw::RawView,
 }
+impl_styled_inner!(Flex);
 
 impl Flex {
     /// Creates a left-to-right flex container. Its defaults match CSS:

@@ -73,21 +73,6 @@ impl RawScrollView {
         view
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
         self

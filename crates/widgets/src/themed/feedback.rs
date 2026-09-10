@@ -232,7 +232,9 @@ impl Widget for Dialog {
             );
             let mut content = RawView::new(column(theme.spacing_small))
                 .child(Box::new(Heading::md(title)))
-                .child(Box::new(Text::secondary(message).align(TextAlign::Start)));
+                .child(Box::new(
+                    Text::secondary(message).text_align(TextAlign::Start),
+                ));
             let mut actions = RawView::new(Style {
                 justify_content: Some(JustifyContent::End),
                 ..row(theme.spacing_medium)
@@ -300,8 +302,9 @@ impl Widget for AlertDialog {
 pub struct ProgressBar {
     theme: Theme,
     value: Option<f32>,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(ProgressBar);
 
 impl ProgressBar {
     pub fn new(value: f32) -> Self {
@@ -309,7 +312,7 @@ impl ProgressBar {
         Self {
             theme,
             value: Some(value),
-            style: Self::default_style(),
+            style: Self::default_style().into(),
         }
     }
     pub fn indeterminate() -> Self {
@@ -317,7 +320,7 @@ impl ProgressBar {
         Self {
             theme,
             value: None,
-            style: Self::default_style(),
+            style: Self::default_style().into(),
         }
     }
     pub fn default_style() -> Style {
@@ -326,15 +329,11 @@ impl ProgressBar {
             ..Default::default()
         }
     }
-    pub fn with_style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
-    }
 }
 
 impl Widget for ProgressBar {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let radius = rect.height / 2.0;
@@ -496,18 +495,8 @@ impl Badge {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.background = color;
-        self
-    }
-
     pub fn text_color(mut self, color: Color) -> Self {
         self.text_color = color;
-        self
-    }
-
-    pub fn style(mut self, style: Style) -> Self {
-        self.style = style;
         self
     }
 }
@@ -542,8 +531,9 @@ impl Widget for Badge {
 /// affordance for chat-shaped UIs.
 pub struct TypingIndicator {
     theme: Theme,
-    style: Style,
+    style: creamui_core::Style,
 }
+impl_styled_field!(TypingIndicator);
 
 impl TypingIndicator {
     pub fn new() -> Self {
@@ -554,18 +544,15 @@ impl TypingIndicator {
                 size: fixed(36.0, 16.0),
                 flex_shrink: 0.,
                 ..Default::default()
-            },
+            }
+            .into(),
         }
-    }
-    pub fn style(mut self, style: Style) -> Self {
-        self.style = style;
-        self
     }
 }
 
 impl Widget for TypingIndicator {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let time = painter.animation_time();

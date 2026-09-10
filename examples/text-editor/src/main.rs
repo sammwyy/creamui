@@ -119,7 +119,7 @@ fn EditorToolbar(
     };
     view = view.child(Box::new(
         creamui_widgets::RawText::new(title, tokens.menu_colors().muted_text, 12.0)
-            .layout_style(title_style),
+            .layout(title_style),
     ));
     for child in children {
         view = view.child(child);
@@ -253,8 +253,8 @@ fn LineNumbers(value: String) -> BoxedWidget {
                     tokens.theme.text_secondary,
                     14.0,
                 )
-                .align(TextAlign::End)
-                .layout_style(size(42.0, 20.0)),
+                .text_align(TextAlign::End)
+                .layout(size(42.0, 20.0)),
             ) as BoxedWidget
         })
         .collect();
@@ -341,7 +341,7 @@ fn main() {
                     <EditorToolbar menus={vec!["File".into()]} title={"Untitled.md".into()} active={active_menu.clone()} children={Vec::<BoxedWidget>::new()} />
                     <RawView style={editor_row}>
                         <LineNumbers value={value.clone()} />
-                        <TextArea style={area} value={value.clone()} cursor={cursor.get()} on_cursor_change={move |next| cursor_for_change.set(next)} selection={selection.get()} on_selection_change={move |next| selection_for_change.set(next)} on_ctrl_o={move || open_document(open_document_value.clone(), open_document_status.clone())} on_change={move |next| { saved_for_change.set(false); on_change.set(next) }} placeholder={"Start writing…"} corner_radius={0.0} border_width={0.0} active_line_background={tokens.active_line} />
+                        <TextArea style={area} value={value.clone()} cursor={cursor.get()} on_cursor_change={move |next| cursor_for_change.set(next)} selection={selection.get()} on_selection_change={move |next| selection_for_change.set(next)} on_ctrl_o={move || open_document(open_document_value.clone(), open_document_status.clone())} on_change={move |next| { saved_for_change.set(false); on_change.set(next) }} placeholder={"Start writing…"} corner_radius={0.0} border={(tokens.theme.border, 0.0)} active_line_background={tokens.active_line} />
                     </RawView>
                     <RawView style={status} background={tokens.theme.surface}>
                         <RawText color={tokens.theme.accent} font_size={12.0} style={Style { flex_grow: 1.0, ..Default::default()}}>{status_text}</RawText>
@@ -353,3 +353,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

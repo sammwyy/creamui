@@ -41,7 +41,7 @@ fn popup_button(label: impl Into<String>, width: f32, on_click: impl Fn() + 'sta
     .corner_radius(theme.menu_item_radius)
     .border(theme.border, 1.)
     .child(Box::new(
-        RawText::new(label, theme.text_primary, 12.).align(TextAlign::Center),
+        RawText::new(label, theme.text_primary, 12.).text_align(TextAlign::Center),
     ))
 }
 
@@ -89,7 +89,7 @@ const MONTH_NAMES: [&str; 12] = [
 pub struct DateTimePicker {
     theme: Theme,
     controller: crate::DateTimeController,
-    style: Style,
+    style: creamui_core::Style,
     show_date: bool,
     show_time: bool,
     minute_step: u8,
@@ -113,7 +113,7 @@ impl DateTimePicker {
         Self {
             theme,
             controller: controller.clone(),
-            style,
+            style: style.into(),
             show_date: true,
             show_time: true,
             minute_step: 5,
@@ -184,7 +184,7 @@ impl DateTimePicker {
         let mut weekdays = RawView::new(row(3.));
         for name in ["S", "M", "T", "W", "T", "F", "S"] {
             weekdays = weekdays.child(Box::new(
-                RawText::new(name, self.theme.text_disabled, 10.).layout_style(Style {
+                RawText::new(name, self.theme.text_disabled, 10.).layout(Style {
                     size: fixed(36., 18.),
                     ..Default::default()
                 }),
@@ -239,11 +239,13 @@ impl DateTimePicker {
                         },
                         12.,
                     )));
-                    button = button.hover_background(if selected {
-                        self.theme.accent_hover
-                    } else {
-                        self.theme.surface_hover
-                    });
+                    button = button.hover_style(creamui_core::StateStyle::new().background(
+                        if selected {
+                            self.theme.accent_hover
+                        } else {
+                            self.theme.surface_hover
+                        },
+                    ));
                     row_view = row_view.child(Box::new(button));
                 }
             }
@@ -269,7 +271,7 @@ impl DateTimePicker {
             hour_down.set(hour_down.peek().add_minutes(-60))
         })))
         .child(Box::new(
-            RawText::new(format!("{:02}", value.hour), self.theme.text_primary, 18.).layout_style(
+            RawText::new(format!("{:02}", value.hour), self.theme.text_primary, 18.).layout(
                 Style {
                     size: fixed(34., 28.),
                     ..Default::default()
@@ -284,11 +286,12 @@ impl DateTimePicker {
             minute_down.set(minute_down.peek().add_minutes(-step))
         })))
         .child(Box::new(
-            RawText::new(format!("{:02}", value.minute), self.theme.text_primary, 18.)
-                .layout_style(Style {
+            RawText::new(format!("{:02}", value.minute), self.theme.text_primary, 18.).layout(
+                Style {
                     size: fixed(34., 28.),
                     ..Default::default()
-                }),
+                },
+            ),
         ))
         .child(Box::new(popup_button("+", 32., move || {
             minute_up.set(minute_up.peek().add_minutes(step))
@@ -305,7 +308,7 @@ impl DateTimePicker {
 
 impl Widget for DateTimePicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(
@@ -398,7 +401,7 @@ impl Widget for DateTimePicker {
             .background(theme.accent)
             .corner_radius(theme.menu_item_radius)
             .child(Box::new(
-                RawText::new("Done", theme.selection_text, 12.).align(TextAlign::Center),
+                RawText::new("Done", theme.selection_text, 12.).text_align(TextAlign::Center),
             ));
             content = content.child(Box::new(done));
             let dismiss = self.controller.clone();
@@ -447,10 +450,17 @@ impl Widget for DateTimePicker {
     }
 }
 
+impl creamui_core::Styled for DateTimePicker {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
+
 /// Date-only configuration of [`DateTimePicker`].
 pub struct DateInput {
     inner: DateTimePicker,
 }
+impl_styled_inner!(DateInput);
 impl DateInput {
     pub fn controlled(controller: &crate::DateTimeController) -> Self {
         Self {
@@ -506,6 +516,7 @@ impl Widget for DateInput {
 pub struct TimeInput {
     inner: DateTimePicker,
 }
+impl_styled_inner!(TimeInput);
 impl TimeInput {
     pub fn controlled(controller: &crate::DateTimeController) -> Self {
         Self {
@@ -563,7 +574,7 @@ pub struct ColorPicker {
     theme: Theme,
     value: Color,
     controller: crate::ColorPickerController,
-    style: Style,
+    style: creamui_core::Style,
     popup_width: f32,
     on_change: Rc<dyn Fn(Color)>,
     disabled: bool,
@@ -594,7 +605,7 @@ impl ColorPicker {
             theme,
             value,
             controller: controller.clone(),
-            style,
+            style: style.into(),
             popup_width: 292.,
             on_change: Rc::new(on_change),
             disabled: false,
@@ -611,7 +622,7 @@ impl ColorPicker {
 }
 impl Widget for ColorPicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(
@@ -698,7 +709,7 @@ impl Widget for ColorPicker {
             .background(theme.surface_elevated)
             .border(theme.border_strong, theme.input_border_width)
             .corner_radius(theme.input_radius)
-            .focus_color(theme.accent);
+            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0));
             let summary = RawView::new(Style {
                 align_items: Some(AlignItems::Center),
                 justify_content: Some(JustifyContent::SpaceBetween),
@@ -718,7 +729,7 @@ impl Widget for ColorPicker {
                     theme.text_primary,
                     13.,
                 )
-                .layout_style(Style {
+                .layout(Style {
                     flex_grow: 1.,
                     ..Default::default()
                 }),
@@ -775,11 +786,16 @@ impl Widget for ColorPicker {
         })
     }
 }
+impl creamui_core::Styled for ColorPicker {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
 
 /// A themed file picker that delegates choosing the file to the platform's native dialog. Use [`RawFilePicker`] when the file source is not local.
 pub struct FilePicker {
     theme: Theme,
-    style: Style,
+    style: creamui_core::Style,
     value: String,
     placeholder: String,
     title: String,
@@ -796,9 +812,9 @@ impl FilePicker {
         }
     }
     pub fn new(value: impl Into<String>, on_change: impl Fn(PathBuf) + 'static) -> Self {
-        Self::with_style(Self::default_style(), value, on_change)
+        Self::from_layout(Self::default_style(), value, on_change)
     }
-    pub fn with_style(
+    fn from_layout(
         style: Style,
         value: impl Into<String>,
         on_change: impl Fn(PathBuf) + 'static,
@@ -806,7 +822,7 @@ impl FilePicker {
         let theme = use_theme();
         Self {
             theme,
-            style,
+            style: style.into(),
             value: value.into(),
             placeholder: "Choose a file…".into(),
             title: "Choose a file".into(),
@@ -870,16 +886,16 @@ impl FilePicker {
         )
         .placeholder(self.placeholder.clone())
         .background(self.theme.surface_elevated)
-        .hover_background(self.theme.surface_hover)
+        .hover_style(creamui_core::StateStyle::new().background(self.theme.surface_hover))
         .border(self.theme.border_strong, self.theme.input_border_width)
         .corner_radius(self.theme.input_radius)
-        .focus_color(self.theme.accent)
+        .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0))
         .disabled(self.disabled)
     }
 }
 impl Widget for FilePicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {
         self.raw().paint(p, r)
@@ -898,5 +914,10 @@ impl Widget for FilePicker {
     }
     fn cursor_icon(&self) -> Option<CursorIcon> {
         self.raw().cursor_icon()
+    }
+}
+impl creamui_core::Styled for FilePicker {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
     }
 }

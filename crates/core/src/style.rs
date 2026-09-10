@@ -82,6 +82,20 @@ impl From<ColorToken> for ColorValue {
     }
 }
 
+impl From<&str> for ColorValue {
+    fn from(value: &str) -> Self {
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid CreamUI color `{value}`: {error}"))
+    }
+}
+
+impl From<String> for ColorValue {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
 impl PartialEq<Color> for ColorValue {
     fn eq(&self, other: &Color) -> bool {
         matches!(self, Self::Literal(color) if color == other)
@@ -111,7 +125,7 @@ impl LengthValue {
         Self::Percent(value)
     }
 
-    fn dimension(self) -> crate::layout::Dimension {
+    pub(crate) fn dimension(self) -> crate::layout::Dimension {
         match self {
             Self::Auto => crate::layout::Dimension::Auto,
             Self::Px(value) => crate::layout::Dimension::Length(value),
@@ -123,6 +137,20 @@ impl LengthValue {
 impl From<f32> for LengthValue {
     fn from(value: f32) -> Self {
         Self::Px(value)
+    }
+}
+
+impl From<&str> for LengthValue {
+    fn from(value: &str) -> Self {
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid CreamUI length `{value}`: {error}"))
+    }
+}
+
+impl From<String> for LengthValue {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
     }
 }
 
@@ -195,7 +223,7 @@ impl FromStr for ColorValue {
             "surface" => ColorToken::Surface,
             "surface-elevated" => ColorToken::SurfaceElevated,
             "surface-hover" => ColorToken::SurfaceHover,
-            "accent" => ColorToken::Accent,
+            "accent" | "primary" => ColorToken::Accent,
             "accent-hover" => ColorToken::AccentHover,
             "accent-pressed" => ColorToken::AccentPressed,
             "selection-background" => ColorToken::SelectionBackground,
@@ -293,6 +321,35 @@ pub struct StateStyle {
     pub paint: PaintStyle,
     pub typography: TypographyStyle,
 }
+
+/// Single source of truth for common, typed style properties. Consumers use
+/// this schema to generate `StyleProp`, `Style` builders, and `Styled`
+/// component builders.
+macro_rules! style_property_schema {
+    ($consumer:ident) => {
+        $consumer! {
+            Background(crate::ColorValue) => "background" |target, value| { target.paint.background = Some(value); } => background(color: impl Into<crate::ColorValue>) |style| { style.paint.background = Some(color.into()); };
+            Border(crate::Border) => "border" |target, value| { target.paint.border = Some(value); } => border(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.border = Some(crate::Border::new(color, width)); };
+            CornerRadius(f32) => "border-radius" |target, value| { target.paint.corner_radius = Some(value); } => corner_radius(radius: f32) |style| { style.paint.corner_radius = Some(radius); };
+            Outline(crate::Border) => "outline" |target, value| { target.paint.outline = Some(value); } => outline(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.outline = Some(crate::Border::new(color, width)); };
+            Color(crate::ColorValue) => "color" |target, value| { target.typography.color = Some(value); } => color(color: impl Into<crate::ColorValue>) |style| { style.typography.color = Some(color.into()); };
+            FontSize(f32) => "font-size" |target, value| { target.typography.font_size = Some(value); } => font_size(size: f32) |style| { style.typography.font_size = Some(size); };
+            FontFamily(String) => "font-family" |target, value| { target.typography.font_family = Some(value); } => font_family(family: impl Into<String>) |style| { style.typography.font_family = Some(family.into()); };
+            TextAlign(crate::TextAlign) => "text-align" |target, value| { target.typography.align = Some(value); } => text_align(align: crate::TextAlign) |style| { style.typography.align = Some(align); };
+            Bold(bool) => "font-weight" |target, value| { target.typography.bold = Some(value); } => bold(active: bool) |style| { style.typography.bold = Some(active); };
+            Italic(bool) => "font-style" |target, value| { target.typography.italic = Some(value); } => italic(active: bool) |style| { style.typography.italic = Some(active); };
+            Underline(bool) => "text-decoration-underline" |target, value| { target.typography.underline = Some(value); } => underline(active: bool) |style| { style.typography.underline = Some(active); };
+            Strikethrough(bool) => "text-decoration-line-through" |target, value| { target.typography.strikethrough = Some(value); } => strikethrough(active: bool) |style| { style.typography.strikethrough = Some(active); };
+            Width(crate::LengthValue) => "width" |target, value| { target.layout.size.width = value.dimension(); } => width(value: impl Into<crate::LengthValue>) |style| { style.layout.size.width = value.into().dimension(); };
+            Height(crate::LengthValue) => "height" |target, value| { target.layout.size.height = value.dimension(); } => height(value: impl Into<crate::LengthValue>) |style| { style.layout.size.height = value.into().dimension(); };
+            MinWidth(crate::LengthValue) => "min-width" |target, value| { target.layout.min_size.width = value.dimension(); } => min_width(value: impl Into<crate::LengthValue>) |style| { style.layout.min_size.width = value.into().dimension(); };
+            MinHeight(crate::LengthValue) => "min-height" |target, value| { target.layout.min_size.height = value.dimension(); } => min_height(value: impl Into<crate::LengthValue>) |style| { style.layout.min_size.height = value.into().dimension(); };
+            MaxWidth(crate::LengthValue) => "max-width" |target, value| { target.layout.max_size.width = value.dimension(); } => max_width(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.width = value.into().dimension(); };
+            MaxHeight(crate::LengthValue) => "max-height" |target, value| { target.layout.max_size.height = value.dimension(); } => max_height(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.height = value.into().dimension(); };
+        }
+    };
+}
+pub(crate) use style_property_schema;
 
 macro_rules! common_value_builders {
     () => {
@@ -404,6 +461,18 @@ pub struct Style {
     pub states: InteractionStyles,
 }
 
+macro_rules! define_style_builders {
+    ($( $variant:ident($value:ty) => $name:literal |$target:ident, $field:ident| $apply:block => $builder:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
+        $(
+            pub fn $builder(mut self, $( $argument: $argument_type ),*) -> Self {
+                let $style = &mut self;
+                $body
+                self
+            }
+        )*
+    };
+}
+
 impl Style {
     pub fn new() -> Self {
         Self::default()
@@ -414,37 +483,7 @@ impl Style {
         self
     }
 
-    common_value_builders!();
-
-    pub fn width(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.size.width = value.into().dimension();
-        self
-    }
-
-    pub fn height(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.size.height = value.into().dimension();
-        self
-    }
-
-    pub fn min_width(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.min_size.width = value.into().dimension();
-        self
-    }
-
-    pub fn min_height(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.min_size.height = value.into().dimension();
-        self
-    }
-
-    pub fn max_width(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.max_size.width = value.into().dimension();
-        self
-    }
-
-    pub fn max_height(mut self, value: impl Into<LengthValue>) -> Self {
-        self.layout.max_size.height = value.into().dimension();
-        self
-    }
+    style_property_schema!(define_style_builders);
 
     pub fn hover(mut self, style: StateStyle) -> Self {
         self.states.hover = style;
@@ -622,7 +661,7 @@ pub struct ResolvedStyle {
 }
 
 macro_rules! style_properties {
-    ($( $variant:ident($value:ty) => $name:literal |$style:ident, $field:ident| $apply:expr ),+ $(,)?) => {
+    ($( $variant:ident($value:ty) => $name:literal |$target:ident, $field:ident| $apply:block => $builder:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
         /// A parsed, typed declaration. This is the dynamic/CSS boundary;
         /// rendering uses the compiled [`Style`] instead of matching a bag
         /// of properties every frame.
@@ -641,7 +680,7 @@ macro_rules! style_properties {
             fn apply_to(self, style: &mut Style) {
                 match self {
                     $( Self::$variant(field) => {
-                        let $style = style;
+                        let $target = style;
                         let $field = field;
                         $apply
                     }, )+
@@ -651,26 +690,7 @@ macro_rules! style_properties {
     };
 }
 
-style_properties! {
-    Background(ColorValue) => "background" |style, value| style.paint.background = Some(value),
-    Border(Border) => "border" |style, value| style.paint.border = Some(value),
-    CornerRadius(f32) => "border-radius" |style, value| style.paint.corner_radius = Some(value),
-    Outline(Border) => "outline" |style, value| style.paint.outline = Some(value),
-    Color(ColorValue) => "color" |style, value| style.typography.color = Some(value),
-    FontSize(f32) => "font-size" |style, value| style.typography.font_size = Some(value),
-    FontFamily(String) => "font-family" |style, value| style.typography.font_family = Some(value),
-    TextAlign(TextAlign) => "text-align" |style, value| style.typography.align = Some(value),
-    Bold(bool) => "font-weight" |style, value| style.typography.bold = Some(value),
-    Italic(bool) => "font-style" |style, value| style.typography.italic = Some(value),
-    Underline(bool) => "text-decoration-underline" |style, value| style.typography.underline = Some(value),
-    Strikethrough(bool) => "text-decoration-line-through" |style, value| style.typography.strikethrough = Some(value),
-    Width(LengthValue) => "width" |style, value| style.layout.size.width = value.dimension(),
-    Height(LengthValue) => "height" |style, value| style.layout.size.height = value.dimension(),
-    MinWidth(LengthValue) => "min-width" |style, value| style.layout.min_size.width = value.dimension(),
-    MinHeight(LengthValue) => "min-height" |style, value| style.layout.min_size.height = value.dimension(),
-    MaxWidth(LengthValue) => "max-width" |style, value| style.layout.max_size.width = value.dimension(),
-    MaxHeight(LengthValue) => "max-height" |style, value| style.layout.max_size.height = value.dimension(),
-}
+style_property_schema!(style_properties);
 
 impl StyleProp {
     /// Parses one CSS-like name/value pair into a typed declaration.

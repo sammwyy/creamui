@@ -22,63 +22,9 @@ impl RawButton {
         }
     }
 
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    /// Sets the full visual treatment used while hovered.
-    pub fn hover_style(mut self, style: creamui_core::StateStyle) -> Self {
-        self.style.states.hover = style;
-        self
-    }
-
-    /// Sets the full visual treatment used while pressed.
-    pub fn pressed_style(mut self, style: creamui_core::StateStyle) -> Self {
-        self.style.states.pressed = style;
-        self
-    }
-
-    /// Convenience equivalent to `hover_style(StateStyle::new().background(color))`.
-    pub fn hover_background(mut self, color: Color) -> Self {
-        self.style.states.hover.paint.background = Some(color.into());
-        self
-    }
-
-    /// Convenience equivalent to `pressed_style(StateStyle::new().background(color))`.
-    pub fn pressed_background(mut self, color: Color) -> Self {
-        self.style.states.pressed.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
-    /// Replaces the complete declaration.
-    pub fn common_style(mut self, style: creamui_core::Style) -> Self {
-        self.style = style;
-        self
-    }
-
     /// Returns the complete style declaration consumed by this button.
     pub fn style_declaration(&self) -> &creamui_core::Style {
         &self.style
-    }
-
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
-        self
     }
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {

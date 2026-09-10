@@ -39,43 +39,8 @@ impl RawCheckbox {
         }
     }
 
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.paint.corner_radius = Some(radius);
-        self
-    }
-
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn hover_background(mut self, color: Color) -> Self {
-        self.style.states.hover.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn pressed_background(mut self, color: Color) -> Self {
-        self.style.states.pressed.paint.background = Some(color.into());
-        self
-    }
-
-    pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.style.paint.border = Some(creamui_core::Border::new(color, width));
-        self
-    }
-
     pub fn check_color(mut self, color: Color) -> Self {
         self.check_color = color;
-        self
-    }
-
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
 
@@ -186,11 +151,6 @@ impl RawSwitch {
         }
     }
 
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
     pub fn hover_colors(mut self, on: Color, off: Color) -> Self {
         self.hover_on_color = Some(on);
         self.hover_off_color = Some(off);
@@ -211,11 +171,6 @@ impl RawSwitch {
 
     pub fn thumb_inset(mut self, inset: f32) -> Self {
         self.thumb_inset = inset.max(0.0);
-        self
-    }
-
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
 
@@ -343,11 +298,6 @@ impl RawSlider {
         }
     }
 
-    pub fn layout_style(mut self, style: Style) -> Self {
-        self.style.layout = style;
-        self
-    }
-
     pub fn track(mut self, height: f32, radius: f32) -> Self {
         self.track_height = height.max(0.0);
         self.track_radius = Some(radius.max(0.0));
@@ -367,11 +317,6 @@ impl RawSlider {
 
     pub fn pressed_handle_color(mut self, color: Color) -> Self {
         self.pressed_handle_color = Some(color);
-        self
-    }
-
-    pub fn focus_color(mut self, color: Color) -> Self {
-        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 1.0));
         self
     }
 

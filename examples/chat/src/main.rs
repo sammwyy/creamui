@@ -371,12 +371,14 @@ fn box_style(width: f32, height: f32) -> Style {
 fn contact_avatar(contact: &Contact, size: f32) -> Avatar {
     let theme = use_theme();
     let mut avatar = Avatar::new(size)
-        .background(contact.color)
+        .fallback_color(contact.color)
         .initials(contact.initials.clone())
         .initials_color(Color::rgb(0x1c, 0x1b, 0x1d));
     if let Some(photo) = &contact.photo {
         avatar = avatar.image(Box::new(
-            Image::with_style(photo.clone(), box_style(size, size)).fit(ImageFit::Cover),
+            Image::new(photo.clone())
+                .layout(box_style(size, size))
+                .fit(ImageFit::Cover),
         ));
     }
     if contact.online {
@@ -526,8 +528,8 @@ fn ContactRow(conversation: Conversation, active: bool, on_select: Rc<dyn Fn()>)
     let name_text: BoxedWidget = Box::new(
         RawText::new(conversation.contact.name.clone(), theme.text_primary, 13.5)
             .bold(true)
-            .align(TextAlign::Start)
-            .layout_style(line_style(16.0, true)),
+            .text_align(TextAlign::Start)
+            .layout(line_style(16.0, true)),
     );
     let avatar: BoxedWidget = Box::new(contact_avatar(&conversation.contact, 44.0));
     let badge: BoxedWidget = Box::new(Badge::count(unread));
@@ -669,7 +671,7 @@ fn ConversationHeader(conversation: Conversation) -> BoxedWidget {
     let name_text: BoxedWidget = Box::new(
         RawText::new(conversation.contact.name.clone(), theme.text_primary, 14.0)
             .bold(true)
-            .align(TextAlign::Start),
+            .text_align(TextAlign::Start),
     );
     let avatar: BoxedWidget = Box::new(contact_avatar(&conversation.contact, 40.0));
 
@@ -1247,3 +1249,4 @@ fn main() {
         },
     );
 }
+use creamui_core::Styled as _;

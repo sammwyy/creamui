@@ -6,10 +6,30 @@
 //!   independently swappable [`creamui_theme::ColorScheme`].
 //! - [`layout`] has convenience constructors for flex/grid layout styles.
 
+macro_rules! impl_styled_inner {
+    ($type:ty) => {
+        impl creamui_core::Styled for $type {
+            fn set_style(&mut self, style: creamui_core::Style) {
+                creamui_core::Styled::set_style(&mut self.inner, style);
+            }
+        }
+    };
+}
+
+macro_rules! impl_styled_field {
+    ($type:ty) => {
+        impl creamui_core::Styled for $type {
+            fn set_style(&mut self, style: creamui_core::Style) {
+                self.style = style;
+            }
+        }
+    };
+}
+
 mod components;
 mod controller;
 pub use components::{Choice, Icon, NavigationItem, Surface, SurfaceRole, Symbol};
-pub use creamui_core::{Styled, StyledWidget};
+pub use creamui_core::Styled;
 pub mod layout;
 pub use layout::CUIWindowDragArea;
 pub mod raw;

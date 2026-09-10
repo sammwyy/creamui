@@ -185,18 +185,18 @@ impl TreeView {
             ..Default::default()
         };
         let label = RawText::new(row.label.clone(), foreground, self.theme.typography.body)
-            .align(TextAlign::Start)
-            .layout_style(label_style);
+            .text_align(TextAlign::Start)
+            .layout(label_style);
 
         let controller = self.controller.clone();
         let id = row.id;
         let mut item =
             RawButton::new(row_style, move || controller.select(id)).background(background);
-        item = item.hover_background(if row.selected {
+        item = item.hover_style(creamui_core::StateStyle::new().background(if row.selected {
             self.theme.accent_hover
         } else {
             self.theme.surface_hover
-        });
+        }));
         Box::new(item.child(chevron).child(Box::new(label)))
     }
 }
@@ -286,6 +286,7 @@ impl Widget for TreeView {
 pub struct ListView {
     inner: RawListView,
 }
+impl_styled_inner!(ListView);
 
 impl ListView {
     pub fn new(style: Style, scroll: ScrollController) -> Self {
@@ -330,6 +331,7 @@ impl Widget for ListView {
 pub struct Table {
     inner: RawTable,
 }
+impl_styled_inner!(Table);
 
 impl Table {
     pub fn new(style: Style, scroll: ScrollController, columns: Vec<TableColumn>) -> Self {

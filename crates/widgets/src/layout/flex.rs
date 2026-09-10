@@ -91,7 +91,7 @@ impl Flex {
 }
 
 impl Widget for Flex {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

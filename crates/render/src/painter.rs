@@ -6,7 +6,7 @@
 use crate::font::Font;
 use creamui_core::{Painter, Point, Rect, TextAlign};
 use creamui_fonts::FontWeight;
-use creamui_theme::Color;
+use creamui_theme::{Color, ColorScheme};
 use fontdue::layout::HorizontalAlign;
 use std::collections::HashMap;
 use tiny_skia::{
@@ -35,6 +35,7 @@ pub struct SkiaPainter {
     pub animated: bool,
     started: PainterInstant,
     scale: f32,
+    color_scheme: ColorScheme,
     /// One [`Mask`] per active [`Painter::push_clip`], each already
     /// intersected with its parent so the top of the stack is always the
     /// full cumulative clip region.
@@ -57,6 +58,7 @@ impl SkiaPainter {
             animated: false,
             started: PainterInstant::now(),
             scale: 1.0,
+            color_scheme: ColorScheme::default(),
             clip_stack: Vec::new(),
             mask_pool: Vec::new(),
         }
@@ -78,6 +80,10 @@ impl SkiaPainter {
     /// subsequent paint call.
     pub fn set_scale(&mut self, scale: f32) {
         self.scale = scale.max(0.01);
+    }
+
+    pub fn set_color_scheme(&mut self, color_scheme: ColorScheme) {
+        self.color_scheme = color_scheme;
     }
 
     /// `width`/`height` are physical pixels.
@@ -259,6 +265,10 @@ fn scale_rect(rect: Rect, scale: f32) -> Rect {
 }
 
 impl Painter for SkiaPainter {
+    fn color_scheme(&self) -> ColorScheme {
+        self.color_scheme
+    }
+
     fn hovered(&self, rect: Rect) -> bool {
         self.pointer.is_some_and(|point| rect.contains(point))
     }

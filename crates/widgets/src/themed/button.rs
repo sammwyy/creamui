@@ -118,17 +118,18 @@ impl Button {
             .border(border, size.border_width())
             .corner_radius(theme.button_radius.min(size.height() / 4.))
             .child(child);
-        inner.hover_background = Some(if variant == ButtonVariant::Primary {
-            theme.accent_hover
-        } else {
-            background.mix(theme.text_primary, 0.07)
-        });
-        inner.pressed_background = Some(if variant == ButtonVariant::Primary {
-            theme.accent_pressed
-        } else {
-            background.mix(theme.text_primary, 0.14)
-        });
-        inner.focus_color = Some(theme.accent);
+        inner = inner
+            .hover_background(if variant == ButtonVariant::Primary {
+                theme.accent_hover
+            } else {
+                background.mix(theme.text_primary, 0.07)
+            })
+            .pressed_background(if variant == ButtonVariant::Primary {
+                theme.accent_pressed
+            } else {
+                background.mix(theme.text_primary, 0.14)
+            })
+            .focus_color(theme.accent);
         let mut button = Self {
             inner,
             theme,
@@ -187,7 +188,7 @@ impl Button {
         on_click: impl Fn() + 'static,
     ) -> Self {
         let mut button = Self::new(label, on_click);
-        button.inner.style = style;
+        button.inner.style.layout = style;
         button
     }
 
@@ -225,14 +226,20 @@ impl Widget for Button {
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret: bool) {
         self.inner.paint_focused_overlay(painter, rect, caret);
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if self.enabled_children.is_some() {
-            painter.fill_rect(rect, self.theme.surface_hover, self.inner.corner_radius);
-            painter.stroke_rect(rect, self.theme.border, 1., self.inner.corner_radius);
+            let radius = self
+                .inner
+                .style_declaration()
+                .paint
+                .corner_radius
+                .unwrap_or(0.0);
+            painter.fill_rect(rect, self.theme.surface_hover, radius);
+            painter.stroke_rect(rect, self.theme.border, 1., radius);
         } else {
             self.inner.paint(painter, rect);
         }

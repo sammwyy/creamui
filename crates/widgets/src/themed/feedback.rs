@@ -82,8 +82,8 @@ impl Overlay {
 }
 
 impl Widget for Overlay {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         // The alpha deliberately leaves enough of the surrounding app visible
@@ -130,8 +130,8 @@ impl Popover {
 }
 
 impl Widget for Popover {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         for spread in (1..=5).rev() {
@@ -208,8 +208,8 @@ impl Dialog {
 }
 
 impl Widget for Dialog {
-    fn style(&self) -> Style {
-        Self::overlay_style()
+    fn style(&self) -> creamui_core::Style {
+        Self::overlay_style().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(rect, Color::rgba(0, 0, 0, 112), 0.0);
@@ -282,7 +282,7 @@ impl AlertDialog {
 }
 
 impl Widget for AlertDialog {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -333,8 +333,8 @@ impl ProgressBar {
 }
 
 impl Widget for ProgressBar {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let radius = rect.height / 2.0;
@@ -396,11 +396,12 @@ impl ProgressRing {
 }
 
 impl Widget for ProgressRing {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: fixed(self.size, self.size),
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let center = Point {
@@ -512,8 +513,8 @@ impl Badge {
 }
 
 impl Widget for Badge {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
@@ -563,8 +564,8 @@ impl TypingIndicator {
 }
 
 impl Widget for TypingIndicator {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let time = painter.animation_time();

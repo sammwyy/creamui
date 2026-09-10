@@ -41,7 +41,7 @@ impl Quote {
 }
 
 impl Widget for Quote {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -95,7 +95,7 @@ impl Pre {
 }
 
 impl Widget for Pre {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -151,7 +151,7 @@ impl Link {
 }
 
 impl Widget for Link {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

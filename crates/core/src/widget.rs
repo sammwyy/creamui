@@ -88,6 +88,11 @@ impl WindowDragHandle {
 /// Implemented once per rendering backend (e.g. the `tiny-skia` + `wgpu`
 /// backend in `creamui-render`); widgets never depend on a specific backend.
 pub trait Painter {
+    /// Color scheme used to resolve semantic [`crate::ColorToken`] values.
+    fn color_scheme(&self) -> creamui_theme::ColorScheme {
+        creamui_theme::ColorScheme::default()
+    }
+
     /// Optional pointer paint context. Coordinates are logical pixels.
     fn hovered(&self, _rect: Rect) -> bool {
         false
@@ -236,11 +241,20 @@ pub trait Painter {
 /// This keeps the model simple now and leaves room for a future retained /
 /// diffed tree without changing the trait.
 pub trait Widget {
-    /// This widget's layout box, expressed as a `taffy` flex/grid style.
-    fn style(&self) -> taffy::style::Style;
+    /// This widget's common style declaration. The layout engine consumes
+    /// only [`crate::Style::layout`]; the widget consumes whichever paint,
+    /// typography, and state properties it understands.
+    fn style(&self) -> crate::Style;
 
-    /// Paints this widget's own appearance into `rect` (already laid out in
-    /// the parent's coordinate space). Does not paint children.
+    /// Component-owned pseudo states. Pointer and focus flags are added by
+    /// the renderer; widgets use this hook for states such as `disabled`.
+    fn style_state(&self) -> crate::StyleState {
+        crate::StyleState::NORMAL
+    }
+
+    /// Paints component-specific content into `rect` (already laid out in
+    /// the parent's coordinate space). The renderer paints the common
+    /// background, border, radius, and outline first. Does not paint children.
     fn paint(&self, painter: &mut dyn Painter, rect: Rect);
 
     /// Takes ownership of this widget's children, in layout order, leaving

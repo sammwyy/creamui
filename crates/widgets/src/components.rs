@@ -182,12 +182,13 @@ impl Icon {
     }
 }
 impl Widget for Icon {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: crate::layout::fixed(self.size, self.size),
             flex_shrink: 0.,
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         Self::draw(self.symbol, painter, rect, self.color);
@@ -228,8 +229,8 @@ impl Surface {
     }
 }
 impl Widget for Surface {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -310,8 +311,8 @@ fn activation(click: Rc<dyn Fn()>) -> Rc<dyn Fn(KeyInput)> {
     })
 }
 impl Widget for NavigationItem {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let t = self.theme;
@@ -426,14 +427,15 @@ impl Choice {
                 },
                 12.,
             )));
-        inner.hover_background = Some(background.mix(theme.text_primary, 0.04));
-        inner.pressed_background = Some(background.mix(theme.text_primary, 0.09));
-        inner.focus_color = Some(theme.accent);
+        inner = inner
+            .hover_background(background.mix(theme.text_primary, 0.04))
+            .pressed_background(background.mix(theme.text_primary, 0.09))
+            .focus_color(theme.accent);
         Self { inner }
     }
 }
 impl Widget for Choice {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {

@@ -15,6 +15,7 @@ enum PaintMode {
 
 struct Instance {
     widget: BoxedWidget,
+    style: crate::Style,
     children: Vec<Instance>,
     node_id: taffy::NodeId,
 }
@@ -56,18 +57,19 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             children.push(child);
         }
         let node_id = tree
-            .new_with_children(new_style, &child_ids)
+            .new_with_children(new_style.layout.clone(), &child_ids)
             .expect("taffy node creation is infallible for well-formed styles");
         tree.set_node_context(node_id, new_measure)
             .expect("setting the context of a freshly created node should not fail");
         return Instance {
             widget,
+            style: new_style,
             children,
             node_id,
         };
     };
 
-    tree.set_style(old.node_id, new_style)
+    tree.set_style(old.node_id, new_style.layout.clone())
         .expect("updating the style of an existing node should not fail");
     tree.set_node_context(old.node_id, new_measure)
         .expect("updating the context of an existing node should not fail");
@@ -87,6 +89,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
 
     Instance {
         widget,
+        style: new_style,
         children: new_children,
         node_id: old.node_id,
     }
@@ -167,6 +170,35 @@ fn paint_instance(
     // an absolute node and its complete subtree are painted normally.
     let paint_self = mode == PaintMode::Flow || absolute;
     if paint_self {
+        let focusable = instance.widget.focusable() && instance.widget.on_key().is_some();
+        let states = instance
+            .widget
+            .style_state()
+            .with_hovered(painter.hovered(rect))
+            .with_pressed(painter.pressed(rect))
+            .with_focused(focusable && focus.focused_index == Some(focus.counter));
+        let resolved = instance.style.resolve(states);
+        let colors = painter.color_scheme();
+        let radius = resolved.paint.corner_radius.unwrap_or(0.0);
+        if let Some(background) = resolved.paint.background {
+            painter.fill_rect(rect, background.resolve(&colors), radius);
+        }
+        if let Some(border) = resolved.paint.border {
+            painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
+        }
+        if let Some(outline) = resolved.paint.outline {
+            painter.stroke_rect(
+                Rect {
+                    x: rect.x - outline.width,
+                    y: rect.y - outline.width,
+                    width: rect.width + outline.width * 2.0,
+                    height: rect.height + outline.width * 2.0,
+                },
+                outline.color.resolve(&colors),
+                outline.width,
+                radius + outline.width,
+            );
+        }
         instance.widget.paint(painter, rect);
     }
 
@@ -582,8 +614,8 @@ mod tests {
         child_count: usize,
     }
     impl crate::widget::Widget for Branch {
-        fn style(&self) -> taffy::style::Style {
-            taffy::style::Style::default()
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
         }
         fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
         fn children(&mut self) -> Vec<BoxedWidget> {

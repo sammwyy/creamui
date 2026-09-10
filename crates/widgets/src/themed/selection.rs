@@ -51,8 +51,8 @@ impl Select {
 }
 
 impl Widget for Select {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let hovered = painter.hovered(rect);
@@ -178,12 +178,13 @@ impl Widget for Select {
                     RawText::new(label, foreground, self.theme.typography.body)
                         .align(TextAlign::Start),
                 ));
-            item.hover_background = Some(if selected {
-                self.theme.accent_hover
-            } else {
-                self.theme.surface_hover
-            });
-            item.focus_color = Some(self.theme.accent);
+            item = item
+                .hover_background(if selected {
+                    self.theme.accent_hover
+                } else {
+                    self.theme.surface_hover
+                })
+                .focus_color(self.theme.accent);
             popup = popup.child(Box::new(item));
         }
         let dismiss = self.controller.clone();
@@ -268,8 +269,8 @@ impl Radio {
 }
 
 impl Widget for Radio {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let diameter = 18.0;
@@ -376,8 +377,8 @@ impl RadioGroup {
 }
 
 impl Widget for RadioGroup {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, _: &mut dyn Painter, _: Rect) {}
     fn children(&mut self) -> Vec<BoxedWidget> {
@@ -428,8 +429,8 @@ impl SegmentedControl {
 }
 
 impl Widget for SegmentedControl {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, _: &mut dyn Painter, _: Rect) {}
     fn children(&mut self) -> Vec<BoxedWidget> {
@@ -503,8 +504,8 @@ impl ListBox {
 }
 
 impl Widget for ListBox {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -541,7 +542,7 @@ impl Widget for ListBox {
             };
             let mut item =
                 RawButton::new(row_style, move || on_change(index)).background(background);
-            item.hover_background = Some(if selected {
+            item = item.hover_background(if selected {
                 self.theme.accent_hover
             } else {
                 self.theme.surface_hover

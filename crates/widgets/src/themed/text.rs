@@ -47,23 +47,23 @@ pub struct Text {
 impl Text {
     /// Use the bundled bold face, measured with the same font as rendering.
     pub fn bold(mut self, bold: bool) -> Self {
-        self.inner.bold = bold;
+        self.inner.style.typography.bold = Some(bold);
         self
     }
 
     /// Synthesized by shearing the glyph raster — see [`RawText::italic`].
     pub fn italic(mut self, italic: bool) -> Self {
-        self.inner.italic = italic;
+        self.inner.style.typography.italic = Some(italic);
         self
     }
 
     pub fn underline(mut self, underline: bool) -> Self {
-        self.inner.underline = underline;
+        self.inner.style.typography.underline = Some(underline);
         self
     }
 
     pub fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.inner.strikethrough = strikethrough;
+        self.inner.style.typography.strikethrough = Some(strikethrough);
         self
     }
 
@@ -91,38 +91,38 @@ impl Text {
     }
 
     pub fn font_size(mut self, size: f32) -> Self {
-        self.inner.font_size = size;
+        self.inner.style.typography.font_size = Some(size);
         self
     }
 
     /// Sets the font size from the shared [`TextSize`] scale (`Md` matches
     /// the 14px default from [`Text::new`]).
     pub fn size(mut self, size: TextSize) -> Self {
-        self.inner.font_size = size.text_px();
+        self.inner.style.typography.font_size = Some(size.text_px());
         self
     }
 
     pub fn align(mut self, align: TextAlign) -> Self {
-        self.inner.align = align;
+        self.inner.style.typography.align = Some(align);
         self
     }
 
     /// Overrides the semantic primary/secondary color for cases such as a
     /// brand mark or a status value.
     pub fn color(mut self, color: creamui_theme::Color) -> Self {
-        self.inner.color = color;
+        self.inner.style.typography.color = Some(color.into());
         self
     }
 
     /// Gives text a layout style for width, margin, flex/grid placement, etc.
     pub fn style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 }
 
 impl Widget for Text {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -201,37 +201,37 @@ impl Heading {
     }
 
     pub fn align(mut self, align: TextAlign) -> Self {
-        self.inner.align = align;
+        self.inner.style.typography.align = Some(align);
         self
     }
 
     /// Overrides the theme's primary text color, e.g. for an accent-colored
     /// heading.
     pub fn color(mut self, color: creamui_theme::Color) -> Self {
-        self.inner.color = color;
+        self.inner.style.typography.color = Some(color.into());
         self
     }
 
     pub fn underline(mut self, underline: bool) -> Self {
-        self.inner.underline = underline;
+        self.inner.style.typography.underline = Some(underline);
         self
     }
 
     pub fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.inner.strikethrough = strikethrough;
+        self.inner.style.typography.strikethrough = Some(strikethrough);
         self
     }
 
     /// Gives the heading a layout style for width, margin, flex/grid
     /// placement, etc.
     pub fn style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 }
 
 impl Widget for Heading {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

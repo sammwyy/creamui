@@ -192,8 +192,8 @@ impl RawDateTimePicker {
 }
 
 impl Widget for RawDateTimePicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let background = if !self.disabled && painter.hovered(rect) {
@@ -406,8 +406,8 @@ impl RawColorPicker {
 }
 
 impl Widget for RawColorPicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if let Some(color) = self.background {
@@ -619,8 +619,8 @@ impl RawFilePicker {
 }
 
 impl Widget for RawFilePicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let background = if !self.disabled && painter.hovered(rect) {

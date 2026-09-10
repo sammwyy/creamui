@@ -242,8 +242,8 @@ fn with_theme_scope<R>(
 
 struct BlankWidget;
 impl creamui_core::Widget for BlankWidget {
-    fn style(&self) -> creamui_core::layout::Style {
-        creamui_core::layout::Style::default()
+    fn style(&self) -> creamui_core::Style {
+        creamui_core::layout::Style::default().into()
     }
     fn paint(&self, _painter: &mut dyn creamui_core::Painter, _rect: creamui_core::Rect) {}
 }
@@ -1731,6 +1731,7 @@ fn build_window_spec(
                 let physical_width = (logical_size.width as f64 * scale).round() as u32;
                 let physical_height = (logical_size.height as f64 * scale).round() as u32;
                 painter.set_scale(scale as f32);
+                painter.set_color_scheme(theme_provider.get().colors);
                 painter.resize(physical_width, physical_height);
                 painter.clear(clear_color);
                 let paint_started = Instant::now();
@@ -1785,6 +1786,7 @@ fn build_window_spec(
                 let physical_width = (logical_size.width as f64 * scale).round() as u32;
                 let physical_height = (logical_size.height as f64 * scale).round() as u32;
                 frame.painter.set_scale(scale as f32);
+                frame.painter.set_color_scheme(theme_provider.get().colors);
                 frame.painter.resize(physical_width, physical_height);
                 frame.painter.clear(clear_color);
                 let FrameState {
@@ -1964,8 +1966,8 @@ mod tests {
     struct ThemeInChildren;
 
     impl creamui_core::Widget for ThemeInChildren {
-        fn style(&self) -> creamui_core::layout::Style {
-            creamui_core::layout::Style::default()
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style::default().into()
         }
 
         fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
@@ -1977,7 +1979,7 @@ mod tests {
     }
 
     impl creamui_core::Widget for InteractiveWidget {
-        fn style(&self) -> creamui_core::layout::Style {
+        fn style(&self) -> creamui_core::Style {
             creamui_core::layout::Style {
                 size: creamui_core::layout::Size {
                     width: creamui_core::layout::Dimension::Length(100.0),
@@ -1985,6 +1987,7 @@ mod tests {
                 },
                 ..Default::default()
             }
+            .into()
         }
 
         fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}

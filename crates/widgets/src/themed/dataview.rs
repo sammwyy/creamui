@@ -192,7 +192,7 @@ impl TreeView {
         let id = row.id;
         let mut item =
             RawButton::new(row_style, move || controller.select(id)).background(background);
-        item.hover_background = Some(if row.selected {
+        item = item.hover_background(if row.selected {
             self.theme.accent_hover
         } else {
             self.theme.surface_hover
@@ -202,8 +202,8 @@ impl TreeView {
 }
 
 impl Widget for TreeView {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -314,7 +314,7 @@ impl ListView {
 }
 
 impl Widget for ListView {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -372,7 +372,7 @@ impl Table {
 }
 
 impl Widget for Table {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

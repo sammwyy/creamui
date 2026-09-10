@@ -47,8 +47,8 @@ impl RawQuote {
 }
 
 impl Widget for RawQuote {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -123,8 +123,8 @@ impl RawPre {
 }
 
 impl Widget for RawPre {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -239,8 +239,8 @@ impl RawLink {
 }
 
 impl Widget for RawLink {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

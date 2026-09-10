@@ -20,37 +20,51 @@ impl TextSelection {
 
 /// An unstyled rectangular container that lays out its children.
 pub struct RawView {
-    pub style: Style,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
+    pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
 }
 
 impl RawView {
-    pub fn new(style: Style) -> Self {
+    pub fn new(style: impl Into<creamui_core::Style>) -> Self {
+        let style = style.into();
         RawView {
             style,
-            background: None,
-            corner_radius: 0.0,
             children: Vec::new(),
         }
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
+        self
+    }
+
+    pub fn border(mut self, color: Color, width: f32) -> Self {
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
 
     /// Replaces the layout style. Useful when a base style is refined by a
     /// reusable component before it is returned.
     pub fn layout_style(mut self, style: Style) -> Self {
+        self.style.layout = style;
+        self
+    }
+
+    /// Applies a complete common style. RawView consumes layout and paint;
+    /// typography remains available for text-producing components.
+    pub fn common_style(mut self, style: creamui_core::Style) -> Self {
         self.style = style;
         self
+    }
+
+    /// Alias for [`Self::common_style`] with conventional builder naming.
+    pub fn with_style(self, style: creamui_core::Style) -> Self {
+        self.common_style(style)
     }
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {
@@ -65,15 +79,11 @@ impl RawView {
 }
 
 impl Widget for RawView {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }
 
-    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-    }
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -82,119 +92,130 @@ impl Widget for RawView {
 
 /// Unstyled text with no color or size opinion beyond what's passed in.
 pub struct RawText {
-    pub bold: bool,
-    pub italic: bool,
-    pub underline: bool,
-    pub strikethrough: bool,
     pub text: String,
-    pub color: Color,
-    pub font_size: f32,
-    pub align: TextAlign,
-    pub style: Style,
-    /// CSS-style family stack (e.g. `"Inter, sans-serif"`) resolved against
-    /// the font registry. `None` uses the bundled default.
-    pub family: Option<String>,
+    pub style: creamui_core::Style,
 }
 
 impl RawText {
     pub fn new(text: impl Into<String>, color: Color, font_size: f32) -> Self {
         RawText {
-            bold: false,
-            italic: false,
-            underline: false,
-            strikethrough: false,
             text: text.into(),
-            color,
-            font_size,
-            align: TextAlign::Center,
-            style: Style::default(),
-            family: None,
+            style: creamui_core::Style::new()
+                .color(color)
+                .font_size(font_size)
+                .text_align(TextAlign::Center),
         }
     }
 
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.family = Some(family.into());
+        self.style.typography.font_family = Some(family.into());
         self
     }
 
     pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
+        self.style.typography.color = Some(color.into());
         self
     }
 
     pub fn bold(mut self, bold: bool) -> Self {
-        self.bold = bold;
+        self.style.typography.bold = Some(bold);
         self
     }
 
     /// Synthesized by shearing the glyph raster (no italic face is
     /// bundled), so it combines freely with [`RawText::bold`].
     pub fn italic(mut self, italic: bool) -> Self {
-        self.italic = italic;
+        self.style.typography.italic = Some(italic);
         self
     }
 
     pub fn underline(mut self, underline: bool) -> Self {
-        self.underline = underline;
+        self.style.typography.underline = Some(underline);
         self
     }
 
     pub fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.strikethrough = strikethrough;
+        self.style.typography.strikethrough = Some(strikethrough);
         self
     }
 
     pub fn font_size(mut self, font_size: f32) -> Self {
-        self.font_size = font_size;
+        self.style.typography.font_size = Some(font_size);
         self
     }
 
     pub fn align(mut self, align: TextAlign) -> Self {
-        self.align = align;
+        self.style.typography.align = Some(align);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
+        self.style.layout = style;
+        self
+    }
+
+    /// Applies layout and typography from CreamUI's common style. Paint
+    /// properties are intentionally ignored because RawText paints glyphs,
+    /// not a containing surface.
+    pub fn common_style(mut self, style: creamui_core::Style) -> Self {
         self.style = style;
         self
+    }
+
+    /// Alias for [`Self::common_style`] with conventional builder naming.
+    pub fn with_style(self, style: creamui_core::Style) -> Self {
+        self.common_style(style)
     }
 }
 
 impl Widget for RawText {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        let state = creamui_core::StyleState::NORMAL
+            .with_hovered(painter.hovered(rect))
+            .with_pressed(painter.pressed(rect));
+        let typography = self.style.resolve(state).typography;
+        let colors = painter.color_scheme();
+        let color = typography
+            .color
+            .unwrap_or_else(|| Color::rgb(0, 0, 0).into())
+            .resolve(&colors);
+        let font_size = typography.font_size.unwrap_or(14.0);
+        let align = typography.align.unwrap_or_default();
+        let bold = typography.bold.unwrap_or(false);
+        let italic = typography.italic.unwrap_or(false);
+        let underline = typography.underline.unwrap_or(false);
+        let strikethrough = typography.strikethrough.unwrap_or(false);
+        let family = typography.font_family.as_deref();
         painter.fill_text_font(
-            rect,
-            &self.text,
-            self.color,
-            self.font_size,
-            self.align,
-            self.family.as_deref(),
-            self.bold,
-            self.italic,
+            rect, &self.text, color, font_size, align, family, bold, italic,
         );
         super::draw_text_decorations(
             painter,
             rect,
             &self.text,
-            self.font_size,
-            self.family.as_deref(),
-            self.bold,
-            self.align,
-            self.color,
-            self.underline,
-            self.strikethrough,
+            font_size,
+            family,
+            bold,
+            align,
+            color,
+            underline,
+            strikethrough,
         );
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         let text = self.text.clone();
-        let font_size = self.font_size;
-        let bold = self.bold;
-        let family = self.family.clone();
+        let typography = self
+            .style
+            .resolve(creamui_core::StyleState::NORMAL)
+            .typography;
+        let font_size = typography.font_size.unwrap_or(14.0);
+        let bold = typography.bold.unwrap_or(false);
+        let family = typography.font_family;
         Some(Box::new(move |known_dimensions, available_space| {
             let max_width = match (known_dimensions.width, available_space.width) {
                 (Some(w), _) => w,

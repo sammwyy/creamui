@@ -239,7 +239,7 @@ impl DateTimePicker {
                         },
                         12.,
                     )));
-                    button.hover_background = Some(if selected {
+                    button = button.hover_background(if selected {
                         self.theme.accent_hover
                     } else {
                         self.theme.surface_hover
@@ -304,8 +304,8 @@ impl DateTimePicker {
 }
 
 impl Widget for DateTimePicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(
@@ -476,7 +476,7 @@ impl DateInput {
     }
 }
 impl Widget for DateInput {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {
@@ -531,7 +531,7 @@ impl TimeInput {
     }
 }
 impl Widget for TimeInput {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {
@@ -610,8 +610,8 @@ impl ColorPicker {
     }
 }
 impl Widget for ColorPicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(
@@ -878,8 +878,8 @@ impl FilePicker {
     }
 }
 impl Widget for FilePicker {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {
         self.raw().paint(p, r)

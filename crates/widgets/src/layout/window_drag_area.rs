@@ -30,7 +30,7 @@ impl Default for CUIWindowDragArea {
 }
 
 impl Widget for CUIWindowDragArea {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

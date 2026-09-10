@@ -71,12 +71,13 @@ impl RawListView {
 }
 
 impl Widget for RawListView {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
             ..self.style.clone()
         }
+        .into()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -334,12 +335,13 @@ impl RawTable {
 }
 
 impl Widget for RawTable {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
             ..self.style.clone()
         }
+        .into()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}

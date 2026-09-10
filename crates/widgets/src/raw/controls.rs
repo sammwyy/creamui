@@ -119,8 +119,8 @@ impl Widget for RawCheckbox {
             self.corner_radius + 2.,
         );
     }
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -280,8 +280,8 @@ impl Widget for RawSwitch {
             r.height / 2. + 3.,
         );
     }
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let base = if self.checked {
@@ -449,8 +449,8 @@ impl Widget for RawSlider {
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, _: bool) {
         p.stroke_rect(r, self.focus_color.unwrap_or(self.fill_color), 1., 5.);
     }
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

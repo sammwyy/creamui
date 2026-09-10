@@ -163,7 +163,7 @@ impl RawScrollView {
 }
 
 impl Widget for RawScrollView {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         // Always Column, regardless of what the caller passes: the sole
         // in-flow child is the `ScrollClip` (see `children()` below), and
         // it needs Column's cross axis (width) to `align-items: stretch` to
@@ -184,6 +184,7 @@ impl Widget for RawScrollView {
             flex_direction: creamui_core::layout::FlexDirection::Column,
             ..self.style.clone()
         })
+        .into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -280,8 +281,8 @@ struct ScrollClip {
 }
 
 impl Widget for ScrollClip {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -411,8 +412,8 @@ impl RawScrollbar {
 }
 
 impl Widget for RawScrollbar {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

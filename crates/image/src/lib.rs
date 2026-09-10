@@ -181,8 +181,8 @@ impl Image {
 }
 
 impl Widget for Image {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

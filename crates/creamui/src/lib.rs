@@ -11,7 +11,11 @@ pub use creamui_render as render;
 pub use creamui_theme as theme;
 pub use creamui_widgets as widgets;
 
-pub use creamui_core::{BoxedWidget, Painter, Size, Widget};
+pub use creamui_core::{
+    Border, BoxedWidget, ColorToken, ColorValue, InteractionState, LengthValue, PaintStyle,
+    Painter, Size, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
+    Widget,
+};
 #[cfg(feature = "devtools")]
 pub use creamui_devtools as devtools;
 pub use creamui_fonts::{include_font, use_font, FontHandle, FontWeight};

@@ -101,12 +101,13 @@ struct Conversation {
 // catch-up below, since neither is backed by a `Signal`.
 struct Heartbeat;
 impl Widget for Heartbeat {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             position: Position::Absolute,
             size: fixed(0.0, 0.0),
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, _rect: Rect) {
         let _ = painter.animation_time();
@@ -736,12 +737,13 @@ struct ReadReceipt {
     double: bool,
 }
 impl Widget for ReadReceipt {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: fixed(if self.double { 18.0 } else { 11.0 }, 11.0),
             flex_shrink: 0.0,
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         Icon::draw(

@@ -54,7 +54,7 @@ impl MenuBar {
 }
 
 impl Widget for MenuBar {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -86,7 +86,7 @@ impl MenuPopup {
 }
 
 impl Widget for MenuPopup {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -133,7 +133,7 @@ impl MenuItem {
 }
 
 impl Widget for MenuItem {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -172,7 +172,7 @@ impl Card {
 }
 
 impl Widget for Card {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

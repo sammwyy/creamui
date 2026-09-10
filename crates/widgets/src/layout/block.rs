@@ -36,7 +36,7 @@ impl Default for Block {
 }
 
 impl Widget for Block {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

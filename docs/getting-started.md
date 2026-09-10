@@ -98,6 +98,45 @@ chainable properties on any `Style`, import `StyleExt` and start with
 For advanced layout properties, use the re-exported Taffy types through
 `creamui::core::layout`.
 
+## Common styles
+
+`creamui::Style` is the component-independent style declaration. It combines
+layout, paint, typography, and interaction-state patches; each component uses
+only the properties it can render. Interaction patches intentionally exclude
+layout so a hover or press cannot move its own hit target.
+
+```rust
+use creamui::{ColorToken, StateStyle, Style, StyleProp};
+use creamui::widgets::layout::StyleExt;
+
+let action = Style::new()
+    .size(220.0, 48.0)
+    .background(ColorToken::SurfaceElevated)
+    .border(ColorToken::Border, 1.0)
+    .corner_radius(8.0)
+    .color(ColorToken::TextPrimary)
+    .font_size(14.0)
+    .hover(StateStyle::new().background(ColorToken::AccentHover))
+    .pressed(StateStyle::new().background(ColorToken::AccentPressed))
+    .focus(StateStyle::new().outline(ColorToken::Accent, 2.0))
+    .property(StyleProp::parse("min-width", "120px").unwrap());
+```
+
+Existing `creamui::core::layout::Style` values still work anywhere a common
+style is accepted through the `From`/`Into` adapter. This keeps existing Taffy
+struct literals valid while applications migrate declarations incrementally.
+
+Strings are accepted only at the declaration boundary through
+`StyleProp::parse`. They are immediately compiled into typed `ColorValue` and
+`LengthValue` values; widgets and the renderer never interpret CSS strings.
+Semantic `ColorToken`s are resolved against the window's current color scheme
+at paint time, so a stored style follows theme changes without being rebuilt.
+
+Box paint is centralized: the renderer draws the resolved background, border,
+radius, and outline before calling a widget's content-specific `paint` method.
+Pointer, focus, and component-owned disabled states are composed rather than
+being mutually exclusive.
+
 ## Next steps
 
 - Browse [components](components.md) for the component families and their state model.

@@ -7,17 +7,23 @@
 
 mod geometry;
 mod scene;
+mod style;
 mod widget;
 
 pub use geometry::{Point, Rect, Size};
 pub use scene::{render_frame, Renderer, Scene};
+pub use style::{
+    Border, ColorToken, ColorValue, InteractionState, InteractionStyles, LengthValue, PaintStyle,
+    ResolvedStyle, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
+};
 pub use widget::{
     BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, TextAlign, Widget,
     WindowDragHandle,
 };
 
-/// Re-exported so downstream crates can build `taffy::style::Style` values
-/// without adding a direct `taffy` dependency of their own.
+/// Taffy's layout-only primitives. [`crate::Style`] is CreamUI's common
+/// component style; this module remains available as a migration adapter for
+/// existing layout declarations and for advanced grid/flex configuration.
 pub mod layout {
     pub use taffy::prelude::*;
 }

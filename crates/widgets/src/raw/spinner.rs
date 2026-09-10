@@ -27,7 +27,7 @@ impl RawSpinner {
     }
 }
 impl Widget for RawSpinner {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: creamui_core::layout::Size {
                 width: creamui_core::layout::Dimension::Length(self.size),
@@ -35,6 +35,7 @@ impl Widget for RawSpinner {
             },
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let phase = if self.animate {

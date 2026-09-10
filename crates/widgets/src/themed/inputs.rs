@@ -116,7 +116,7 @@ impl TextInput {
 }
 
 impl Widget for TextInput {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -291,7 +291,7 @@ impl TextArea {
 }
 
 impl Widget for TextArea {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -371,7 +371,7 @@ impl Widget for Slider {
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, c: bool) {
         self.inner.paint_focused_overlay(p, r, c);
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

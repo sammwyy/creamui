@@ -57,12 +57,13 @@ impl RawTabs {
 }
 
 impl Widget for RawTabs {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Row,
             ..self.style.clone()
         }
+        .into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -124,12 +125,13 @@ impl RawSidebar {
 }
 
 impl Widget for RawSidebar {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
             ..self.style.clone()
         }
+        .into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -273,8 +275,8 @@ impl Widget for RawTab {
         }
     }
 
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

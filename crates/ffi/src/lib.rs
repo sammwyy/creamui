@@ -497,7 +497,7 @@ pub unsafe extern "C" fn creamui_block_set_background(block: *mut CWidget, color
         return;
     }
     if let WidgetKind::Block(v) = &mut (*block).0 {
-        v.background = Some(color_from_c(color));
+        v.style.paint.background = Some(color_from_c(color).into());
     }
 }
 
@@ -511,7 +511,7 @@ pub unsafe extern "C" fn creamui_block_set_corner_radius(block: *mut CWidget, ra
         return;
     }
     if let WidgetKind::Block(v) = &mut (*block).0 {
-        v.corner_radius = radius;
+        v.style.paint.corner_radius = Some(radius);
     }
 }
 

@@ -401,8 +401,8 @@ impl RawTextArea {
 }
 
 impl Widget for RawTextArea {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -931,8 +931,8 @@ impl RawTextInput {
 }
 
 impl Widget for RawTextInput {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

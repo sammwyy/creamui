@@ -134,7 +134,7 @@ impl Tabs {
 }
 
 impl Widget for Tabs {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -256,7 +256,7 @@ impl Widget for Tab {
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret: bool) {
         self.inner.paint_focused_overlay(painter, rect, caret)
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -314,7 +314,7 @@ impl Sidebar {
 }
 
 impl Widget for Sidebar {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -356,8 +356,8 @@ impl SidebarSeparator {
 }
 
 impl Widget for SidebarSeparator {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if let Some(label) = &self.label {
@@ -565,7 +565,7 @@ impl Widget for SidebarItem {
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret: bool) {
         self.inner.paint_focused_overlay(painter, rect, caret)
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

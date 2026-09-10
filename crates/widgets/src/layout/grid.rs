@@ -203,7 +203,7 @@ impl Default for Grid {
 }
 
 impl Widget for Grid {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -299,8 +299,8 @@ impl Default for GridItem {
 }
 
 impl Widget for GridItem {
-    fn style(&self) -> Style {
-        self.style.clone()
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone().into()
     }
 
     fn paint(&self, _: &mut dyn Painter, _: Rect) {}
@@ -367,7 +367,7 @@ mod tests {
             .collect();
         let root_style = Style {
             size: crate::layout::fixed(400.0, 200.0),
-            ..Grid::new().auto_fit_columns(180.0).gap(20.0).style()
+            ..Grid::new().auto_fit_columns(180.0).gap(20.0).style().layout
         };
         let root = tree.new_with_children(root_style, &children).unwrap();
         tree.compute_layout(

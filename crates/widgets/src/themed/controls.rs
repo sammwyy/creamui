@@ -30,7 +30,7 @@ impl Widget for Checkbox {
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, c: bool) {
         self.inner.paint_focused_overlay(p, r, c);
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 
@@ -72,7 +72,7 @@ impl Spinner {
     }
 }
 impl Widget for Spinner {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -113,7 +113,7 @@ impl Widget for Switch {
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, c: bool) {
         self.inner.paint_focused_overlay(p, r, c);
     }
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

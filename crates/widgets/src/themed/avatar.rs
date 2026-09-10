@@ -84,12 +84,13 @@ struct AvatarFace {
 }
 
 impl Widget for AvatarFace {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: crate::layout::fixed(self.size, self.size),
             flex_shrink: 0.,
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(rect, self.background, self.size / 2.);
@@ -130,7 +131,7 @@ struct AvatarStatusDot {
 }
 
 impl Widget for AvatarStatusDot {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             position: Position::Absolute,
             inset: InsetRect {
@@ -143,6 +144,7 @@ impl Widget for AvatarStatusDot {
             flex_shrink: 0.,
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         painter.fill_rect(rect, self.ring_color, self.size / 2.);
@@ -161,12 +163,13 @@ impl Widget for AvatarStatusDot {
 }
 
 impl Widget for Avatar {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         Style {
             size: crate::layout::fixed(self.size, self.size),
             flex_shrink: 0.,
             ..Default::default()
         }
+        .into()
     }
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
     fn children(&mut self) -> Vec<BoxedWidget> {

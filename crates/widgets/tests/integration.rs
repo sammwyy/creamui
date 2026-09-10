@@ -5,13 +5,12 @@
 use creamui_core::layout::{AlignItems, Dimension, JustifyContent, Style};
 use creamui_core::{
     render_frame, CursorIcon, Key, KeyInput, Modifiers, Painter, Point, Rect, Renderer, Size,
-    TextAlign, Widget,
+    StateStyle, Style as CommonStyle, TextAlign, Widget,
 };
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{
-    ButtonVisualStyle, RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawView,
-    TextSelection,
+    RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawText, RawView, TextSelection,
 };
 use creamui_widgets::themed::{
     tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Link, ListBox, ListView, Overlay,
@@ -39,6 +38,7 @@ struct StatePainter {
     pressed: bool,
     fill: Option<(Color, f32)>,
     stroke: Option<(Color, f32, f32)>,
+    text: Option<(Color, f32, TextAlign)>,
 }
 
 impl Painter for StatePainter {
@@ -54,7 +54,9 @@ impl Painter for StatePainter {
     fn stroke_rect(&mut self, _: Rect, color: Color, width: f32, radius: f32) {
         self.stroke = Some((color, width, radius));
     }
-    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
+    fn fill_text(&mut self, _: Rect, _: &str, color: Color, size: f32, align: TextAlign) {
+        self.text = Some((color, size, align));
+    }
 }
 
 impl Painter for RecordingPainter {
@@ -191,13 +193,13 @@ fn raw_button_interaction_styles_override_paint_without_affecting_layout() {
         .border(resting, 1.)
         .corner_radius(2.)
         .hover_style(
-            ButtonVisualStyle::new()
+            StateStyle::new()
                 .background(hovered)
                 .border(hover_border, 2.)
                 .corner_radius(6.),
         )
         .pressed_style(
-            ButtonVisualStyle::new()
+            StateStyle::new()
                 .background(pressed)
                 .border(pressed_border, 3.)
                 .corner_radius(10.),
@@ -213,7 +215,15 @@ fn raw_button_interaction_styles_override_paint_without_affecting_layout() {
         hovered: true,
         ..Default::default()
     };
-    button.paint(&mut hover_painter, rect);
+    let declaration = Widget::style(&button);
+    Renderer::new().render(
+        Box::new(button),
+        Size {
+            width: rect.width,
+            height: rect.height,
+        },
+        &mut hover_painter,
+    );
     assert_eq!(hover_painter.fill, Some((hovered, 6.)));
     assert_eq!(hover_painter.stroke, Some((hover_border, 2., 6.)));
 
@@ -222,9 +232,73 @@ fn raw_button_interaction_styles_override_paint_without_affecting_layout() {
         pressed: true,
         ..Default::default()
     };
-    button.paint(&mut pressed_painter, rect);
+    Renderer::new().render(
+        Box::new(RawButton::new(declaration, || {})),
+        Size {
+            width: rect.width,
+            height: rect.height,
+        },
+        &mut pressed_painter,
+    );
     assert_eq!(pressed_painter.fill, Some((pressed, 10.)));
     assert_eq!(pressed_painter.stroke, Some((pressed_border, 3., 10.)));
+}
+
+#[test]
+fn common_style_is_shared_by_layout_paint_typography_and_widget_contract() {
+    let resting = Color::rgb(10, 20, 30);
+    let hovered = Color::rgb(40, 50, 60);
+    let text = Color::rgb(70, 80, 90);
+    let hovered_text = Color::rgb(100, 110, 120);
+    let declaration = CommonStyle::new()
+        .layout(Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Length(120.0),
+                height: Dimension::Length(32.0),
+            },
+            ..Default::default()
+        })
+        .background(resting)
+        .corner_radius(4.0)
+        .color(text)
+        .font_size(13.0)
+        .hover(
+            StateStyle::new()
+                .background(hovered)
+                .color(hovered_text)
+                .font_size(15.0),
+        );
+
+    let view = RawView::new(declaration.clone());
+    assert_eq!(Widget::style(&view), declaration);
+    let mut view_painter = StatePainter {
+        hovered: true,
+        ..Default::default()
+    };
+    Renderer::new().render(
+        Box::new(view),
+        Size {
+            width: 120.0,
+            height: 32.0,
+        },
+        &mut view_painter,
+    );
+    assert_eq!(view_painter.fill, Some((hovered, 4.0)));
+
+    let label = RawText::new("label", Color::rgb(0, 0, 0), 8.0).with_style(declaration.clone());
+    assert_eq!(
+        Widget::style(&label).layout.size.width,
+        Dimension::Length(120.0)
+    );
+    let mut text_painter = StatePainter {
+        hovered: true,
+        ..Default::default()
+    };
+    label.paint(&mut text_painter, Rect::default());
+    assert_eq!(
+        text_painter.text,
+        Some((hovered_text, 15.0, TextAlign::Center))
+    );
 }
 
 #[test]

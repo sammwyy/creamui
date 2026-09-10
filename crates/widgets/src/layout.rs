@@ -169,7 +169,7 @@ macro_rules! layout_container_methods {
 
         /// Stretches the container across its parent's width.
         pub fn full_width(mut self) -> Self {
-            self.inner.style = $crate::layout::full_width(self.inner.style);
+            self.inner.style.layout = $crate::layout::full_width(self.inner.style.layout);
             self
         }
 
@@ -181,7 +181,7 @@ macro_rules! layout_container_methods {
 
         /// Stretches the container to the available size on both axes.
         pub fn fill(mut self) -> Self {
-            self.inner.style = $crate::layout::fill(self.inner.style);
+            self.inner.style.layout = $crate::layout::fill(self.inner.style.layout);
             self
         }
 
@@ -485,6 +485,129 @@ impl StyleExt for Style {
 
     fn grid_row_span(mut self, count: u16) -> Self {
         self.grid_row.end = GridPlacement::Span(count);
+        self
+    }
+}
+
+// The same layout vocabulary applies to CreamUI's common Style. Keeping the
+// implementation here avoids leaking layout convenience policy into core,
+// while allowing callers to build one fluent layout + paint + typography
+// declaration.
+impl StyleExt for creamui_core::Style {
+    fn block(mut self) -> Self {
+        self.layout = self.layout.block();
+        self
+    }
+    fn grid(mut self) -> Self {
+        self.layout = self.layout.grid();
+        self
+    }
+    fn flex(mut self) -> Self {
+        self.layout = self.layout.flex();
+        self
+    }
+    fn flex_row(mut self) -> Self {
+        self.layout = self.layout.flex_row();
+        self
+    }
+    fn flex_column(mut self) -> Self {
+        self.layout = self.layout.flex_column();
+        self
+    }
+    fn gap(mut self, value: f32) -> Self {
+        self.layout = self.layout.gap(value);
+        self
+    }
+    fn gap_x(mut self, value: f32) -> Self {
+        self.layout = self.layout.gap_x(value);
+        self
+    }
+    fn gap_y(mut self, value: f32) -> Self {
+        self.layout = self.layout.gap_y(value);
+        self
+    }
+    fn align(mut self, value: Align) -> Self {
+        self.layout = self.layout.align(value);
+        self
+    }
+    fn justify(mut self, value: Justify) -> Self {
+        self.layout = self.layout.justify(value);
+        self
+    }
+    fn align_content(mut self, value: Justify) -> Self {
+        self.layout = self.layout.align_content(value);
+        self
+    }
+    fn wrap(mut self, value: Wrap) -> Self {
+        self.layout = self.layout.wrap(value);
+        self
+    }
+    fn padding_all(mut self, value: f32) -> Self {
+        self.layout = self.layout.padding_all(value);
+        self
+    }
+    fn padding_xy(mut self, horizontal: f32, vertical: f32) -> Self {
+        self.layout = self.layout.padding_xy(horizontal, vertical);
+        self
+    }
+    fn margin_all(mut self, value: f32) -> Self {
+        self.layout = self.layout.margin_all(value);
+        self
+    }
+    fn margin_xy(mut self, horizontal: f32, vertical: f32) -> Self {
+        self.layout = self.layout.margin_xy(horizontal, vertical);
+        self
+    }
+    fn size(mut self, width: f32, height: f32) -> Self {
+        self.layout = self.layout.size(width, height);
+        self
+    }
+    fn width(mut self, value: f32) -> Self {
+        self.layout = self.layout.width(value);
+        self
+    }
+    fn height(mut self, value: f32) -> Self {
+        self.layout = self.layout.height(value);
+        self
+    }
+    fn min_size(mut self, width: f32, height: f32) -> Self {
+        self.layout = self.layout.min_size(width, height);
+        self
+    }
+    fn min_width(mut self, value: f32) -> Self {
+        self.layout = self.layout.min_width(value);
+        self
+    }
+    fn min_height(mut self, value: f32) -> Self {
+        self.layout = self.layout.min_height(value);
+        self
+    }
+    fn grow(mut self, factor: f32) -> Self {
+        self.layout = self.layout.grow(factor);
+        self
+    }
+    fn shrink(mut self, factor: f32) -> Self {
+        self.layout = self.layout.shrink(factor);
+        self
+    }
+    fn basis(mut self, value: f32) -> Self {
+        self.layout = self.layout.basis(value);
+        self
+    }
+    fn align_self(mut self, value: Align) -> Self {
+        self.layout = self.layout.align_self(value);
+        self
+    }
+    fn grid_cell(mut self, column: i16, row: i16) -> Self {
+        self.layout = self.layout.grid_cell(column, row);
+        self
+    }
+    fn grid_column_span(mut self, count: u16) -> Self {
+        self.layout = self.layout.grid_column_span(count);
+        self
+    }
+    fn grid_row_span(mut self, count: u16) -> Self {
+        self.layout = self.layout.grid_row_span(count);
         self
     }
 }

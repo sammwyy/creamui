@@ -68,7 +68,7 @@ impl ScrollView {
 }
 
 impl Widget for ScrollView {
-    fn style(&self) -> Style {
+    fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
 

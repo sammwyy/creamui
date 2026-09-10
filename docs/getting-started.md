@@ -132,6 +132,27 @@ Strings are accepted only at the declaration boundary through
 Semantic `ColorToken`s are resolved against the window's current color scheme
 at paint time, so a stored style follows theme changes without being rebuilt.
 
+Every widget also implements the `Styled` extension trait automatically. A
+component does not need its own `width`, `background`, or `font_size`
+forwarders:
+
+```rust
+use creamui::core::layout::Style as LayoutStyle;
+use creamui::widgets::RawButton;
+use creamui::{ColorToken, Styled};
+
+let button = RawButton::new(LayoutStyle::default(), || {})
+    .width(120.0)
+    .height(40.0)
+    .background(ColorToken::Accent)
+    .corner_radius(8.0);
+```
+
+The first call creates a transparent `StyledWidget`; the rest mutate that
+same declaration. Painting, children, measurement, focus, pointer and keyboard
+handlers are delegated to the original widget without adding a layout node.
+For configuration loaded from strings, use `.property(StyleProp::parse(...)?)`.
+
 Box paint is centralized: the renderer draws the resolved background, border,
 radius, and outline before calling a widget's content-specific `paint` method.
 Pointer, focus, and component-owned disabled states are composed rather than

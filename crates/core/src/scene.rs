@@ -183,6 +183,10 @@ fn paint_instance(
         if let Some(background) = resolved.paint.background {
             painter.fill_rect(rect, background.resolve(&colors), radius);
         }
+        instance.widget.paint(painter, rect);
+        // Borders and outlines sit over component-specific content, matching
+        // CSS box painting and preventing edge-to-edge content from hiding
+        // the common decoration.
         if let Some(border) = resolved.paint.border {
             painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
         }
@@ -199,7 +203,6 @@ fn paint_instance(
                 radius + outline.width,
             );
         }
-        instance.widget.paint(painter, rect);
     }
 
     if paint_self {

@@ -19,11 +19,9 @@ use crate::ScrollController;
 /// its sibling, is never itself shifted by the content's own scroll
 /// offset), and the optional [`RawScrollbar`] overlay.
 pub struct RawScrollView {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub scroll_y: f32,
     pub controller: Option<ScrollController>,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
     pub children: Vec<BoxedWidget>,
     pub on_scroll: Rc<dyn Fn(f32)>,
     pub on_scroll_bounded: Option<Rc<dyn Fn(f32, f32)>>,
@@ -39,13 +37,15 @@ pub struct RawScrollView {
 }
 
 impl RawScrollView {
-    pub fn new(style: Style, scroll_y: f32, on_scroll: impl Fn(f32) + 'static) -> Self {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        scroll_y: f32,
+        on_scroll: impl Fn(f32) + 'static,
+    ) -> Self {
         RawScrollView {
-            style,
+            style: style.into(),
             scroll_y,
             controller: None,
-            background: None,
-            corner_radius: 0.0,
             children: Vec::new(),
             on_scroll: Rc::new(on_scroll),
             on_scroll_bounded: None,
@@ -64,7 +64,7 @@ impl RawScrollView {
         }
     }
 
-    pub fn controlled(style: Style, controller: ScrollController) -> Self {
+    pub fn controlled(style: impl Into<creamui_core::Style>, controller: ScrollController) -> Self {
         let mut view = Self::new(style, controller.offset(), |_| {});
         view.controller = Some(controller.clone());
         view.on_scroll_bounded = Some(Rc::new(move |delta, max_offset| {
@@ -74,17 +74,17 @@ impl RawScrollView {
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -182,15 +182,13 @@ impl Widget for RawScrollView {
         crate::layout::shrinkable(Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
-            ..self.style.clone()
+            ..self.style.layout.clone()
         })
         .into()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
+        let _ = (painter, rect);
     }
 
     fn children(&mut self) -> Vec<BoxedWidget> {
@@ -226,12 +224,13 @@ impl Widget for RawScrollView {
                 flex_direction: creamui_core::layout::FlexDirection::Column,
                 flex_grow: 1.0,
                 ..Default::default()
-            }),
+            })
+            .into(),
             controller: self.controller.clone(),
             scroll_y: self.scroll_y,
             on_scroll: self.on_scroll.clone(),
             on_scroll_bounded: self.on_scroll_bounded.clone(),
-            corner_radius: self.corner_radius,
+            corner_radius: self.style.paint.corner_radius.unwrap_or(0.0),
             content: Some(Box::new(content)),
         };
 
@@ -271,7 +270,7 @@ impl Widget for RawScrollView {
 /// it — as a child of the same undipped, unoffset parent — instead of
 /// being caught by its own [`Widget::scroll_offset`].
 struct ScrollClip {
-    style: Style,
+    style: creamui_core::Style,
     scroll_y: f32,
     controller: Option<ScrollController>,
     on_scroll: Rc<dyn Fn(f32)>,
@@ -282,7 +281,7 @@ struct ScrollClip {
 
 impl Widget for ScrollClip {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -354,7 +353,7 @@ fn thumb_geometry(
 /// every paint by the scroll view's [`Widget::on_content_overflow`] hook —
 /// so it never needs its own access to the scrolled content's layout.
 pub struct RawScrollbar {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub controller: ScrollController,
     pub color: Color,
     pub hover_color: Option<Color>,
@@ -366,9 +365,13 @@ pub struct RawScrollbar {
 }
 
 impl RawScrollbar {
-    pub fn new(style: Style, controller: ScrollController, color: Color) -> Self {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        controller: ScrollController,
+        color: Color,
+    ) -> Self {
         RawScrollbar {
-            style,
+            style: style.into(),
             controller,
             color,
             hover_color: None,
@@ -413,7 +416,7 @@ impl RawScrollbar {
 
 impl Widget for RawScrollbar {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

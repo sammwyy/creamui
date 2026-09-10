@@ -9,6 +9,7 @@
 mod components;
 mod controller;
 pub use components::{Choice, Icon, NavigationItem, Surface, SurfaceRole, Symbol};
+pub use creamui_core::{Styled, StyledWidget};
 pub mod layout;
 pub use layout::CUIWindowDragArea;
 pub mod raw;

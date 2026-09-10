@@ -113,15 +113,8 @@ impl Default for DateTime {
 /// date area to move one day, or the hour/minute area to move that part by
 /// one. Arrow keys move one day (up/down) or one minute (left/right).
 pub struct RawDateTimePicker {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: DateTime,
-    pub text_color: Color,
-    pub background: Option<Color>,
-    pub hover_background: Option<Color>,
-    pub border_color: Color,
-    pub border_width: f32,
-    pub corner_radius: f32,
-    pub focus_color: Option<Color>,
     pub on_change: Rc<dyn Fn(DateTime)>,
     pub on_activate: Option<Rc<dyn Fn()>>,
     pub trigger_only: bool,
@@ -130,22 +123,19 @@ pub struct RawDateTimePicker {
 
 impl RawDateTimePicker {
     pub fn new(
-        style: Style,
+        style: impl Into<creamui_core::Style>,
         value: DateTime,
         text_color: Color,
         border_color: Color,
         on_change: impl Fn(DateTime) + 'static,
     ) -> Self {
         Self {
-            style,
+            style: style
+                .into()
+                .color(text_color)
+                .font_size(13.0)
+                .border(border_color, 1.0),
             value: value.normalized(),
-            text_color,
-            background: None,
-            hover_background: None,
-            border_color,
-            border_width: 1.0,
-            corner_radius: 0.0,
-            focus_color: None,
             on_change: Rc::new(on_change),
             on_activate: None,
             trigger_only: false,
@@ -154,28 +144,27 @@ impl RawDateTimePicker {
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
     pub fn hover_background(mut self, color: Color) -> Self {
-        self.hover_background = Some(color);
+        self.style.states.hover.paint.background = Some(color.into());
         self
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = color;
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -193,23 +182,27 @@ impl RawDateTimePicker {
 
 impl Widget for RawDateTimePicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline = style.paint.border;
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let background = if !self.disabled && painter.hovered(rect) {
-            self.hover_background.or(self.background)
-        } else {
-            self.background
-        };
-        if let Some(color) = background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-        painter.stroke_rect(
-            rect,
-            self.border_color,
-            self.border_width,
-            self.corner_radius,
-        );
+        let resolved = self.style.resolve(creamui_core::StyleState::NORMAL);
+        let colors = painter.color_scheme();
+        let border = resolved
+            .paint
+            .border
+            .expect("date-time picker has a border");
+        let text_color = resolved
+            .typography
+            .color
+            .expect("date-time picker has text color")
+            .resolve(&colors);
         let divider_x = rect.x + rect.width * 0.58;
         painter.stroke_line(
             Point {
@@ -220,8 +213,8 @@ impl Widget for RawDateTimePicker {
                 x: divider_x,
                 y: rect.y + rect.height - 8.,
             },
-            self.border_color,
-            self.border_width,
+            border.color.resolve(&colors),
+            border.width,
         );
         painter.fill_text(
             Rect {
@@ -231,8 +224,8 @@ impl Widget for RawDateTimePicker {
                 height: rect.height,
             },
             &self.value.display()[..10],
-            self.text_color,
-            13.,
+            text_color,
+            resolved.typography.font_size.unwrap_or(13.),
             TextAlign::Start,
         );
         painter.fill_text(
@@ -243,8 +236,8 @@ impl Widget for RawDateTimePicker {
                 height: rect.height,
             },
             &self.value.display()[13..],
-            self.text_color,
-            13.,
+            text_color,
+            resolved.typography.font_size.unwrap_or(13.),
             TextAlign::Start,
         );
     }
@@ -280,14 +273,6 @@ impl Widget for RawDateTimePicker {
                 }
             }) as Rc<dyn Fn(Point, Rect)>
         })
-    }
-    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, _: bool) {
-        painter.stroke_rect(
-            rect,
-            self.focus_color.unwrap_or(self.border_color),
-            2.,
-            self.corner_radius,
-        );
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         (!self.disabled && self.trigger_only)
@@ -345,58 +330,47 @@ fn hsv_to_rgb(hue: f32, saturation: f32, value: f32, alpha: u8) -> Color {
 /// An unstyled HSV color field. Drag in the large square to choose saturation
 /// and brightness; drag the narrow strip at right to choose hue.
 pub struct RawColorPicker {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: Color,
-    pub background: Option<Color>,
-    pub border_color: Color,
-    pub border_width: f32,
     pub handle_color: Color,
-    pub corner_radius: f32,
-    pub focus_color: Option<Color>,
     pub on_change: Rc<dyn Fn(Color)>,
     pub disabled: bool,
 }
 
 impl RawColorPicker {
     pub fn new(
-        style: Style,
+        style: impl Into<creamui_core::Style>,
         value: Color,
         border_color: Color,
         handle_color: Color,
         on_change: impl Fn(Color) + 'static,
     ) -> Self {
         Self {
-            style,
+            style: style.into().border(border_color, 1.0),
             value,
-            background: None,
-            border_color,
-            border_width: 1.,
             handle_color,
-            corner_radius: 0.,
-            focus_color: None,
             on_change: Rc::new(on_change),
             disabled: false,
         }
     }
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = color;
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -407,12 +381,17 @@ impl RawColorPicker {
 
 impl Widget for RawColorPicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline =
+                Some(creamui_core::Border::new(self.handle_color, 2.0));
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
         let (hue, saturation, value) = rgb_to_hsv(self.value);
         let hue_width = 16.;
         let field_width = (rect.width - hue_width - 8.).max(1.);
@@ -451,12 +430,6 @@ impl Widget for RawColorPicker {
                 2.,
             );
         }
-        painter.stroke_rect(
-            rect,
-            self.border_color,
-            self.border_width,
-            self.corner_radius,
-        );
         painter.stroke_rect(
             Rect {
                 x: rect.x + saturation * field_width - 4.,
@@ -522,14 +495,6 @@ impl Widget for RawColorPicker {
             }) as Rc<dyn Fn(Point, Rect)>
         })
     }
-    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, _: bool) {
-        painter.stroke_rect(
-            rect,
-            self.focus_color.unwrap_or(self.handle_color),
-            2.,
-            self.corner_radius,
-        );
-    }
     fn cursor_icon(&self) -> Option<CursorIcon> {
         Some(if self.disabled {
             CursorIcon::NotAllowed
@@ -543,24 +508,17 @@ impl Widget for RawColorPicker {
 /// the application decides whether that means a native dialog, a remote asset
 /// browser, or another file source.
 pub struct RawFilePicker {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: String,
     pub placeholder: String,
-    pub text_color: Color,
     pub placeholder_color: Color,
-    pub background: Option<Color>,
-    pub hover_background: Option<Color>,
-    pub border_color: Color,
-    pub border_width: f32,
-    pub corner_radius: f32,
-    pub focus_color: Option<Color>,
     pub on_activate: Rc<dyn Fn()>,
     pub disabled: bool,
 }
 
 impl RawFilePicker {
     pub fn new(
-        style: Style,
+        style: impl Into<creamui_core::Style>,
         value: impl Into<String>,
         text_color: Color,
         placeholder_color: Color,
@@ -568,23 +526,20 @@ impl RawFilePicker {
         on_activate: impl Fn() + 'static,
     ) -> Self {
         Self {
-            style,
+            style: style
+                .into()
+                .color(text_color)
+                .font_size(13.0)
+                .border(border_color, 1.0),
             value: value.into(),
             placeholder: "Choose a file…".into(),
-            text_color,
             placeholder_color,
-            background: None,
-            hover_background: None,
-            border_color,
-            border_width: 1.,
-            corner_radius: 0.,
-            focus_color: None,
             on_activate: Rc::new(on_activate),
             disabled: false,
         }
     }
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
@@ -592,24 +547,23 @@ impl RawFilePicker {
         self
     }
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
     pub fn hover_background(mut self, color: Color) -> Self {
-        self.hover_background = Some(color);
+        self.style.states.hover.paint.background = Some(color.into());
         self
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = color;
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -620,23 +574,25 @@ impl RawFilePicker {
 
 impl Widget for RawFilePicker {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline = style.paint.border;
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let background = if !self.disabled && painter.hovered(rect) {
-            self.hover_background.or(self.background)
-        } else {
-            self.background
-        };
-        if let Some(color) = background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-        painter.stroke_rect(
-            rect,
-            self.border_color,
-            self.border_width,
-            self.corner_radius,
-        );
+        let resolved = self.style.resolve(creamui_core::StyleState::NORMAL);
+        let colors = painter.color_scheme();
+        let border = resolved.paint.border.expect("file picker has a border");
+        let text_color = resolved
+            .typography
+            .color
+            .expect("file picker has text color")
+            .resolve(&colors);
+        let radius = resolved.paint.corner_radius.unwrap_or(0.0);
         let label = if self.value.is_empty() {
             &self.placeholder
         } else {
@@ -653,7 +609,7 @@ impl Widget for RawFilePicker {
             if self.value.is_empty() {
                 self.placeholder_color
             } else {
-                self.text_color
+                text_color
             },
             13.,
             TextAlign::Start,
@@ -665,9 +621,9 @@ impl Widget for RawFilePicker {
                 width: 55.,
                 height: (rect.height - 14.).max(0.),
             },
-            self.border_color,
-            self.border_width,
-            (self.corner_radius - 2.).max(0.),
+            border.color.resolve(&colors),
+            border.width,
+            (radius - 2.).max(0.),
         );
         painter.fill_text(
             Rect {
@@ -677,7 +633,7 @@ impl Widget for RawFilePicker {
                 height: rect.height,
             },
             "Browse",
-            self.text_color,
+            text_color,
             12.,
             TextAlign::Center,
         );
@@ -690,14 +646,6 @@ impl Widget for RawFilePicker {
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         (!self.disabled).then(|| self.on_activate.clone())
-    }
-    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, _: bool) {
-        painter.stroke_rect(
-            rect,
-            self.focus_color.unwrap_or(self.border_color),
-            2.,
-            self.corner_radius,
-        );
     }
     fn cursor_icon(&self) -> Option<CursorIcon> {
         Some(if self.disabled {

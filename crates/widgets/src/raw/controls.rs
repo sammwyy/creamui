@@ -4,18 +4,11 @@ use super::*;
 /// `bool` `Signal`) and toggles it from `on_click` — this widget has no
 /// state of its own, same as every other widget (see `creamui_core::Widget`).
 pub struct RawCheckbox {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub box_size: f32,
     pub checked: bool,
     pub fill_color: Color,
-    pub background: Option<Color>,
-    pub hover_background: Option<Color>,
-    pub pressed_background: Option<Color>,
-    pub border_color: Color,
-    pub border_width: f32,
     pub check_color: Color,
-    pub focus_color: Option<Color>,
-    pub corner_radius: f32,
     pub on_click: Rc<dyn Fn()>,
     pub disabled: bool,
 }
@@ -29,57 +22,50 @@ impl RawCheckbox {
         on_click: impl Fn() + 'static,
     ) -> Self {
         RawCheckbox {
-            style: Style {
+            style: creamui_core::Style::from(Style {
                 size: creamui_core::layout::Size {
                     width: creamui_core::layout::Dimension::Length(box_size),
                     height: creamui_core::layout::Dimension::Length(box_size),
                 },
                 ..Default::default()
-            },
+            })
+            .border(border_color, 1.5),
             box_size,
             checked,
             fill_color,
-            background: None,
-            hover_background: None,
-            pressed_background: None,
-            border_color,
-            border_width: 1.5,
             check_color: Color::rgb(255, 255, 255),
-            focus_color: None,
-            corner_radius: 0.0,
             on_click: Rc::new(on_click),
             disabled: false,
         }
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn hover_background(mut self, color: Color) -> Self {
-        self.hover_background = Some(color);
+        self.style.states.hover.paint.background = Some(color.into());
         self
     }
 
     pub fn pressed_background(mut self, color: Color) -> Self {
-        self.pressed_background = Some(color);
+        self.style.states.pressed.paint.background = Some(color.into());
         self
     }
 
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = color;
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
 
@@ -89,7 +75,7 @@ impl RawCheckbox {
     }
 
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
 
@@ -106,55 +92,34 @@ impl Widget for RawCheckbox {
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         (!self.disabled).then(|| activate_on_key(self.on_click.clone()))
     }
-    fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, _: bool) {
-        p.stroke_rect(
-            Rect {
-                x: r.x - 3.,
-                y: r.y - 3.,
-                width: r.width + 6.,
-                height: r.height + 6.,
-            },
-            self.focus_color.unwrap_or(self.fill_color),
-            2.,
-            self.corner_radius + 2.,
-        );
-    }
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if self.checked {
+            style.paint.border = None;
+        }
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline =
+                Some(creamui_core::Border::new(self.fill_color, 2.0));
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let base_background = if self.checked {
-            Some(self.fill_color)
-        } else {
-            self.background
-        };
-        let background = if !self.disabled && painter.pressed(rect) {
-            self.pressed_background
-                .or(self.hover_background)
-                .or(base_background)
-        } else if !self.disabled && painter.hovered(rect) {
-            self.hover_background.or(base_background)
-        } else {
-            base_background
-        };
-        if let Some(color) = background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
         if self.checked {
+            painter.fill_rect(
+                rect,
+                self.fill_color,
+                self.style.paint.corner_radius.unwrap_or(0.0),
+            );
             let p = |x: f32, y: f32| Point {
                 x: rect.x + rect.width * x,
                 y: rect.y + rect.height * y,
             };
             painter.stroke_line(p(0.25, 0.5), p(0.43, 0.68), self.check_color, 1.8);
             painter.stroke_line(p(0.43, 0.68), p(0.76, 0.32), self.check_color, 1.8);
-        } else {
-            painter.stroke_rect(
-                rect,
-                self.border_color,
-                self.border_width,
-                self.corner_radius,
-            );
         }
     }
 
@@ -173,7 +138,7 @@ impl Widget for RawCheckbox {
 
 /// Headless iOS/macOS-style boolean switch: a pill track with a sliding thumb.
 pub struct RawSwitch {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub checked: bool,
     pub on_color: Color,
     pub off_color: Color,
@@ -182,7 +147,6 @@ pub struct RawSwitch {
     pub hover_off_color: Option<Color>,
     pub pressed_on_color: Option<Color>,
     pub pressed_off_color: Option<Color>,
-    pub focus_color: Option<Color>,
     pub track_radius: Option<f32>,
     pub thumb_radius: Option<f32>,
     pub thumb_inset: f32,
@@ -204,7 +168,8 @@ impl RawSwitch {
                     height: creamui_core::layout::Dimension::Length(24.0),
                 },
                 ..Default::default()
-            },
+            }
+            .into(),
             checked,
             on_color,
             off_color,
@@ -213,7 +178,6 @@ impl RawSwitch {
             hover_off_color: None,
             pressed_on_color: None,
             pressed_off_color: None,
-            focus_color: None,
             track_radius: None,
             thumb_radius: None,
             thumb_inset: 2.0,
@@ -223,7 +187,7 @@ impl RawSwitch {
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -251,7 +215,7 @@ impl RawSwitch {
     }
 
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
 
@@ -267,21 +231,15 @@ impl Widget for RawSwitch {
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         (!self.disabled).then(|| activate_on_key(self.on_click.clone()))
     }
-    fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, _: bool) {
-        p.stroke_rect(
-            Rect {
-                x: r.x - 3.,
-                y: r.y - 3.,
-                width: r.width + 6.,
-                height: r.height + 6.,
-            },
-            self.focus_color.unwrap_or(self.on_color),
-            2.,
-            r.height / 2. + 3.,
-        );
-    }
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline = Some(creamui_core::Border::new(self.on_color, 2.0));
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let base = if self.checked {
@@ -344,7 +302,7 @@ impl Widget for RawSwitch {
 /// `f32` `Signal`) and updates it from `on_change` — same pattern as every
 /// other interactive widget here.
 pub struct RawSlider {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: f32,
     pub track_color: Color,
     pub fill_color: Color,
@@ -355,14 +313,13 @@ pub struct RawSlider {
     pub track_radius: Option<f32>,
     pub handle_size: f32,
     pub handle_radius: Option<f32>,
-    pub focus_color: Option<Color>,
     pub on_change: Rc<dyn Fn(f32)>,
     pub disabled: bool,
 }
 
 impl RawSlider {
     pub fn new(
-        style: Style,
+        style: impl Into<creamui_core::Style>,
         value: f32,
         track_color: Color,
         fill_color: Color,
@@ -370,7 +327,7 @@ impl RawSlider {
         on_change: impl Fn(f32) + 'static,
     ) -> Self {
         RawSlider {
-            style,
+            style: style.into(),
             value: value.clamp(0.0, 1.0),
             track_color,
             fill_color,
@@ -381,14 +338,13 @@ impl RawSlider {
             track_radius: None,
             handle_size: 16.0,
             handle_radius: None,
-            focus_color: None,
             on_change: Rc::new(on_change),
             disabled: false,
         }
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -415,7 +371,7 @@ impl RawSlider {
     }
 
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 1.0));
         self
     }
 
@@ -446,11 +402,16 @@ impl Widget for RawSlider {
             change(next.clamp(0., 1.));
         }))
     }
-    fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, _: bool) {
-        p.stroke_rect(r, self.focus_color.unwrap_or(self.fill_color), 1., 5.);
-    }
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let mut style = self.style.clone();
+        if style.states.focus.paint.outline.is_none() {
+            style.states.focus.paint.outline =
+                Some(creamui_core::Border::new(self.fill_color, 1.0));
+        }
+        style
+    }
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {

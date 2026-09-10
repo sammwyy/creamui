@@ -17,8 +17,8 @@ pub use style::{
     ResolvedStyle, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
 pub use widget::{
-    BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, TextAlign, Widget,
-    WindowDragHandle,
+    BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled, StyledWidget,
+    TextAlign, Widget, WindowDragHandle,
 };
 
 /// Taffy's layout-only primitives. [`crate::Style`] is CreamUI's common

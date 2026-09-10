@@ -5,8 +5,46 @@
 use creamui_core::layout::{AlignItems, Dimension, JustifyContent, Style};
 use creamui_core::{
     render_frame, CursorIcon, Key, KeyInput, Modifiers, Painter, Point, Rect, Renderer, Size,
-    StateStyle, Style as CommonStyle, TextAlign, Widget,
+    StateStyle, Style as CommonStyle, Styled, TextAlign, Widget,
 };
+
+#[test]
+fn every_widget_gets_common_builders_without_component_forwarders() {
+    let clicked = Signal::new(false);
+    let set_clicked = clicked.clone();
+    let widget = RawButton::new(Style::default(), move || set_clicked.set(true))
+        .width(80.0)
+        .height(32.0)
+        .background(Color::rgb(12, 34, 56))
+        .corner_radius(6.0);
+
+    assert_eq!(
+        widget.style_ref().layout.size.width,
+        Dimension::Length(80.0)
+    );
+    assert_eq!(
+        widget.style_ref().layout.size.height,
+        Dimension::Length(32.0)
+    );
+
+    let mut painter = RecordingPainter::default();
+    let scene = render_frame(
+        Box::new(widget),
+        Size {
+            width: 80.0,
+            height: 32.0,
+        },
+        &mut painter,
+    );
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(_, color)| *color == Color::rgb(12, 34, 56)));
+    scene
+        .hit_test(Point { x: 10.0, y: 10.0 })
+        .expect("styled wrapper must preserve the button handler")();
+    assert!(clicked.get());
+}
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{

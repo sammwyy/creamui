@@ -54,7 +54,12 @@ impl TextInput {
 
     /// Overrides the outline for validation states such as warning/error.
     pub fn border(mut self, color: creamui_theme::Color) -> Self {
-        let width = self.inner.border_width;
+        let width = self
+            .inner
+            .style
+            .paint
+            .border
+            .map_or(1.0, |border| border.width);
         self.inner = self.inner.border(color, width);
         self
     }
@@ -146,7 +151,12 @@ impl Widget for TextInput {
 
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
         if let Some(color) = self.inner.selection_background {
-            painter.stroke_rect(rect, color, 2., self.inner.corner_radius);
+            painter.stroke_rect(
+                rect,
+                color,
+                2.,
+                self.inner.style.paint.corner_radius.unwrap_or(0.0),
+            );
         }
         self.inner
             .paint_focused_overlay(painter, rect, caret_visible);
@@ -217,8 +227,8 @@ impl TextArea {
 
     /// Sets the editor outline width. Use `0.0` for an edge-to-edge editor.
     pub fn border_width(mut self, width: f32) -> Self {
-        if let Some(color) = self.inner.border_color {
-            self.inner = self.inner.border(color, width);
+        if let Some(border) = self.inner.style.paint.border {
+            self.inner.style.paint.border = Some(creamui_core::Border::new(border.color, width));
         }
         self
     }

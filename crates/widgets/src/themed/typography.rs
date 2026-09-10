@@ -35,7 +35,7 @@ impl Quote {
     /// Gives the quote a layout style for width, margin, flex/grid
     /// placement, etc.
     pub fn style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 }
@@ -83,7 +83,7 @@ impl Pre {
     /// Gives the block a layout style for width, margin, flex/grid
     /// placement, etc.
     pub fn style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 
@@ -134,7 +134,7 @@ impl Link {
     /// Gives the link a layout style for width, margin, flex/grid
     /// placement, etc.
     pub fn style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 

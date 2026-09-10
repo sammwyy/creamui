@@ -5,33 +5,29 @@ use super::*;
 /// `style`'s left padding (taffy insets children by it automatically; the
 /// bar itself is painted against the widget's full, unpadded rect).
 pub struct RawQuote {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub bar_color: Color,
     pub bar_width: f32,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
     pub children: Vec<BoxedWidget>,
 }
 
 impl RawQuote {
-    pub fn new(style: Style, bar_color: Color, bar_width: f32) -> Self {
+    pub fn new(style: impl Into<creamui_core::Style>, bar_color: Color, bar_width: f32) -> Self {
         RawQuote {
-            style,
+            style: style.into(),
             bar_color,
             bar_width,
-            background: None,
-            corner_radius: 0.0,
             children: Vec::new(),
         }
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
@@ -48,13 +44,10 @@ impl RawQuote {
 
 impl Widget for RawQuote {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(background) = self.background {
-            painter.fill_rect(rect, background, self.corner_radius);
-        }
         painter.fill_rect(
             Rect {
                 x: rect.x,
@@ -77,37 +70,32 @@ impl Widget for RawQuote {
 /// logical pixels on every side. No monospace face ships with CreamUI, so
 /// column alignment is only approximate unless the application registers one.
 pub struct RawPre {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub text: String,
-    pub color: Color,
-    pub font_size: f32,
-    pub family: Option<String>,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
     pub padding: f32,
 }
 
 impl RawPre {
-    pub fn new(style: Style, text: impl Into<String>, color: Color, font_size: f32) -> Self {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        text: impl Into<String>,
+        color: Color,
+        font_size: f32,
+    ) -> Self {
         RawPre {
-            style,
+            style: style.into().color(color).font_size(font_size),
             text: text.into(),
-            color,
-            font_size,
-            family: None,
-            background: None,
-            corner_radius: 0.0,
             padding: 0.0,
         }
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
@@ -117,20 +105,27 @@ impl RawPre {
     }
 
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.family = Some(family.into());
+        self.style.typography.font_family = Some(family.into());
         self
     }
 }
 
 impl Widget for RawPre {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(background) = self.background {
-            painter.fill_rect(rect, background, self.corner_radius);
-        }
+        let typography = self
+            .style
+            .resolve(creamui_core::StyleState::NORMAL)
+            .typography;
+        let colors = painter.color_scheme();
+        let color = typography
+            .color
+            .map(|value| value.resolve(&colors))
+            .unwrap_or(Color::rgb(0, 0, 0));
+        let font_size = typography.font_size.unwrap_or(14.0);
         let inset = Rect {
             x: rect.x + self.padding,
             y: rect.y + self.padding,
@@ -140,10 +135,10 @@ impl Widget for RawPre {
         painter.fill_text_font(
             inset,
             &self.text,
-            self.color,
-            self.font_size,
+            color,
+            font_size,
             TextAlign::Start,
-            self.family.as_deref(),
+            typography.font_family.as_deref(),
             false,
             false,
         );
@@ -151,9 +146,9 @@ impl Widget for RawPre {
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         let text = self.text.clone();
-        let font_size = self.font_size;
+        let font_size = self.style.typography.font_size.unwrap_or(14.0);
         let padding = self.padding;
-        let family = self.family.clone();
+        let family = self.style.typography.font_family.clone();
         Some(Box::new(move |known_dimensions, available_space| {
             let max_width = match (known_dimensions.width, available_space.width) {
                 (Some(w), _) => w,
@@ -178,52 +173,45 @@ impl Widget for RawPre {
 /// An unstyled clickable line of text — a hyperlink with no color or
 /// underline opinion of its own beyond what's passed in.
 pub struct RawLink {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub text: String,
-    pub color: Color,
-    pub hover_color: Option<Color>,
-    pub font_size: f32,
-    pub align: TextAlign,
-    pub underline: bool,
-    pub family: Option<String>,
     pub on_click: Rc<dyn Fn()>,
     pub disabled: bool,
 }
 
 impl RawLink {
     pub fn new(
-        style: Style,
+        style: impl Into<creamui_core::Style>,
         text: impl Into<String>,
         color: Color,
         font_size: f32,
         on_click: impl Fn() + 'static,
     ) -> Self {
         RawLink {
-            style,
+            style: style
+                .into()
+                .color(color)
+                .font_size(font_size)
+                .text_align(TextAlign::Start)
+                .underline(true),
             text: text.into(),
-            color,
-            hover_color: None,
-            font_size,
-            align: TextAlign::Start,
-            underline: true,
-            family: None,
             on_click: Rc::new(on_click),
             disabled: false,
         }
     }
 
     pub fn hover_color(mut self, color: Color) -> Self {
-        self.hover_color = Some(color);
+        self.style.states.hover.typography.color = Some(color.into());
         self
     }
 
     pub fn underline(mut self, underline: bool) -> Self {
-        self.underline = underline;
+        self.style.typography.underline = Some(underline);
         self
     }
 
     pub fn align(mut self, align: TextAlign) -> Self {
-        self.align = align;
+        self.style.typography.align = Some(align);
         self
     }
 
@@ -233,29 +221,39 @@ impl RawLink {
     }
 
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.family = Some(family.into());
+        self.style.typography.font_family = Some(family.into());
         self
     }
 }
 
 impl Widget for RawLink {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
+    }
+
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let color = if !self.disabled && painter.hovered(rect) {
-            self.hover_color.unwrap_or(self.color)
-        } else {
-            self.color
-        };
+        let state = creamui_core::StyleState::NORMAL
+            .with_hovered(!self.disabled && painter.hovered(rect))
+            .with_disabled(self.disabled);
+        let typography = self.style.resolve(state).typography;
+        let colors = painter.color_scheme();
+        let color = typography
+            .color
+            .map(|value| value.resolve(&colors))
+            .unwrap_or(Color::rgb(0, 0, 0));
+        let font_size = typography.font_size.unwrap_or(14.0);
+        let align = typography.align.unwrap_or(TextAlign::Start);
         painter.fill_text_font(
             rect,
             &self.text,
             color,
-            self.font_size,
-            self.align,
-            self.family.as_deref(),
+            font_size,
+            align,
+            typography.font_family.as_deref(),
             false,
             false,
         );
@@ -263,20 +261,20 @@ impl Widget for RawLink {
             painter,
             rect,
             &self.text,
-            self.font_size,
-            self.family.as_deref(),
+            font_size,
+            typography.font_family.as_deref(),
             false,
-            self.align,
+            align,
             color,
-            self.underline,
+            typography.underline.unwrap_or(false),
             false,
         );
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         let text = self.text.clone();
-        let font_size = self.font_size;
-        let family = self.family.clone();
+        let font_size = self.style.typography.font_size.unwrap_or(14.0);
+        let family = self.style.typography.font_family.clone();
         Some(Box::new(move |known_dimensions, available_space| {
             let max_width = match (known_dimensions.width, available_space.width) {
                 (Some(w), _) => w,

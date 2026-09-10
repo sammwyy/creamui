@@ -17,6 +17,10 @@ All notable changes to CreamUI will be documented in this file.
 - Centralized box painting in the renderer and replaced mutually exclusive
   interaction states with composable `StyleState` flags. Foundational raw
   widgets now keep one style declaration instead of mirrored visual fields.
+- Added the blanket `Styled` extension API, giving every widget common typed
+  builders without per-component forwarding methods or extra layout nodes.
+  Migrated all raw widget style storage and common paint/typography fields to
+  the shared declaration; remaining visual fields are component-specific.
 
 ## 0.1.1
 

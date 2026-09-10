@@ -21,22 +21,18 @@ fn fill_style() -> Style {
 /// [`crate::themed::ListBox`] instead; for column-based data, see
 /// [`RawTable`].
 pub struct RawListView {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub scroll: ScrollController,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
     pub divider_color: Option<Color>,
     pub divider_width: f32,
     pub rows: Vec<BoxedWidget>,
 }
 
 impl RawListView {
-    pub fn new(style: Style, scroll: ScrollController) -> Self {
+    pub fn new(style: impl Into<creamui_core::Style>, scroll: ScrollController) -> Self {
         RawListView {
-            style,
+            style: style.into(),
             scroll,
-            background: None,
-            corner_radius: 0.0,
             divider_color: None,
             divider_width: 1.0,
             rows: Vec::new(),
@@ -44,12 +40,12 @@ impl RawListView {
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
@@ -72,12 +68,13 @@ impl RawListView {
 
 impl Widget for RawListView {
     fn style(&self) -> creamui_core::Style {
-        Style {
+        let mut style = self.style.clone();
+        style.layout = Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
-            ..self.style.clone()
-        }
-        .into()
+            ..style.layout
+        };
+        style
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
@@ -104,11 +101,10 @@ impl Widget for RawListView {
                 }
             }
         }
-        let mut scroll_view = RawScrollView::controlled(fill_style(), self.scroll.clone())
-            .corner_radius(self.corner_radius);
-        if let Some(color) = self.background {
-            scroll_view = scroll_view.background(color);
-        }
+        let mut scroll_style: creamui_core::Style = fill_style().into();
+        scroll_style.paint = self.style.paint;
+        scroll_style.states = self.style.states.clone();
+        let scroll_view = RawScrollView::controlled(scroll_style, self.scroll.clone());
         vec![Box::new(scroll_view.with_children(stacked))]
     }
 }
@@ -170,7 +166,7 @@ fn row_container_style(height: f32) -> Style {
 /// currently visible — there is no virtualization, so this is meant for
 /// hundreds, not hundreds of thousands, of rows.
 pub struct RawTable {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub scroll: ScrollController,
     pub columns: Vec<TableColumn>,
     pub rows: Vec<Vec<String>>,
@@ -189,9 +185,13 @@ pub struct RawTable {
 }
 
 impl RawTable {
-    pub fn new(style: Style, scroll: ScrollController, columns: Vec<TableColumn>) -> Self {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        scroll: ScrollController,
+        columns: Vec<TableColumn>,
+    ) -> Self {
         RawTable {
-            style,
+            style: style.into(),
             scroll,
             columns,
             rows: Vec::new(),
@@ -336,12 +336,13 @@ impl RawTable {
 
 impl Widget for RawTable {
     fn style(&self) -> creamui_core::Style {
-        Style {
+        let mut style = self.style.clone();
+        style.layout = Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
-            ..self.style.clone()
-        }
-        .into()
+            ..style.layout
+        };
+        style
     }
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}

@@ -383,4 +383,186 @@ pub trait Widget {
     }
 }
 
+/// A transparent style override around any widget. It delegates painting and
+/// behavior to the wrapped widget and does not introduce another tree node.
+pub struct StyledWidget<W> {
+    inner: W,
+    style: crate::Style,
+}
+
+macro_rules! common_widget_style_builder_schema {
+    ($consumer:ident) => {
+        $consumer! {
+            background(color: impl Into<crate::ColorValue>) |style| { style.paint.background = Some(color.into()); };
+            border(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.border = Some(crate::Border::new(color, width)); };
+            corner_radius(radius: f32) |style| { style.paint.corner_radius = Some(radius); };
+            outline(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.outline = Some(crate::Border::new(color, width)); };
+            color(color: impl Into<crate::ColorValue>) |style| { style.typography.color = Some(color.into()); };
+            font_size(size: f32) |style| { style.typography.font_size = Some(size); };
+            font_family(family: impl Into<String>) |style| { style.typography.font_family = Some(family.into()); };
+            text_align(align: TextAlign) |style| { style.typography.align = Some(align); };
+            bold(active: bool) |style| { style.typography.bold = Some(active); };
+            italic(active: bool) |style| { style.typography.italic = Some(active); };
+            underline(active: bool) |style| { style.typography.underline = Some(active); };
+            strikethrough(active: bool) |style| { style.typography.strikethrough = Some(active); };
+            hover_style(patch: crate::StateStyle) |style| { style.states.hover = patch; };
+            pressed_style(patch: crate::StateStyle) |style| { style.states.pressed = patch; };
+            focus_style(patch: crate::StateStyle) |style| { style.states.focus = patch; };
+            disabled_style(patch: crate::StateStyle) |style| { style.states.disabled = patch; };
+            width(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::Width(value.into())); };
+            height(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::Height(value.into())); };
+            min_width(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::MinWidth(value.into())); };
+            min_height(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::MinHeight(value.into())); };
+            max_width(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::MaxWidth(value.into())); };
+            max_height(value: impl Into<crate::LengthValue>) |style| { style.apply(crate::StyleProp::MaxHeight(value.into())); };
+        }
+    };
+}
+
+macro_rules! define_styled_widget_builders {
+    ($( $name:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
+        $(
+            pub fn $name(mut self, $( $argument: $argument_type ),*) -> Self {
+                let $style = &mut self.style;
+                $body
+                self
+            }
+        )*
+    };
+}
+
+macro_rules! define_styled_trait_builders {
+    ($( $name:ident($( $argument:ident: $argument_type:ty ),*) |$style:ident| $body:block; )*) => {
+        $(
+            fn $name(self, $( $argument: $argument_type ),*) -> StyledWidget<Self> {
+                let mut styled = self.styled();
+                let $style = &mut styled.style;
+                $body
+                styled
+            }
+        )*
+    };
+}
+
+impl<W> StyledWidget<W> {
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
+
+    pub fn style_ref(&self) -> &crate::Style {
+        &self.style
+    }
+
+    pub fn style_mut(&mut self) -> &mut crate::Style {
+        &mut self.style
+    }
+
+    pub fn with_style(mut self, style: impl Into<crate::Style>) -> Self {
+        self.style = style.into();
+        self
+    }
+
+    pub fn property(mut self, property: crate::StyleProp) -> Self {
+        self.style.apply(property);
+        self
+    }
+
+    pub fn properties(mut self, properties: impl IntoIterator<Item = crate::StyleProp>) -> Self {
+        for property in properties {
+            self.style.apply(property);
+        }
+        self
+    }
+
+    common_widget_style_builder_schema!(define_styled_widget_builders);
+}
+
+/// Common style builders available on every widget without component-level
+/// forwarding methods. Subsequent builders mutate the same [`StyledWidget`].
+pub trait Styled: Widget + Sized {
+    fn styled(self) -> StyledWidget<Self> {
+        let style = self.style();
+        StyledWidget { inner: self, style }
+    }
+
+    fn with_style(self, style: impl Into<crate::Style>) -> StyledWidget<Self> {
+        self.styled().with_style(style)
+    }
+
+    fn property(self, property: crate::StyleProp) -> StyledWidget<Self> {
+        self.styled().property(property)
+    }
+
+    fn properties(
+        self,
+        properties: impl IntoIterator<Item = crate::StyleProp>,
+    ) -> StyledWidget<Self> {
+        self.styled().properties(properties)
+    }
+
+    common_widget_style_builder_schema!(define_styled_trait_builders);
+}
+
+impl<W: Widget> Styled for W {}
+
+impl<W: Widget> Widget for StyledWidget<W> {
+    fn style(&self) -> crate::Style {
+        self.style.clone()
+    }
+    fn style_state(&self) -> crate::StyleState {
+        self.inner.style_state()
+    }
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.inner.paint(painter, rect);
+    }
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        self.inner.children()
+    }
+    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+        self.inner.on_click()
+    }
+    fn measure(&self) -> Option<MeasureFn> {
+        self.inner.measure()
+    }
+    fn focusable(&self) -> bool {
+        self.inner.focusable()
+    }
+    fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+        self.inner.on_key()
+    }
+    fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag()
+    }
+    fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag_start()
+    }
+    fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.inner.on_scroll()
+    }
+    fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
+        self.inner.on_scroll_bounded()
+    }
+    fn on_content_overflow(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.inner.on_content_overflow()
+    }
+    fn clips_children(&self) -> bool {
+        self.inner.clips_children()
+    }
+    fn clip_corner_radius(&self) -> f32 {
+        self.inner.clip_corner_radius()
+    }
+    fn scroll_offset(&self) -> Point {
+        self.inner.scroll_offset()
+    }
+    fn cursor_icon(&self) -> Option<CursorIcon> {
+        self.inner.cursor_icon()
+    }
+    fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
+        self.inner.on_hover()
+    }
+    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, visible: bool) {
+        self.inner.paint_focused_overlay(painter, rect, visible);
+    }
+}
+
 pub type BoxedWidget = Box<dyn Widget>;

@@ -99,17 +99,17 @@ impl Tabs {
 
     /// Replaces the container layout style after construction.
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.inner.background = Some(color);
+        self.inner.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.inner.corner_radius = radius;
+        self.inner.style.paint.corner_radius = Some(radius);
         self
     }
 
@@ -238,10 +238,11 @@ impl Tab {
             }
         }
         if !active {
-            inner.hover_background = Some(colors.hover_background);
-            inner.pressed_background = Some(colors.hover_background);
+            inner.style.states.hover.paint.background = Some(colors.hover_background.into());
+            inner.style.states.pressed.paint.background = Some(colors.hover_background.into());
         }
-        inner.focus_color = Some(colors.indicator);
+        inner.style.states.focus.paint.outline =
+            Some(creamui_core::Border::new(colors.indicator, 2.0));
         Self { inner }
     }
 }
@@ -290,7 +291,7 @@ impl Sidebar {
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.inner.style = style;
+        self.inner.style.layout = style;
         self
     }
 
@@ -546,10 +547,11 @@ impl SidebarItem {
             }
         }
         if !active {
-            inner.hover_background = Some(colors.hover_background);
-            inner.pressed_background = Some(colors.hover_background);
+            inner.style.states.hover.paint.background = Some(colors.hover_background.into());
+            inner.style.states.pressed.paint.background = Some(colors.hover_background.into());
         }
-        inner.focus_color = Some(colors.indicator);
+        inner.style.states.focus.paint.outline =
+            Some(creamui_core::Border::new(colors.indicator, 2.0));
         inner.on_hover = on_hover;
         Self { inner }
     }

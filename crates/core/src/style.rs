@@ -120,6 +120,12 @@ impl LengthValue {
     }
 }
 
+impl From<f32> for LengthValue {
+    fn from(value: f32) -> Self {
+        Self::Px(value)
+    }
+}
+
 /// Error returned by CSS-value and property parsing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StyleParseError(pub String);
@@ -409,6 +415,36 @@ impl Style {
     }
 
     common_value_builders!();
+
+    pub fn width(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.size.width = value.into().dimension();
+        self
+    }
+
+    pub fn height(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.size.height = value.into().dimension();
+        self
+    }
+
+    pub fn min_width(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.min_size.width = value.into().dimension();
+        self
+    }
+
+    pub fn min_height(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.min_size.height = value.into().dimension();
+        self
+    }
+
+    pub fn max_width(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.max_size.width = value.into().dimension();
+        self
+    }
+
+    pub fn max_height(mut self, value: impl Into<LengthValue>) -> Self {
+        self.layout.max_size.height = value.into().dimension();
+        self
+    }
 
     pub fn hover(mut self, style: StateStyle) -> Self {
         self.states.hover = style;

@@ -1,7 +1,7 @@
 use super::*;
 
-/// An unstyled clickable region. Paints only its `background`/`border` if
-/// set; combine with [`RawText`] as a child for a labeled button.
+/// An unstyled clickable region. Its common style supplies the box paint;
+/// combine it with [`RawText`] as a child for a labeled button.
 pub struct RawButton {
     pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,

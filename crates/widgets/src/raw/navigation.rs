@@ -14,34 +14,30 @@ pub enum TabIndicatorSide {
 /// [`RawTab`] children and whatever `Signal` the caller wires them to. For a
 /// vertical stack of nav entries, use [`RawSidebar`] instead.
 pub struct RawTabs {
-    pub style: Style,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
+    pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
 }
 
 impl RawTabs {
-    pub fn new(style: Style) -> Self {
+    pub fn new(style: impl Into<creamui_core::Style>) -> Self {
         RawTabs {
-            style,
-            background: None,
-            corner_radius: 0.0,
+            style: style.into(),
             children: Vec::new(),
         }
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -58,19 +54,16 @@ impl RawTabs {
 
 impl Widget for RawTabs {
     fn style(&self) -> creamui_core::Style {
-        Style {
+        let mut style = self.style.clone();
+        style.layout = Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Row,
-            ..self.style.clone()
-        }
-        .into()
+            ..style.layout
+        };
+        style
     }
 
-    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-    }
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -82,34 +75,30 @@ impl Widget for RawTabs {
 /// background — but for the "sidebar switches the visible view" pattern
 /// instead of a horizontal tab bar.
 pub struct RawSidebar {
-    pub style: Style,
-    pub background: Option<Color>,
-    pub corner_radius: f32,
+    pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
 }
 
 impl RawSidebar {
-    pub fn new(style: Style) -> Self {
+    pub fn new(style: impl Into<creamui_core::Style>) -> Self {
         RawSidebar {
-            style,
-            background: None,
-            corner_radius: 0.0,
+            style: style.into(),
             children: Vec::new(),
         }
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -126,19 +115,16 @@ impl RawSidebar {
 
 impl Widget for RawSidebar {
     fn style(&self) -> creamui_core::Style {
-        Style {
+        let mut style = self.style.clone();
+        style.layout = Style {
             display: creamui_core::layout::Display::Flex,
             flex_direction: creamui_core::layout::FlexDirection::Column,
-            ..self.style.clone()
-        }
-        .into()
+            ..style.layout
+        };
+        style
     }
 
-    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-    }
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -151,17 +137,11 @@ impl Widget for RawSidebar {
 /// index — so a tab list can be rebuilt reactively with no hidden widget
 /// state, the same pattern as [`RawCheckbox`].
 ///
-/// Paints only its `background` and, while `active`, a solid indicator bar
-/// along one edge; everything else (label, icon, padding) comes from its
-/// children, so a fully custom tab look needs no more than picking colors.
+/// Its common style supplies the box paint; while `active`, the widget adds a
+/// solid indicator bar along one edge. Everything else comes from children.
 pub struct RawTab {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub active: bool,
-    pub background: Option<Color>,
-    pub hover_background: Option<Color>,
-    pub pressed_background: Option<Color>,
-    pub focus_color: Option<Color>,
-    pub corner_radius: f32,
     pub indicator: Option<(TabIndicatorSide, Color, f32)>,
     pub children: Vec<BoxedWidget>,
     pub on_click: Rc<dyn Fn()>,
@@ -170,15 +150,14 @@ pub struct RawTab {
 }
 
 impl RawTab {
-    pub fn new(style: Style, active: bool, on_click: impl Fn() + 'static) -> Self {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        active: bool,
+        on_click: impl Fn() + 'static,
+    ) -> Self {
         RawTab {
-            style,
+            style: style.into(),
             active,
-            background: None,
-            hover_background: None,
-            pressed_background: None,
-            focus_color: None,
-            corner_radius: 0.0,
             indicator: None,
             children: Vec::new(),
             on_click: Rc::new(on_click),
@@ -188,32 +167,32 @@ impl RawTab {
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn hover_background(mut self, color: Color) -> Self {
-        self.hover_background = Some(color);
+        self.style.states.hover.paint.background = Some(color.into());
         self
     }
 
     pub fn pressed_background(mut self, color: Color) -> Self {
-        self.pressed_background = Some(color);
+        self.style.states.pressed.paint.background = Some(color.into());
         self
     }
 
     pub fn focus_color(mut self, color: Color) -> Self {
-        self.focus_color = Some(color);
+        self.style.states.focus.paint.outline = Some(creamui_core::Border::new(color, 2.0));
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
     pub fn layout_style(mut self, style: Style) -> Self {
-        self.style = style;
+        self.style.layout = style;
         self
     }
 
@@ -259,39 +238,15 @@ impl Widget for RawTab {
         }
     }
 
-    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, _: bool) {
-        if let Some(color) = self.focus_color {
-            painter.stroke_rect(
-                Rect {
-                    x: rect.x - 2.,
-                    y: rect.y - 2.,
-                    width: rect.width + 4.,
-                    height: rect.height + 4.,
-                },
-                color,
-                2.,
-                self.corner_radius + 2.,
-            );
-        }
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
     }
 
-    fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+    fn style_state(&self) -> creamui_core::StyleState {
+        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let background = if !self.disabled && painter.pressed(rect) {
-            self.pressed_background
-                .or(self.hover_background)
-                .or(self.background)
-        } else if !self.disabled && painter.hovered(rect) {
-            self.hover_background.or(self.background)
-        } else {
-            self.background
-        };
-        if let Some(color) = background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
         if self.active {
             if let Some((side, color, thickness)) = self.indicator {
                 // Capsule shape, inset from the tab's own edges.

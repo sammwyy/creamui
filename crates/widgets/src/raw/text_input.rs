@@ -5,17 +5,10 @@ use super::*;
 /// widget. Supports appending characters and backspace; cursor
 /// positioning/selection is not implemented yet (see ROADMAP.md).
 pub struct RawTextInput {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: String,
     pub placeholder: String,
-    pub text_color: Color,
     pub placeholder_color: Color,
-    pub background: Option<Color>,
-    pub border_color: Option<Color>,
-    pub border_width: f32,
-    pub corner_radius: f32,
-    pub font_size: f32,
-    pub family: Option<String>,
     pub cursor: usize,
     pub selection: TextSelection,
     pub selection_background: Option<Color>,
@@ -33,17 +26,10 @@ pub struct RawTextInput {
 /// owned by the caller; this deliberately keeps editing state compatible
 /// with CreamUI's reactive, rebuild-on-change model.
 pub struct RawTextArea {
-    pub style: Style,
+    pub style: creamui_core::Style,
     pub value: String,
     pub placeholder: String,
-    pub text_color: Color,
     pub placeholder_color: Color,
-    pub background: Option<Color>,
-    pub border_color: Option<Color>,
-    pub border_width: f32,
-    pub corner_radius: f32,
-    pub font_size: f32,
-    pub family: Option<String>,
     pub cursor: usize,
     pub alternating_line_background: Option<Color>,
     pub active_line_background: Option<Color>,
@@ -75,17 +61,12 @@ impl RawTextArea {
         let value = value.into();
         let cursor = value.len();
         Self {
-            style,
+            style: creamui_core::Style::from(style)
+                .color(text_color)
+                .font_size(font_size),
             value,
             placeholder: String::new(),
-            text_color,
             placeholder_color: text_color,
-            background: None,
-            border_color: None,
-            border_width: 1.0,
-            corner_radius: 0.0,
-            font_size,
-            family: None,
             cursor,
             alternating_line_background: None,
             active_line_background: None,
@@ -183,21 +164,36 @@ impl RawTextArea {
     }
 
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.family = Some(family.into());
+        self.style.typography.font_family = Some(family.into());
         self
     }
 
+    fn font_size(&self) -> f32 {
+        self.style.typography.font_size.unwrap_or(14.0)
+    }
+
+    fn family(&self) -> Option<&str> {
+        self.style.typography.font_family.as_deref()
+    }
+
+    fn text_color(&self, painter: &dyn Painter) -> Color {
+        self.style
+            .typography
+            .color
+            .map(|color| color.resolve(&painter.color_scheme()))
+            .unwrap_or(Color::rgb(0, 0, 0))
+    }
+
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = Some(color);
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
     pub fn placeholder(mut self, text: impl Into<String>, color: Color) -> Self {
@@ -225,9 +221,9 @@ impl RawTextArea {
         let line_start = self.value[..cursor].rfind('\n').map_or(0, |i| i + 1);
         let (cursor_x, _) = crate::text_metrics::measure_family(
             &self.value[line_start..cursor],
-            self.font_size,
+            self.font_size(),
             crate::text_metrics::unbounded_width(),
-            self.family.as_deref(),
+            self.family(),
             false,
         );
         (cursor_x - visible_width + 4.0).max(0.0)
@@ -242,7 +238,7 @@ impl RawTextArea {
         text: &str,
         color: Color,
     ) {
-        let line_height = self.font_size * 1.4;
+        let line_height = self.font_size() * 1.4;
         let active_line = self.value[..self.cursor.min(self.value.len())]
             .matches('\n')
             .count();
@@ -279,16 +275,16 @@ impl RawTextArea {
                         let selected_text = &line[start - source_offset..end - source_offset];
                         let (x, _) = crate::text_metrics::measure_family(
                             prefix,
-                            self.font_size,
+                            self.font_size(),
                             crate::text_metrics::unbounded_width(),
-                            self.family.as_deref(),
+                            self.family(),
                             false,
                         );
                         let (width, _) = crate::text_metrics::measure_family(
                             selected_text,
-                            self.font_size,
+                            self.font_size(),
                             crate::text_metrics::unbounded_width(),
-                            self.family.as_deref(),
+                            self.family(),
                             false,
                         );
                         painter.fill_rect(
@@ -307,9 +303,9 @@ impl RawTextArea {
                         color,
                         self.selection_text_color.unwrap_or(color),
                         start - source_offset..end - source_offset,
-                        self.font_size,
+                        self.font_size(),
                         TextAlign::Start,
-                        self.family.as_deref(),
+                        self.family(),
                     );
                     source_offset = line_end + 1;
                     continue;
@@ -320,9 +316,9 @@ impl RawTextArea {
                 unbounded_line_rect,
                 line,
                 color,
-                self.font_size,
+                self.font_size(),
                 TextAlign::Start,
-                self.family.as_deref(),
+                self.family(),
                 false,
                 false,
             );
@@ -342,13 +338,13 @@ impl RawTextArea {
         let block_rect = Rect {
             height: crate::text_metrics::content_height_family(
                 text,
-                self.font_size,
+                self.font_size(),
                 text_rect.width,
-                self.family.as_deref(),
+                self.family(),
             )
             .max(crate::text_metrics::row_height_family(
-                self.font_size,
-                self.family.as_deref(),
+                self.font_size(),
+                self.family(),
             )),
             ..text_rect
         };
@@ -357,9 +353,9 @@ impl RawTextArea {
             if let Some(background) = self.selection_background {
                 for glyph in crate::text_metrics::layout_family(
                     text,
-                    self.font_size,
+                    self.font_size(),
                     text_rect.width,
-                    self.family.as_deref(),
+                    self.family(),
                 ) {
                     if selected.contains(&glyph.byte_offset) {
                         painter.fill_rect(
@@ -381,18 +377,18 @@ impl RawTextArea {
                 color,
                 self.selection_text_color.unwrap_or(color),
                 selected,
-                self.font_size,
+                self.font_size(),
                 TextAlign::Start,
-                self.family.as_deref(),
+                self.family(),
             );
         } else {
             painter.fill_text_font(
                 block_rect,
                 text,
                 color,
-                self.font_size,
+                self.font_size(),
                 TextAlign::Start,
-                self.family.as_deref(),
+                self.family(),
                 false,
                 false,
             );
@@ -402,16 +398,10 @@ impl RawTextArea {
 
 impl Widget for RawTextArea {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-        if let Some(color) = self.border_color.filter(|_| self.border_width > 0.0) {
-            painter.stroke_rect(rect, color, self.border_width, self.corner_radius);
-        }
         let padding = 12.0;
         let text_rect = Rect {
             x: rect.x + padding,
@@ -422,7 +412,7 @@ impl Widget for RawTextArea {
         let (text, color) = if self.value.is_empty() && !self.placeholder.is_empty() {
             (&self.placeholder, self.placeholder_color)
         } else {
-            (&self.value, self.text_color)
+            (&self.value, self.text_color(painter))
         };
         painter.push_clip(text_rect);
         if self.wrap {
@@ -457,12 +447,11 @@ impl Widget for RawTextArea {
         let (caret_x, caret_y, row_height) = if self.wrap {
             let glyphs = crate::text_metrics::layout_family(
                 &self.value,
-                self.font_size,
+                self.font_size(),
                 text_rect.width,
-                self.family.as_deref(),
+                self.family(),
             );
-            let fallback =
-                crate::text_metrics::row_height_family(self.font_size, self.family.as_deref());
+            let fallback = crate::text_metrics::row_height_family(self.font_size(), self.family());
             let (x, y, row_height) = crate::text_metrics::caret_xy(&glyphs, cursor, fallback);
             (text_rect.x + x, text_rect.y + y, row_height)
         } else {
@@ -470,13 +459,13 @@ impl Widget for RawTextArea {
             let line = before_cursor.rsplit('\n').next().unwrap_or("");
             let (width, _) = crate::text_metrics::measure_family(
                 line,
-                self.font_size,
+                self.font_size(),
                 crate::text_metrics::unbounded_width(),
-                self.family.as_deref(),
+                self.family(),
                 false,
             );
             let lines = (before_cursor.matches('\n').count()) as f32;
-            let line_height = self.font_size * 1.4;
+            let line_height = self.font_size() * 1.4;
             let scroll_x = self.horizontal_scroll(text_rect.width);
             (
                 text_rect.x + width - scroll_x,
@@ -484,7 +473,7 @@ impl Widget for RawTextArea {
                 line_height,
             )
         };
-        let caret_height = (self.font_size * 1.2).min(row_height);
+        let caret_height = (self.font_size() * 1.2).min(row_height);
         painter.push_clip(text_rect);
         painter.fill_rect(
             Rect {
@@ -493,7 +482,7 @@ impl Widget for RawTextArea {
                 width: 1.5,
                 height: caret_height,
             },
-            self.text_color,
+            self.text_color(painter),
             0.0,
         );
         painter.pop_clip();
@@ -694,8 +683,8 @@ impl Widget for RawTextArea {
 
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         let value = self.value.clone();
-        let font_size = self.font_size;
-        let family = self.family.clone();
+        let font_size = self.font_size();
+        let family = self.style.typography.font_family.clone();
         let wrap = self.wrap;
         let on_cursor_change = self.on_cursor_change.clone();
         let on_selection_change = self.on_selection_change.clone();
@@ -729,8 +718,8 @@ impl Widget for RawTextArea {
 
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         let value = self.value.clone();
-        let font_size = self.font_size;
-        let family = self.family.clone();
+        let font_size = self.font_size();
+        let family = self.style.typography.font_family.clone();
         let wrap = self.wrap;
         let on_cursor_change = self.on_cursor_change.clone();
         let on_selection_change = self.on_selection_change.clone();
@@ -810,17 +799,12 @@ impl RawTextInput {
         let value = value.into();
         let cursor = value.len();
         RawTextInput {
-            style,
+            style: creamui_core::Style::from(style)
+                .color(text_color)
+                .font_size(font_size),
             value,
             placeholder: String::new(),
-            text_color,
             placeholder_color: text_color,
-            background: None,
-            border_color: None,
-            border_width: 1.0,
-            corner_radius: 0.0,
-            font_size,
-            family: None,
             cursor,
             selection: TextSelection {
                 anchor: cursor,
@@ -842,18 +826,17 @@ impl RawTextInput {
     }
 
     pub fn background(mut self, color: Color) -> Self {
-        self.background = Some(color);
+        self.style.paint.background = Some(color.into());
         self
     }
 
     pub fn border(mut self, color: Color, width: f32) -> Self {
-        self.border_color = Some(color);
-        self.border_width = width;
+        self.style.paint.border = Some(creamui_core::Border::new(color, width));
         self
     }
 
     pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.corner_radius = radius;
+        self.style.paint.corner_radius = Some(radius);
         self
     }
 
@@ -864,8 +847,24 @@ impl RawTextInput {
     }
 
     pub fn font_family(mut self, family: impl Into<String>) -> Self {
-        self.family = Some(family.into());
+        self.style.typography.font_family = Some(family.into());
         self
+    }
+
+    fn font_size(&self) -> f32 {
+        self.style.typography.font_size.unwrap_or(14.0)
+    }
+
+    fn family(&self) -> Option<&str> {
+        self.style.typography.font_family.as_deref()
+    }
+
+    fn text_color(&self, painter: &dyn Painter) -> Color {
+        self.style
+            .typography
+            .color
+            .map(|color| color.resolve(&painter.color_scheme()))
+            .unwrap_or(Color::rgb(0, 0, 0))
     }
 
     /// Enables Ctrl/Cmd+V for this field. Text inputs expose the same opt-out
@@ -921,9 +920,9 @@ impl RawTextInput {
     fn horizontal_scroll(&self, visible_width: f32) -> f32 {
         let (text_width, _) = crate::text_metrics::measure_family(
             &self.value,
-            self.font_size,
+            self.font_size(),
             crate::text_metrics::unbounded_width(),
-            self.family.as_deref(),
+            self.family(),
             false,
         );
         (text_width - visible_width + 4.0).max(0.0)
@@ -932,16 +931,10 @@ impl RawTextInput {
 
 impl Widget for RawTextInput {
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        self.style.clone()
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if let Some(color) = self.background {
-            painter.fill_rect(rect, color, self.corner_radius);
-        }
-        if let Some(color) = self.border_color {
-            painter.stroke_rect(rect, color, self.border_width, self.corner_radius);
-        }
         let padding = 8.0;
         let text_rect = Rect {
             x: rect.x + padding,
@@ -962,9 +955,9 @@ impl Widget for RawTextInput {
                     unbounded,
                     &self.placeholder,
                     self.placeholder_color,
-                    self.font_size,
+                    self.font_size(),
                     TextAlign::Start,
-                    self.family.as_deref(),
+                    self.family(),
                     false,
                     false,
                 );
@@ -975,24 +968,24 @@ impl Widget for RawTextInput {
                 if let Some(background) = self.selection_background {
                     let (before, _) = crate::text_metrics::measure_family(
                         &self.value[..selected.start],
-                        self.font_size,
+                        self.font_size(),
                         crate::text_metrics::unbounded_width(),
-                        self.family.as_deref(),
+                        self.family(),
                         false,
                     );
                     let (width, _) = crate::text_metrics::measure_family(
                         &self.value[selected.clone()],
-                        self.font_size,
+                        self.font_size(),
                         crate::text_metrics::unbounded_width(),
-                        self.family.as_deref(),
+                        self.family(),
                         false,
                     );
                     painter.fill_rect(
                         Rect {
                             x: unbounded.x + before,
-                            y: rect.y + (rect.height - self.font_size * 1.4) / 2.0,
+                            y: rect.y + (rect.height - self.font_size() * 1.4) / 2.0,
                             width,
-                            height: self.font_size * 1.4,
+                            height: self.font_size() * 1.4,
                         },
                         background,
                         2.0,
@@ -1002,12 +995,13 @@ impl Widget for RawTextInput {
             painter.fill_text_selected_font(
                 unbounded,
                 &self.value,
-                self.text_color,
-                self.selection_text_color.unwrap_or(self.text_color),
+                self.text_color(painter),
+                self.selection_text_color
+                    .unwrap_or(self.text_color(painter)),
                 selected,
-                self.font_size,
+                self.font_size(),
                 TextAlign::Start,
-                self.family.as_deref(),
+                self.family(),
             );
         }
         painter.pop_clip();
@@ -1030,9 +1024,9 @@ impl Widget for RawTextInput {
         let cursor = self.cursor.min(self.value.len());
         let (text_width, _) = crate::text_metrics::measure_family(
             &self.value[..cursor],
-            self.font_size,
+            self.font_size(),
             crate::text_metrics::unbounded_width(),
-            self.family.as_deref(),
+            self.family(),
             false,
         );
         let text_width = if self.value.is_empty() {
@@ -1041,14 +1035,14 @@ impl Widget for RawTextInput {
             text_width
         };
         let caret_x = rect.x + padding + text_width - self.horizontal_scroll(visible_width);
-        let caret_height = (self.font_size * 1.2).min(rect.height);
+        let caret_height = (self.font_size() * 1.2).min(rect.height);
         let caret_rect = Rect {
             x: caret_x,
             y: rect.y + (rect.height - caret_height) / 2.0,
             width: 1.5,
             height: caret_height,
         };
-        painter.fill_rect(caret_rect, self.text_color, 0.0);
+        painter.fill_rect(caret_rect, self.text_color(painter), 0.0);
     }
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
@@ -1219,7 +1213,7 @@ impl Widget for RawTextInput {
 
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         let value = self.value.clone();
-        let font_size = self.font_size;
+        let font_size = self.font_size();
         let on_cursor_change = self.on_cursor_change.clone();
         let on_selection_change = self.on_selection_change.clone();
         let selection = self.keyboard_selection.clone();
@@ -1252,7 +1246,7 @@ impl Widget for RawTextInput {
 
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         let value = self.value.clone();
-        let font_size = self.font_size;
+        let font_size = self.font_size();
         let on_cursor_change = self.on_cursor_change.clone();
         let on_selection_change = self.on_selection_change.clone();
         let selection = self.keyboard_selection.clone();

@@ -13,8 +13,8 @@ pub use creamui_widgets as widgets;
 
 pub use creamui_core::{
     Border, BoxedWidget, ColorToken, ColorValue, InteractionState, LengthValue, PaintStyle,
-    Painter, Size, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
-    Widget,
+    Painter, Size, StateStyle, Style, StyleParseError, StyleProp, StyleState, Styled, StyledWidget,
+    TypographyStyle, Widget,
 };
 #[cfg(feature = "devtools")]
 pub use creamui_devtools as devtools;

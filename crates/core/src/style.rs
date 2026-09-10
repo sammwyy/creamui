@@ -132,6 +132,22 @@ impl LengthValue {
             Self::Percent(value) => crate::layout::Dimension::Percent(value / 100.0),
         }
     }
+
+    pub(crate) fn length_percentage(self) -> crate::layout::LengthPercentage {
+        match self {
+            Self::Px(value) => crate::layout::LengthPercentage::Length(value),
+            Self::Percent(value) => crate::layout::LengthPercentage::Percent(value / 100.0),
+            Self::Auto => panic!("`auto` is not valid for padding or gap"),
+        }
+    }
+
+    pub(crate) fn length_percentage_auto(self) -> crate::layout::LengthPercentageAuto {
+        match self {
+            Self::Auto => crate::layout::LengthPercentageAuto::Auto,
+            Self::Px(value) => crate::layout::LengthPercentageAuto::Length(value),
+            Self::Percent(value) => crate::layout::LengthPercentageAuto::Percent(value / 100.0),
+        }
+    }
 }
 
 impl From<f32> for LengthValue {
@@ -346,6 +362,37 @@ macro_rules! creamui_style_property_schema {
             MinHeight(crate::LengthValue) => "min-height" |target, value| { target.layout.min_size.height = value.dimension(); } => min_height(value: impl Into<crate::LengthValue>) |style| { style.layout.min_size.height = value.into().dimension(); };
             MaxWidth(crate::LengthValue) => "max-width" |target, value| { target.layout.max_size.width = value.dimension(); } => max_width(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.width = value.into().dimension(); };
             MaxHeight(crate::LengthValue) => "max-height" |target, value| { target.layout.max_size.height = value.dimension(); } => max_height(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.height = value.into().dimension(); };
+            Display(crate::layout::Display) => "display" |target, value| { target.layout.display = value; } => display(value: crate::layout::Display) |style| { style.layout.display = value; };
+            FlexDirection(crate::layout::FlexDirection) => "flex-direction" |target, value| { target.layout.flex_direction = value; } => flex_direction(value: crate::layout::FlexDirection) |style| { style.layout.flex_direction = value; };
+            FlexWrap(crate::layout::FlexWrap) => "flex-wrap" |target, value| { target.layout.flex_wrap = value; } => flex_wrap(value: crate::layout::FlexWrap) |style| { style.layout.flex_wrap = value; };
+            FlexGrow(f32) => "flex-grow" |target, value| { target.layout.flex_grow = value; } => flex_grow(value: f32) |style| { style.layout.flex_grow = value; };
+            FlexShrink(f32) => "flex-shrink" |target, value| { target.layout.flex_shrink = value; } => flex_shrink(value: f32) |style| { style.layout.flex_shrink = value; };
+            FlexBasis(crate::LengthValue) => "flex-basis" |target, value| { target.layout.flex_basis = value.dimension(); } => flex_basis(value: impl Into<crate::LengthValue>) |style| { style.layout.flex_basis = value.into().dimension(); };
+            Gap(crate::LengthValue) => "gap" |target, value| { let value = value.length_percentage(); target.layout.gap = crate::layout::Size { width: value, height: value }; } => gap(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage(); style.layout.gap = crate::layout::Size { width: value, height: value }; };
+            RowGap(crate::LengthValue) => "row-gap" |target, value| { target.layout.gap.height = value.length_percentage(); } => row_gap(value: impl Into<crate::LengthValue>) |style| { style.layout.gap.height = value.into().length_percentage(); };
+            ColumnGap(crate::LengthValue) => "column-gap" |target, value| { target.layout.gap.width = value.length_percentage(); } => column_gap(value: impl Into<crate::LengthValue>) |style| { style.layout.gap.width = value.into().length_percentage(); };
+            Padding(crate::LengthValue) => "padding" |target, value| { let value = value.length_percentage(); target.layout.padding = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; } => padding(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage(); style.layout.padding = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; };
+            PaddingTop(crate::LengthValue) => "padding-top" |target, value| { target.layout.padding.top = value.length_percentage(); } => padding_top(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.top = value.into().length_percentage(); };
+            PaddingRight(crate::LengthValue) => "padding-right" |target, value| { target.layout.padding.right = value.length_percentage(); } => padding_right(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.right = value.into().length_percentage(); };
+            PaddingBottom(crate::LengthValue) => "padding-bottom" |target, value| { target.layout.padding.bottom = value.length_percentage(); } => padding_bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.bottom = value.into().length_percentage(); };
+            PaddingLeft(crate::LengthValue) => "padding-left" |target, value| { target.layout.padding.left = value.length_percentage(); } => padding_left(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.left = value.into().length_percentage(); };
+            Margin(crate::LengthValue) => "margin" |target, value| { let value = value.length_percentage_auto(); target.layout.margin = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; } => margin(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage_auto(); style.layout.margin = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; };
+            MarginTop(crate::LengthValue) => "margin-top" |target, value| { target.layout.margin.top = value.length_percentage_auto(); } => margin_top(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.top = value.into().length_percentage_auto(); };
+            MarginRight(crate::LengthValue) => "margin-right" |target, value| { target.layout.margin.right = value.length_percentage_auto(); } => margin_right(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.right = value.into().length_percentage_auto(); };
+            MarginBottom(crate::LengthValue) => "margin-bottom" |target, value| { target.layout.margin.bottom = value.length_percentage_auto(); } => margin_bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.bottom = value.into().length_percentage_auto(); };
+            MarginLeft(crate::LengthValue) => "margin-left" |target, value| { target.layout.margin.left = value.length_percentage_auto(); } => margin_left(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.left = value.into().length_percentage_auto(); };
+            AlignItems(crate::layout::AlignItems) => "align-items" |target, value| { target.layout.align_items = Some(value); } => align_items(value: crate::layout::AlignItems) |style| { style.layout.align_items = Some(value); };
+            AlignSelf(crate::layout::AlignSelf) => "align-self" |target, value| { target.layout.align_self = Some(value); } => align_self(value: crate::layout::AlignSelf) |style| { style.layout.align_self = Some(value); };
+            JustifyContent(crate::layout::JustifyContent) => "justify-content" |target, value| { target.layout.justify_content = Some(value); } => justify_content(value: crate::layout::JustifyContent) |style| { style.layout.justify_content = Some(value); };
+            AlignContent(crate::layout::AlignContent) => "align-content" |target, value| { target.layout.align_content = Some(value); } => align_content(value: crate::layout::AlignContent) |style| { style.layout.align_content = Some(value); };
+            Position(crate::layout::Position) => "position" |target, value| { target.layout.position = value; } => position(value: crate::layout::Position) |style| { style.layout.position = value; };
+            Top(crate::LengthValue) => "top" |target, value| { target.layout.inset.top = value.length_percentage_auto(); } => top(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.top = value.into().length_percentage_auto(); };
+            Right(crate::LengthValue) => "right" |target, value| { target.layout.inset.right = value.length_percentage_auto(); } => right(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.right = value.into().length_percentage_auto(); };
+            Bottom(crate::LengthValue) => "bottom" |target, value| { target.layout.inset.bottom = value.length_percentage_auto(); } => bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.bottom = value.into().length_percentage_auto(); };
+            Left(crate::LengthValue) => "left" |target, value| { target.layout.inset.left = value.length_percentage_auto(); } => left(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.left = value.into().length_percentage_auto(); };
+            GridTemplateColumns(Vec<crate::layout::TrackSizingFunction>) => "grid-template-columns" |target, value| { target.layout.grid_template_columns = value.into(); } => grid_template_columns(tracks: impl IntoIterator<Item = crate::layout::TrackSizingFunction>) |style| { style.layout.grid_template_columns = tracks.into_iter().collect(); };
+            GridTemplateRows(Vec<crate::layout::TrackSizingFunction>) => "grid-template-rows" |target, value| { target.layout.grid_template_rows = value.into(); } => grid_template_rows(tracks: impl IntoIterator<Item = crate::layout::TrackSizingFunction>) |style| { style.layout.grid_template_rows = tracks.into_iter().collect(); };
+            GridAutoFlow(crate::layout::GridAutoFlow) => "grid-auto-flow" |target, value| { target.layout.grid_auto_flow = value; } => grid_auto_flow(value: crate::layout::GridAutoFlow) |style| { style.layout.grid_auto_flow = value; };
         }
     };
 }
@@ -720,6 +767,30 @@ impl StyleProp {
             }
             Ok(Border::new(color.parse::<ColorValue>()?, number(width)?))
         };
+        let align_items = |value: &str| match value.trim() {
+            "start" => Ok(crate::layout::AlignItems::Start),
+            "end" => Ok(crate::layout::AlignItems::End),
+            "flex-start" => Ok(crate::layout::AlignItems::FlexStart),
+            "flex-end" => Ok(crate::layout::AlignItems::FlexEnd),
+            "center" => Ok(crate::layout::AlignItems::Center),
+            "baseline" => Ok(crate::layout::AlignItems::Baseline),
+            "stretch" => Ok(crate::layout::AlignItems::Stretch),
+            other => Err(StyleParseError(format!("invalid alignment `{other}`"))),
+        };
+        let align_content = |value: &str| match value.trim() {
+            "start" => Ok(crate::layout::AlignContent::Start),
+            "end" => Ok(crate::layout::AlignContent::End),
+            "flex-start" => Ok(crate::layout::AlignContent::FlexStart),
+            "flex-end" => Ok(crate::layout::AlignContent::FlexEnd),
+            "center" => Ok(crate::layout::AlignContent::Center),
+            "stretch" => Ok(crate::layout::AlignContent::Stretch),
+            "space-between" => Ok(crate::layout::AlignContent::SpaceBetween),
+            "space-evenly" => Ok(crate::layout::AlignContent::SpaceEvenly),
+            "space-around" => Ok(crate::layout::AlignContent::SpaceAround),
+            other => Err(StyleParseError(format!(
+                "invalid content alignment `{other}`"
+            ))),
+        };
 
         match name.trim() {
             "background" | "background-color" => Ok(Self::Background(value.parse()?)),
@@ -748,6 +819,55 @@ impl StyleProp {
             "min-height" => Ok(Self::MinHeight(value.parse()?)),
             "max-width" => Ok(Self::MaxWidth(value.parse()?)),
             "max-height" => Ok(Self::MaxHeight(value.parse()?)),
+            "display" => Ok(Self::Display(match value.trim() {
+                "block" => crate::layout::Display::Block,
+                "flex" => crate::layout::Display::Flex,
+                "grid" => crate::layout::Display::Grid,
+                "none" => crate::layout::Display::None,
+                other => return Err(StyleParseError(format!("invalid display `{other}`"))),
+            })),
+            "flex-direction" => Ok(Self::FlexDirection(match value.trim() {
+                "row" => crate::layout::FlexDirection::Row,
+                "row-reverse" => crate::layout::FlexDirection::RowReverse,
+                "column" => crate::layout::FlexDirection::Column,
+                "column-reverse" => crate::layout::FlexDirection::ColumnReverse,
+                other => return Err(StyleParseError(format!("invalid flex-direction `{other}`"))),
+            })),
+            "flex-wrap" => Ok(Self::FlexWrap(match value.trim() {
+                "nowrap" => crate::layout::FlexWrap::NoWrap,
+                "wrap" => crate::layout::FlexWrap::Wrap,
+                "wrap-reverse" => crate::layout::FlexWrap::WrapReverse,
+                other => return Err(StyleParseError(format!("invalid flex-wrap `{other}`"))),
+            })),
+            "flex-grow" => Ok(Self::FlexGrow(number(value)?)),
+            "flex-shrink" => Ok(Self::FlexShrink(number(value)?)),
+            "flex-basis" => Ok(Self::FlexBasis(value.parse()?)),
+            "gap" => Ok(Self::Gap(value.parse()?)),
+            "row-gap" => Ok(Self::RowGap(value.parse()?)),
+            "column-gap" => Ok(Self::ColumnGap(value.parse()?)),
+            "padding" => Ok(Self::Padding(value.parse()?)),
+            "padding-top" => Ok(Self::PaddingTop(value.parse()?)),
+            "padding-right" => Ok(Self::PaddingRight(value.parse()?)),
+            "padding-bottom" => Ok(Self::PaddingBottom(value.parse()?)),
+            "padding-left" => Ok(Self::PaddingLeft(value.parse()?)),
+            "margin" => Ok(Self::Margin(value.parse()?)),
+            "margin-top" => Ok(Self::MarginTop(value.parse()?)),
+            "margin-right" => Ok(Self::MarginRight(value.parse()?)),
+            "margin-bottom" => Ok(Self::MarginBottom(value.parse()?)),
+            "margin-left" => Ok(Self::MarginLeft(value.parse()?)),
+            "align-items" => Ok(Self::AlignItems(align_items(value)?)),
+            "align-self" => Ok(Self::AlignSelf(align_items(value)?)),
+            "justify-content" => Ok(Self::JustifyContent(align_content(value)?)),
+            "align-content" => Ok(Self::AlignContent(align_content(value)?)),
+            "position" => Ok(Self::Position(match value.trim() {
+                "relative" => crate::layout::Position::Relative,
+                "absolute" => crate::layout::Position::Absolute,
+                other => return Err(StyleParseError(format!("invalid position `{other}`"))),
+            })),
+            "top" => Ok(Self::Top(value.parse()?)),
+            "right" => Ok(Self::Right(value.parse()?)),
+            "bottom" => Ok(Self::Bottom(value.parse()?)),
+            "left" => Ok(Self::Left(value.parse()?)),
             other => Err(StyleParseError(format!("unknown style property `{other}`"))),
         }
     }
@@ -844,6 +964,55 @@ mod tests {
         assert_eq!(
             style.paint.border,
             Some(Border::new(Color::rgb(0x10, 0x20, 0x30), 2.0))
+        );
+    }
+
+    #[test]
+    fn layout_properties_compile_without_a_layout_adapter() {
+        let style = Style::new().properties([
+            StyleProp::parse("display", "flex").unwrap(),
+            StyleProp::parse("flex-direction", "column").unwrap(),
+            StyleProp::parse("gap", "12px").unwrap(),
+            StyleProp::parse("padding-left", "10px").unwrap(),
+            StyleProp::parse("margin", "auto").unwrap(),
+            StyleProp::parse("align-items", "center").unwrap(),
+            StyleProp::parse("justify-content", "space-between").unwrap(),
+            StyleProp::parse("position", "absolute").unwrap(),
+            StyleProp::parse("top", "25%").unwrap(),
+        ]);
+
+        assert_eq!(style.layout.display, crate::layout::Display::Flex);
+        assert_eq!(
+            style.layout.flex_direction,
+            crate::layout::FlexDirection::Column
+        );
+        assert_eq!(
+            style.layout.gap,
+            crate::layout::Size {
+                width: crate::layout::LengthPercentage::Length(12.0),
+                height: crate::layout::LengthPercentage::Length(12.0),
+            }
+        );
+        assert_eq!(
+            style.layout.padding.left,
+            crate::layout::LengthPercentage::Length(10.0)
+        );
+        assert_eq!(
+            style.layout.margin.left,
+            crate::layout::LengthPercentageAuto::Auto
+        );
+        assert_eq!(
+            style.layout.align_items,
+            Some(crate::layout::AlignItems::Center)
+        );
+        assert_eq!(
+            style.layout.justify_content,
+            Some(crate::layout::JustifyContent::SpaceBetween)
+        );
+        assert_eq!(style.layout.position, crate::layout::Position::Absolute);
+        assert_eq!(
+            style.layout.inset.top,
+            crate::layout::LengthPercentageAuto::Percent(0.25)
         );
     }
 

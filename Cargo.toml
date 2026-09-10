@@ -36,6 +36,7 @@ members = [
     "examples/tray",
     "examples/interaction-styles",
     "examples/universal-styles",
+    "examples/jsx-styles",
     "demo/showcase",
 ]
 

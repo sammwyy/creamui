@@ -78,6 +78,7 @@ cargo run -p showcase
 cargo run -p pickers
 cargo run -p images
 cargo run -p flex
+cargo run -p jsx-styles
 cargo run -p tray
 ```
 

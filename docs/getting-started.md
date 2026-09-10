@@ -168,6 +168,9 @@ let view = jsx! {
 };
 ```
 
+Run `cargo run -p jsx-styles` for a complete window that shares a JSX style
+between buttons and overrides one inline.
+
 Box paint is centralized: the renderer draws the resolved background, border,
 radius, and outline before calling a widget's content-specific `paint` method.
 Pointer, focus, and component-owned disabled states are composed rather than

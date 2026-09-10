@@ -154,6 +154,8 @@ Each builder updates the declaration owned by the concrete component and keeps
 its type, so component-specific methods remain chainable. A custom `Widget`
 opts in by implementing only `Styled::set_style`. For configuration loaded
 from strings, use `.property(StyleProp::parse(...)?)`.
+The [component style matrix](components.md#style-support) identifies which
+content fields each built-in family consumes.
 
 The same model is available in JSX. `style` applies a reusable Rust
 declaration, then inline common properties override it:

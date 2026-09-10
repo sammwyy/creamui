@@ -131,7 +131,7 @@ fn jsx_exposes_headless_text_and_buttons_with_layout_props() {
         creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
         let root: BoxedWidget = Box::new(jsx! {
             <RawView style={Style::default()}>
-                <RawButton style={Style::default()} background={Color::rgb(20, 20, 20)} corner_radius={12.0} on_click={|| {}}>
+                <RawButton style={Style::default()} background={Color::rgb(20, 20, 20)} hover_background={Color::rgb(30, 30, 30)} pressed_background={Color::rgb(10, 10, 10)} corner_radius={12.0} on_click={|| {}}>
                     <RawText color={Color::rgb(255, 200, 0)} font_size={18.0} align={TextAlign::End} style={Style::default()}>"Raw label"</RawText>
                 </RawButton>
                 <Text color={Color::rgb(120, 220, 255)} align={TextAlign::Start} style={Style::default()}>"Themed label"</Text>

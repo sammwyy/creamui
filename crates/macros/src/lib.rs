@@ -721,6 +721,10 @@ impl Element {
                     "style",
                     "on_click",
                     "background",
+                    "hover_background",
+                    "pressed_background",
+                    "hover_style",
+                    "pressed_style",
                     "corner_radius",
                     "disabled",
                 ])?;
@@ -729,6 +733,18 @@ impl Element {
                 let mut output = quote!(#widgets::raw::RawButton::new(#style, #on_click));
                 if let Some(background) = self.prop("background")? {
                     output = quote!(#output.background(#background));
+                }
+                if let Some(background) = self.prop("hover_background")? {
+                    output = quote!(#output.hover_background(#background));
+                }
+                if let Some(background) = self.prop("pressed_background")? {
+                    output = quote!(#output.pressed_background(#background));
+                }
+                if let Some(style) = self.prop("hover_style")? {
+                    output = quote!(#output.hover_style(#style));
+                }
+                if let Some(style) = self.prop("pressed_style")? {
+                    output = quote!(#output.pressed_style(#style));
                 }
                 if let Some(radius) = self.prop("corner_radius")? {
                     output = quote!(#output.corner_radius(#radius));

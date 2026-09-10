@@ -10,7 +10,8 @@ use creamui_core::{
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{
-    RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawView, TextSelection,
+    ButtonVisualStyle, RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawView,
+    TextSelection,
 };
 use creamui_widgets::themed::{
     tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Link, ListBox, ListView, Overlay,
@@ -30,6 +31,30 @@ struct RecordingPainter {
     stroked_rects: Vec<(Rect, Color)>,
     texts: Vec<String>,
     text_rects: Vec<Rect>,
+}
+
+#[derive(Default)]
+struct StatePainter {
+    hovered: bool,
+    pressed: bool,
+    fill: Option<(Color, f32)>,
+    stroke: Option<(Color, f32, f32)>,
+}
+
+impl Painter for StatePainter {
+    fn hovered(&self, _: Rect) -> bool {
+        self.hovered
+    }
+    fn pressed(&self, _: Rect) -> bool {
+        self.pressed
+    }
+    fn fill_rect(&mut self, _: Rect, color: Color, radius: f32) {
+        self.fill = Some((color, radius));
+    }
+    fn stroke_rect(&mut self, _: Rect, color: Color, width: f32, radius: f32) {
+        self.stroke = Some((color, width, radius));
+    }
+    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
 }
 
 impl Painter for RecordingPainter {
@@ -152,6 +177,54 @@ fn themed_text_widgets_pass_overridden_font_families_to_painting() {
             assert!(painter.families.iter().any(|seen| seen == family));
         }
     });
+}
+
+#[test]
+fn raw_button_interaction_styles_override_paint_without_affecting_layout() {
+    let resting = Color::rgb(20, 20, 20);
+    let hovered = Color::rgb(40, 40, 40);
+    let pressed = Color::rgb(60, 60, 60);
+    let hover_border = Color::rgb(80, 80, 80);
+    let pressed_border = Color::rgb(100, 100, 100);
+    let button = RawButton::new(Style::default(), || {})
+        .background(resting)
+        .border(resting, 1.)
+        .corner_radius(2.)
+        .hover_style(
+            ButtonVisualStyle::new()
+                .background(hovered)
+                .border(hover_border, 2.)
+                .corner_radius(6.),
+        )
+        .pressed_style(
+            ButtonVisualStyle::new()
+                .background(pressed)
+                .border(pressed_border, 3.)
+                .corner_radius(10.),
+        );
+    let rect = Rect {
+        x: 0.,
+        y: 0.,
+        width: 20.,
+        height: 20.,
+    };
+
+    let mut hover_painter = StatePainter {
+        hovered: true,
+        ..Default::default()
+    };
+    button.paint(&mut hover_painter, rect);
+    assert_eq!(hover_painter.fill, Some((hovered, 6.)));
+    assert_eq!(hover_painter.stroke, Some((hover_border, 2., 6.)));
+
+    let mut pressed_painter = StatePainter {
+        hovered: true,
+        pressed: true,
+        ..Default::default()
+    };
+    button.paint(&mut pressed_painter, rect);
+    assert_eq!(pressed_painter.fill, Some((pressed, 10.)));
+    assert_eq!(pressed_painter.stroke, Some((pressed_border, 3., 10.)));
 }
 
 #[test]

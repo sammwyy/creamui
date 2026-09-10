@@ -11,11 +11,18 @@ readme = "README.md"
 keywords = ["gui", "ui", "winit", "wgpu"]
 categories = ["gui"]
 
+[features]
+default = []
+# Native Linux system-tray integration through the freedesktop
+# StatusNotifierItem D-Bus protocol. It is opt-in and does not use GTK.
+tray = ["dep:creamui-tray", "creamui-tray/linux-status-notifier"]
+
 [dependencies]
 creamui-core = { workspace = true }
 creamui-theme = { workspace = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
+creamui-tray = { workspace = true, optional = true }
 winit = { workspace = true }
 tiny-skia = { workspace = true }
 fontdue = "0.9"
@@ -27,7 +34,6 @@ env_logger = "0.11"
 wgpu = { workspace = true }
 pollster = { workspace = true }
 softbuffer = { workspace = true }
-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

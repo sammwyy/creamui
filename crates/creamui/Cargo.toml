@@ -21,7 +21,8 @@ abi = ["dep:creamui-abi"]
 dynamic = ["abi", "jsx", "dep:creamui-dynamic"]
 ffi = ["abi", "dep:creamui_ffi"]
 devtools = ["dep:creamui-devtools"]
-full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools"]
+tray = ["creamui-render/tray"]
+full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray"]
 
 [dependencies]
 creamui-core = { workspace = true }

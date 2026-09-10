@@ -979,6 +979,9 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         resizable: options.resizable != 0,
         decorations: options.decorations != 0,
         transparent: options.transparent != 0,
+        // The C ABI keeps its existing close semantics; the new app/tray
+        // lifecycle controls are Rust-native for now.
+        close_behavior: creamui_render::CloseBehavior::Close,
         backend: if options.backend == CUI_RENDER_BACKEND_CPU {
             creamui_render::RenderBackend::Cpu
         } else {

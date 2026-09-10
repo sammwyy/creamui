@@ -78,9 +78,13 @@ cargo run -p showcase
 cargo run -p pickers
 cargo run -p images
 cargo run -p flex
+cargo run -p tray
 ```
 
 The showcase is the fastest way to explore the available controls and theme behavior.
+The `tray` example shows a persistent background application: closing its
+window leaves the process alive, while the system tray can create it again,
+update a reactive counter, or quit the process.
 
 ## Web showcase demo
 
@@ -117,6 +121,7 @@ faster, unoptimized build while iterating.
 | `creamui-widgets` | Raw and themed components |
 | `creamui-image` | PNG, JPEG, and WebP image widgets |
 | `creamui-render` | Native windows and frame presentation |
+| `creamui-tray` | Optional native system-tray backends |
 | `creamui-devtools` | Development-only FPS/frame-time/CPU/RAM overlay (F3) |
 | `creamui-macros` / `creamui-jsx` | JSX syntax and component support |
 | `creamui-abi`, `creamui-ffi`, `creamui-dynamic` | Optional dynamic-runtime and C ABI integration |

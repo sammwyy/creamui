@@ -9,6 +9,7 @@ members = [
     "crates/widgets",
     "crates/image",
     "crates/render",
+    "crates/tray",
     "crates/devtools",
     "crates/abi",
     "crates/ffi",
@@ -32,6 +33,7 @@ members = [
     "examples/grid",
     "examples/transparent-window",
     "examples/frameless-window",
+    "examples/tray",
     "demo/showcase",
 ]
 
@@ -52,6 +54,7 @@ creamui-fonts = { version = "0.1.1", path = "crates/fonts" }
 creamui-widgets = { version = "0.1.1", path = "crates/widgets" }
 creamui-image = { version = "0.1.1", path = "crates/image" }
 creamui-render = { version = "0.1.1", path = "crates/render" }
+creamui-tray = { version = "0.1.1", path = "crates/tray" }
 creamui-devtools = { version = "0.1.1", path = "crates/devtools" }
 creamui-jsx = { version = "0.1.1", path = "crates/jsx" }
 creamui-macros = { version = "0.1.1", path = "crates/macros" }

@@ -48,10 +48,28 @@ use winit::window::{
     CursorIcon as WinitCursorIcon, ResizeDirection, Window, WindowAttributes, WindowId, WindowLevel,
 };
 
+#[cfg(all(feature = "tray", target_os = "linux"))]
+use winit::event_loop::EventLoopProxy;
+
 /// How long the text-input caret stays in each visibility phase while
 /// blinking (on, then off, then on again).
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 const RESIZE_SETTLE_DELAY: Duration = Duration::from_millis(100);
+
+/// What happens when the user asks the window manager to close a window.
+///
+/// [`CloseBehavior::Close`] is the normal desktop-window behavior. Use
+/// [`CloseBehavior::Hide`] for a main window controlled by a system tray:
+/// its UI and [`WindowHandle`] stay alive, and [`WindowHandle::show`] can
+/// restore it without rebuilding the window. Native hiding is not available
+/// on Wayland; portable tray applications should close and recreate their
+/// window through [`AppHandle::append_window`] instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloseBehavior {
+    #[default]
+    Close,
+    Hide,
+}
 
 /// Writes `value` to `signal` only if it differs, avoiding a needless
 /// re-render when a window manager fires a resize event with no real change.
@@ -115,6 +133,8 @@ pub struct WindowOptions {
     pub resizable: bool,
     pub decorations: bool,
     pub transparent: bool,
+    /// How a close request from the window manager is handled.
+    pub close_behavior: CloseBehavior,
     /// Which backend composites the CPU-rasterized frame to the window:
     /// GPU (`wgpu`, the default) or CPU-only (`softbuffer`). Can be
     /// force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`
@@ -133,6 +153,7 @@ impl Default for WindowOptions {
             resizable: true,
             decorations: true,
             transparent: false,
+            close_behavior: CloseBehavior::Close,
             backend: RenderBackend::default(),
             theme: Theme::default(),
         }
@@ -270,6 +291,163 @@ impl Presenter {
 
 type SharedWindow = Rc<RefCell<Option<Arc<Window>>>>;
 
+/// Handle for the application event loop.
+///
+/// It is deliberately cheap to clone and is passed to tray actions and can
+/// also be retrieved from [`WindowHandle::app`]. It is tied to CreamUI's UI
+/// thread (like signals and widgets), so use it from window callbacks, tray
+/// callbacks, or [`AppBuilder::on_started`] rather than sending it to a
+/// worker thread.
+#[derive(Clone)]
+pub struct AppHandle {
+    commands: Rc<RefCell<AppCommands>>,
+}
+
+struct AppCommands {
+    windows: Vec<PendingWindow>,
+    exit_requested: bool,
+}
+
+impl AppHandle {
+    /// Queues a new top-level window. If the event loop is already running,
+    /// it is created at the end of the current event turn; otherwise it is
+    /// created as soon as [`AppBuilder::run`] starts.
+    pub fn append_window(
+        &self,
+        options: WindowOptions,
+        clear_color: Color,
+        on_window_ready: impl FnOnce(WindowHandle) + 'static,
+        build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+    ) {
+        self.commands.borrow_mut().windows.push(PendingWindow {
+            options,
+            clear_color,
+            on_window_ready: Box::new(on_window_ready),
+            build_ui: Box::new(build_ui),
+        });
+    }
+
+    /// Ends the application event loop and drops every remaining window and
+    /// system tray icon.
+    pub fn exit(&self) {
+        self.commands.borrow_mut().exit_requested = true;
+    }
+}
+
+#[cfg(all(feature = "tray", target_os = "linux"))]
+pub use creamui_tray::TrayIcon;
+
+/// Builder for a native Linux system-tray icon and its context-menu actions.
+///
+/// Available with the `tray` feature. It uses freedesktop's
+/// StatusNotifierItem protocol over D-Bus — it does not depend on GTK. Each
+/// menu action receives an [`AppHandle`], so it can update a [`Signal`] and/or
+/// append windows without plumbing a separate channel.
+#[cfg(all(feature = "tray", target_os = "linux"))]
+pub struct TrayBuilder {
+    icon: TrayIcon,
+    tooltip: Option<String>,
+    items: Vec<TrayMenuItem>,
+}
+
+#[cfg(all(feature = "tray", target_os = "linux"))]
+struct TrayMenuItem {
+    id: String,
+    label: String,
+    enabled: bool,
+    action: Rc<dyn Fn(&AppHandle)>,
+}
+
+#[cfg(all(feature = "tray", target_os = "linux"))]
+impl TrayBuilder {
+    /// Starts a system tray definition with a raw RGBA [`TrayIcon`].
+    pub fn new(icon: TrayIcon) -> Self {
+        Self {
+            icon,
+            tooltip: None,
+            items: Vec::new(),
+        }
+    }
+
+    /// Adds an accessible title for tray implementations that display one.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// Adds an enabled context-menu item. `id` only needs to be unique
+    /// within this tray.
+    pub fn item(
+        mut self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        action: impl Fn(&AppHandle) + 'static,
+    ) -> Self {
+        self.items.push(TrayMenuItem {
+            id: id.into(),
+            label: label.into(),
+            enabled: true,
+            action: Rc::new(action),
+        });
+        self
+    }
+
+    /// Adds a disabled, non-interactive context-menu item.
+    pub fn disabled_item(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.items.push(TrayMenuItem {
+            id: id.into(),
+            label: label.into(),
+            enabled: false,
+            action: Rc::new(|_| {}),
+        });
+        self
+    }
+
+    /// Adds the conventional action that quits the entire application.
+    pub fn quit_item(self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.item(id, label, |app| app.exit())
+    }
+
+    fn install(
+        self,
+        tray_index: usize,
+        proxy: EventLoopProxy<AppEvent>,
+    ) -> Result<InstalledTray, String> {
+        let mut actions = HashMap::new();
+        let mut native =
+            creamui_tray::TrayBuilder::new(self.icon).with_id(format!("creamui-tray-{tray_index}"));
+        if let Some(tooltip) = self.tooltip {
+            native = native.title(tooltip);
+        }
+        for item in self.items {
+            // Prefix the public id so several CreamUI trays may safely use
+            // natural ids such as "show" and "quit".
+            let id = format!("creamui-tray-{tray_index}-{}", item.id);
+            native = if item.enabled {
+                native.item(id.clone(), item.label)
+            } else {
+                native.disabled_item(id.clone(), item.label)
+            };
+            actions.insert(id, item.action);
+        }
+        let native = native
+            .build(move |event| {
+                let _ = proxy.send_event(AppEvent::TrayMenu(event.id));
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(InstalledTray {
+            _native: native,
+            actions,
+        })
+    }
+}
+
+#[cfg(all(feature = "tray", target_os = "linux"))]
+struct InstalledTray {
+    _native: creamui_tray::Tray,
+    actions: HashMap<String, Rc<dyn Fn(&AppHandle)>>,
+}
+
 /// A handle to a live window, for desktop-shell operations (resize, move,
 /// always-on-top) issued from outside the render loop — e.g. a click
 /// handler. Cheap to clone; every clone shares the same underlying window.
@@ -283,6 +461,7 @@ pub struct WindowHandle {
     window: SharedWindow,
     theme: ThemeProvider,
     close_requested: Rc<Cell<bool>>,
+    app: AppHandle,
 }
 
 impl WindowHandle {
@@ -320,6 +499,39 @@ impl WindowHandle {
         if let Some(window) = self.window.borrow().as_ref() {
             window.request_redraw();
         }
+    }
+
+    /// Hides the window while retaining its UI state and native resources.
+    /// Use [`show`](Self::show) to make it visible again. Wayland does not
+    /// support changing a window's visibility; use `close` plus
+    /// [`AppHandle::append_window`] for portable background apps.
+    pub fn hide(&self) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_visible(false);
+        }
+    }
+
+    /// Shows a previously hidden window and requests keyboard focus where
+    /// the platform allows it.
+    pub fn show(&self) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_visible(true);
+            window.set_minimized(false);
+            window.focus_window();
+            window.request_redraw();
+        }
+    }
+
+    /// Returns whether the native window still exists. A handle remains safe
+    /// to retain after `close()`, but it no longer refers to an open window.
+    pub fn is_open(&self) -> bool {
+        self.window.borrow().is_some()
+    }
+
+    /// Returns the owning application, for app-level work such as opening
+    /// another window or exiting from a window callback.
+    pub fn app(&self) -> AppHandle {
+        self.app.clone()
     }
 
     /// Minimizes or restores the window.
@@ -410,10 +622,13 @@ struct WindowSpec {
 ///     .window(WindowOptions::default(), Color::rgb(0, 0, 0), |_handle| {}, build)
 ///     .run();
 /// ```
-#[derive(Default)]
 pub struct AppBuilder {
     specs: Vec<PendingWindow>,
     on_panic: Option<PanicHandler>,
+    on_started: Option<Box<dyn FnOnce(AppHandle)>>,
+    exit_when_last_window_closes: bool,
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    trays: Vec<TrayBuilder>,
 }
 
 /// Everything [`AppBuilder::window`] needs to defer construction to
@@ -432,7 +647,37 @@ impl AppBuilder {
         AppBuilder {
             specs: Vec::new(),
             on_panic: None,
+            on_started: None,
+            // Preserve the original AppBuilder/run behavior for regular
+            // applications. Background applications opt into persistence.
+            exit_when_last_window_closes: true,
+            #[cfg(all(feature = "tray", target_os = "linux"))]
+            trays: Vec::new(),
         }
+    }
+
+    /// Keeps the event loop alive after every window has closed. Pair this
+    /// with [`AppHandle::exit`] (usually from a tray's Quit item) for a
+    /// background application.
+    pub fn keep_running(mut self) -> Self {
+        self.exit_when_last_window_closes = false;
+        self
+    }
+
+    /// Runs `handler` once the native event loop is ready. It receives an
+    /// [`AppHandle`] and may append the first window, which makes a truly
+    /// windowless startup possible.
+    pub fn on_started(mut self, handler: impl FnOnce(AppHandle) + 'static) -> Self {
+        self.on_started = Some(Box::new(handler));
+        self
+    }
+
+    /// Registers a native system tray. This also makes sense with no queued
+    /// windows when combined with [`keep_running`](Self::keep_running).
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    pub fn tray(mut self, tray: TrayBuilder) -> Self {
+        self.trays.push(tray);
+        self
     }
 
     /// Registers a handler for panics raised inside `build_ui`. Without one,
@@ -462,10 +707,24 @@ impl AppBuilder {
         self
     }
 
-    /// Opens every queued window and runs one shared event loop until all of
-    /// them have closed.
+    /// Opens every queued window and runs one shared event loop. By default
+    /// it exits once the last window closes; [`keep_running`](Self::keep_running)
+    /// makes the application's lifetime explicit instead.
     pub fn run(self) {
-        run_windows(self.specs, self.on_panic);
+        run_windows(
+            self.specs,
+            self.on_panic,
+            self.on_started,
+            self.exit_when_last_window_closes,
+            #[cfg(all(feature = "tray", target_os = "linux"))]
+            self.trays,
+        );
+    }
+}
+
+impl Default for AppBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -479,6 +738,7 @@ struct WindowState {
     frame: Rc<RefCell<FrameState>>,
     window: SharedWindow,
     close_requested: Rc<Cell<bool>>,
+    close_behavior: CloseBehavior,
     frameless_resizable: bool,
     presenter: Option<Presenter>,
     pointer_pos: Point,
@@ -879,7 +1139,20 @@ struct AppHandler {
     /// in principle be called again later (e.g. mobile lifecycle), at which
     /// point this is already empty and a no-op.
     pending: Vec<WindowSpec>,
+    commands: Rc<RefCell<AppCommands>>,
+    app: AppHandle,
+    on_started: Option<Box<dyn FnOnce(AppHandle)>>,
+    started: bool,
+    exit_when_last_window_closes: bool,
+    dump_frame_path: Option<String>,
+    next_window_index: usize,
     windows: HashMap<WindowId, WindowState>,
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    pending_trays: Vec<TrayBuilder>,
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    trays: Vec<InstalledTray>,
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    proxy: EventLoopProxy<AppEvent>,
     /// Shared by every window using [`RenderBackend::Gpu`] — one
     /// `wgpu::Instance` regardless of how many GPU windows are open, since
     /// its ~100-200ms Windows loader/ICD cost and driver memory footprint
@@ -889,136 +1162,171 @@ struct AppHandler {
     gpu_instance: Option<Rc<wgpu::Instance>>,
 }
 
-impl ApplicationHandler for AppHandler {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        for spec in self.pending.drain(..) {
-            let t0 = Instant::now();
-            let attrs = WindowAttributes::default()
-                .with_title(spec.options.title.clone())
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    spec.options.width,
-                    spec.options.height,
-                ))
-                .with_resizable(spec.options.resizable)
-                .with_decorations(spec.options.decorations)
-                .with_transparent(spec.options.transparent);
-            #[cfg(target_arch = "wasm32")]
-            let attrs = {
-                use winit::platform::web::WindowAttributesExtWebSys;
-                attrs.with_append(true)
-            };
-
-            let window = Arc::new(
-                event_loop
-                    .create_window(attrs)
-                    .expect("failed to create window"),
-            );
-            // Show the window the instant it exists rather than waiting for
-            // GPU init (adapter/device/pipeline — several hundred ms on
-            // Windows) to finish. That init cost doesn't go away, but the
-            // window appearing immediately is what "the app feels slow to
-            // launch" is actually about; the OS-default surface briefly
-            // shown underneath gets replaced by the real first frame a
-            // moment later.
-            window.set_visible(true);
-            log::debug!(
-                "creamui-render: window created and shown: {:?}",
-                t0.elapsed()
-            );
-            log::debug!(
-                "creamui-render: window created ({}x{} logical, scale factor {})",
+impl AppHandler {
+    fn create_window(&mut self, event_loop: &ActiveEventLoop, spec: WindowSpec) {
+        let t0 = Instant::now();
+        let attrs = WindowAttributes::default()
+            .with_title(spec.options.title.clone())
+            .with_inner_size(winit::dpi::LogicalSize::new(
                 spec.options.width,
                 spec.options.height,
-                window.scale_factor()
-            );
+            ))
+            .with_resizable(spec.options.resizable)
+            .with_decorations(spec.options.decorations)
+            .with_transparent(spec.options.transparent);
+        #[cfg(target_arch = "wasm32")]
+        let attrs = {
+            use winit::platform::web::WindowAttributesExtWebSys;
+            attrs.with_append(true)
+        };
 
-            spec.scale_factor.set(window.scale_factor());
-            {
-                let physical = window.inner_size();
-                let scale = spec.scale_factor.peek();
-                spec.viewport.set(Size {
-                    width: (physical.width as f64 / scale) as f32,
-                    height: (physical.height as f64 / scale) as f32,
-                });
-            }
-            (spec.repaint)();
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .expect("failed to create window"),
+        );
+        // Show the window the instant it exists rather than waiting for
+        // GPU init (adapter/device/pipeline — several hundred ms on
+        // Windows) to finish. That init cost doesn't go away, but the
+        // window appearing immediately is what "the app feels slow to
+        // launch" is actually about; the OS-default surface briefly
+        // shown underneath gets replaced by the real first frame a
+        // moment later.
+        window.set_visible(true);
+        log::debug!(
+            "creamui-render: window created and shown: {:?}",
+            t0.elapsed()
+        );
+        log::debug!(
+            "creamui-render: window created ({}x{} logical, scale factor {})",
+            spec.options.width,
+            spec.options.height,
+            window.scale_factor()
+        );
 
-            #[cfg(not(target_arch = "wasm32"))]
-            let mut presenter = match spec.options.backend {
-                RenderBackend::Gpu => {
-                    let instance = self
+        spec.scale_factor.set(window.scale_factor());
+        {
+            let physical = window.inner_size();
+            let scale = spec.scale_factor.peek();
+            spec.viewport.set(Size {
+                width: (physical.width as f64 / scale) as f32,
+                height: (physical.height as f64 / scale) as f32,
+            });
+        }
+        (spec.repaint)();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut presenter = match spec.options.backend {
+            RenderBackend::Gpu => {
+                if self.gpu_instance.is_none() {
+                    self.gpu_instance = Some(Rc::new(GpuState::create_instance()));
+                }
+                let instance = self
                         .gpu_instance
                         .as_ref()
                         .expect("a window resolved to RenderBackend::Gpu but no shared wgpu::Instance was created");
-                    Presenter::Gpu(GpuState::new(
-                        window.clone(),
-                        instance,
-                        spec.options.transparent,
-                    ))
-                }
-                RenderBackend::Cpu => Presenter::Cpu(CpuState::new(window.clone())),
-            };
-            #[cfg(target_arch = "wasm32")]
-            let mut presenter = Presenter::Web(WebState::new(window.clone()));
-            log::debug!(
-                "creamui-render: {:?} presenter ready: {:?}",
-                spec.options.backend,
-                t0.elapsed()
-            );
-
-            // Present the already-painted first frame (built by the initial
-            // `create_effect` run in `run_windows`, before this window
-            // existed).
-            {
-                let frame = spec.frame.borrow();
-                let pixmap = &frame.painter.pixmap;
-                presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
+                Presenter::Gpu(GpuState::new(
+                    window.clone(),
+                    instance,
+                    spec.options.transparent,
+                ))
             }
-            log::debug!("creamui-render: first frame presented: {:?}", t0.elapsed());
+            RenderBackend::Cpu => Presenter::Cpu(CpuState::new(window.clone())),
+        };
+        #[cfg(target_arch = "wasm32")]
+        let mut presenter = Presenter::Web(WebState::new(window.clone()));
+        log::debug!(
+            "creamui-render: {:?} presenter ready: {:?}",
+            spec.options.backend,
+            t0.elapsed()
+        );
 
-            *spec.shared_window.borrow_mut() = Some(window.clone());
-            (spec.on_window_ready)(WindowHandle {
-                window: spec.shared_window.clone(),
-                theme: spec.theme_provider.clone(),
-                close_requested: spec.close_requested.clone(),
-            });
-
-            let window_id = window.id();
-            let frameless_resizable = !spec.options.decorations && spec.options.resizable;
-            self.windows.insert(
-                window_id,
-                WindowState {
-                    viewport: spec.viewport,
-                    scale_factor: spec.scale_factor,
-                    frame: spec.frame,
-                    window: spec.shared_window.clone(),
-                    close_requested: spec.close_requested,
-                    frameless_resizable,
-                    presenter: Some(presenter),
-                    pointer_pos: Point::default(),
-                    modifiers: ModifiersState::default(),
-                    focused: spec.focused,
-                    caret_visible: spec.caret_visible,
-                    next_blink: Instant::now() + CARET_BLINK_INTERVAL,
-                    next_animation: Instant::now(),
-                    next_resize_render: Instant::now(),
-                    resize_pending: false,
-                    pending_viewport: None,
-                    current_cursor: CursorIcon::Default,
-                    hovered: None,
-                    dragging: None,
-                    repaint: spec.repaint,
-                    repaint_scene: spec.repaint_scene,
-                    repaint_light: spec.repaint_light,
-                    render: spec.render,
-                    dirty: spec.dirty,
-                    scene_dirty: spec.scene_dirty,
-                    _effect: spec._effect,
-                    t_run: t0,
-                    first_present_logged: false,
-                },
-            );
+        // Present the already-painted first frame (built by the initial
+        // `create_effect` run in `run_windows`, before this window
+        // existed).
+        {
+            let frame = spec.frame.borrow();
+            let pixmap = &frame.painter.pixmap;
+            presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
         }
+        log::debug!("creamui-render: first frame presented: {:?}", t0.elapsed());
+
+        *spec.shared_window.borrow_mut() = Some(window.clone());
+        (spec.on_window_ready)(WindowHandle {
+            window: spec.shared_window.clone(),
+            theme: spec.theme_provider.clone(),
+            close_requested: spec.close_requested.clone(),
+            app: self.app.clone(),
+        });
+
+        let window_id = window.id();
+        let frameless_resizable = !spec.options.decorations && spec.options.resizable;
+        self.windows.insert(
+            window_id,
+            WindowState {
+                viewport: spec.viewport,
+                scale_factor: spec.scale_factor,
+                frame: spec.frame,
+                window: spec.shared_window.clone(),
+                close_requested: spec.close_requested,
+                close_behavior: spec.options.close_behavior,
+                frameless_resizable,
+                presenter: Some(presenter),
+                pointer_pos: Point::default(),
+                modifiers: ModifiersState::default(),
+                focused: spec.focused,
+                caret_visible: spec.caret_visible,
+                next_blink: Instant::now() + CARET_BLINK_INTERVAL,
+                next_animation: Instant::now(),
+                next_resize_render: Instant::now(),
+                resize_pending: false,
+                pending_viewport: None,
+                current_cursor: CursorIcon::Default,
+                hovered: None,
+                dragging: None,
+                repaint: spec.repaint,
+                repaint_scene: spec.repaint_scene,
+                repaint_light: spec.repaint_light,
+                render: spec.render,
+                dirty: spec.dirty,
+                scene_dirty: spec.scene_dirty,
+                _effect: spec._effect,
+                t_run: t0,
+                first_present_logged: false,
+            },
+        );
+    }
+}
+
+enum AppEvent {
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    TrayMenu(String),
+}
+
+impl ApplicationHandler<AppEvent> for AppHandler {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(all(feature = "tray", target_os = "linux"))]
+        if self.trays.is_empty() {
+            self.trays = std::mem::take(&mut self.pending_trays)
+                .into_iter()
+                .enumerate()
+                .map(|(index, tray)| {
+                    tray.install(index, self.proxy.clone())
+                        .expect("creamui-render: failed to create system tray icon")
+                })
+                .collect();
+        }
+        if !self.started {
+            self.started = true;
+            if let Some(on_started) = self.on_started.take() {
+                on_started(self.app.clone());
+            }
+        }
+        let pending = std::mem::take(&mut self.pending);
+        for spec in pending {
+            self.create_window(event_loop, spec);
+        }
+        self.drain_app_commands(event_loop);
     }
 
     fn window_event(
@@ -1028,6 +1336,20 @@ impl ApplicationHandler for AppHandler {
         event: WindowEvent,
     ) {
         if matches!(event, WindowEvent::CloseRequested) {
+            if self
+                .windows
+                .get(&window_id)
+                .is_some_and(|state| state.close_behavior == CloseBehavior::Hide)
+            {
+                if let Some(window) = self
+                    .windows
+                    .get(&window_id)
+                    .and_then(|state| state.window.borrow().as_ref().cloned())
+                {
+                    window.set_visible(false);
+                }
+                return;
+            }
             self.close_window(event_loop, window_id);
             return;
         }
@@ -1044,7 +1366,29 @@ impl ApplicationHandler for AppHandler {
         }
     }
 
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+        #[cfg(not(all(feature = "tray", target_os = "linux")))]
+        let _ = &event;
+        #[cfg(all(feature = "tray", target_os = "linux"))]
+        match event {
+            AppEvent::TrayMenu(id) => {
+                for tray in &self.trays {
+                    if let Some(action) = tray.actions.get(&id) {
+                        action(&self.app);
+                        break;
+                    }
+                }
+            }
+        }
+        self.drain_app_commands(event_loop);
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.drain_app_commands(event_loop);
+        if self.commands.borrow().exit_requested {
+            event_loop.exit();
+            return;
+        }
         let close_requests: Vec<WindowId> = self
             .windows
             .iter()
@@ -1054,6 +1398,7 @@ impl ApplicationHandler for AppHandler {
             self.close_window(event_loop, window_id);
         }
         if self.windows.is_empty() {
+            event_loop.set_control_flow(ControlFlow::Wait);
             return;
         }
 
@@ -1099,12 +1444,45 @@ impl ApplicationHandler for AppHandler {
 }
 
 impl AppHandler {
+    fn drain_app_commands(&mut self, event_loop: &ActiveEventLoop) {
+        let (windows, exit_requested) = {
+            let mut commands = self.commands.borrow_mut();
+            (
+                std::mem::take(&mut commands.windows),
+                commands.exit_requested,
+            )
+        };
+        if exit_requested {
+            event_loop.exit();
+            return;
+        }
+
+        for mut pending in windows {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                pending.options.backend = RenderBackend::resolve(pending.options.backend);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                pending.options.backend = RenderBackend::Gpu;
+            }
+            let spec = build_window_spec(
+                self.next_window_index,
+                pending,
+                self.dump_frame_path.as_deref(),
+                true,
+            );
+            self.next_window_index += 1;
+            self.create_window(event_loop, spec);
+        }
+    }
+
     fn close_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
         log::debug!("creamui-render: close requested for window {window_id:?}");
         if let Some(state) = self.windows.remove(&window_id) {
             state.window.borrow_mut().take();
         }
-        if self.windows.is_empty() {
+        if self.windows.is_empty() && self.exit_when_last_window_closes {
             event_loop.exit();
         }
     }
@@ -1134,10 +1512,20 @@ pub fn run(
         .run();
 }
 
-fn run_windows(specs: Vec<PendingWindow>, on_panic: Option<PanicHandler>) {
+fn run_windows(
+    specs: Vec<PendingWindow>,
+    on_panic: Option<PanicHandler>,
+    on_started: Option<Box<dyn FnOnce(AppHandle)>>,
+    exit_when_last_window_closes: bool,
+    #[cfg(all(feature = "tray", target_os = "linux"))] trays: Vec<TrayBuilder>,
+) {
+    #[cfg(all(feature = "tray", target_os = "linux"))]
+    let has_tray = !trays.is_empty();
+    #[cfg(not(all(feature = "tray", target_os = "linux")))]
+    let has_tray = false;
     assert!(
-        !specs.is_empty(),
-        "creamui-render: AppBuilder::run() called with no windows queued"
+        !specs.is_empty() || on_started.is_some() || !exit_when_last_window_closes || has_tray,
+        "creamui-render: AppBuilder::run() needs a window, on_started handler, tray, or keep_running()"
     );
 
     if let Some(handler) = on_panic {
@@ -1179,6 +1567,7 @@ fn run_windows(specs: Vec<PendingWindow>, on_panic: Option<PanicHandler>) {
 
     let dump_frame_path = std::env::var("CUI_DUMP_FRAME").ok();
     let multiple_windows = specs.len() > 1;
+    let initial_window_count = specs.len();
 
     let pending: Vec<WindowSpec> = specs
         .into_iter()
@@ -1192,7 +1581,9 @@ fn run_windows(specs: Vec<PendingWindow>, on_panic: Option<PanicHandler>) {
         "creamui-render: before EventLoop::new: {:?}",
         t_run.elapsed()
     );
-    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let event_loop = EventLoop::<AppEvent>::with_user_event()
+        .build()
+        .expect("failed to create event loop");
     log::debug!("creamui-render: event loop created: {:?}", t_run.elapsed());
     event_loop.set_control_flow(ControlFlow::Wait);
 
@@ -1205,9 +1596,30 @@ fn run_windows(specs: Vec<PendingWindow>, on_panic: Option<PanicHandler>) {
         Rc::new(instance)
     });
 
+    let commands = Rc::new(RefCell::new(AppCommands {
+        windows: Vec::new(),
+        exit_requested: false,
+    }));
+    let app = AppHandle {
+        commands: commands.clone(),
+    };
     let handler = AppHandler {
         pending,
+        commands,
+        app,
+        on_started,
+        started: false,
+        exit_when_last_window_closes,
+        dump_frame_path,
+        // Dynamic windows continue after the initially queued specs.
+        next_window_index: initial_window_count,
         windows: HashMap::new(),
+        #[cfg(all(feature = "tray", target_os = "linux"))]
+        pending_trays: trays,
+        #[cfg(all(feature = "tray", target_os = "linux"))]
+        trays: Vec::new(),
+        #[cfg(all(feature = "tray", target_os = "linux"))]
+        proxy: event_loop.create_proxy(),
         #[cfg(not(target_arch = "wasm32"))]
         gpu_instance,
     };
@@ -1506,6 +1918,7 @@ mod tests {
                     frame: spec.frame,
                     window: spec.shared_window,
                     close_requested: spec.close_requested,
+                    close_behavior: CloseBehavior::Close,
                     frameless_resizable: false,
                     presenter: None,
                     pointer_pos: Point::default(),

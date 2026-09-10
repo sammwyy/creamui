@@ -1,0 +1,26 @@
+[package]
+name = "creamui-tray"
+description = "Native system tray backends for CreamUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["gui", "tray", "status-notifier", "desktop"]
+categories = ["gui"]
+
+[features]
+default = []
+# Linux backend using the freedesktop StatusNotifierItem D-Bus protocol.
+# It is pure Rust and does not require GTK/AppIndicator.
+linux-status-notifier = ["dep:ksni"]
+# Reserved backend switches. They intentionally pull in no dependency until
+# their native implementation is added.
+linux-gtk = []
+windows-native = []
+macos-native = []
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", features = ["blocking"], optional = true }

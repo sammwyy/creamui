@@ -1,0 +1,12 @@
+[package]
+name = "tray"
+publish = false
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+creamui-core = { workspace = true }
+creamui-reactive = { workspace = true }
+creamui-render = { workspace = true, features = ["tray"] }
+creamui-theme = { workspace = true }
+creamui-widgets = { workspace = true }

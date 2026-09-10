@@ -19,4 +19,8 @@ mod window;
 pub use backend::RenderBackend;
 pub use devtools::{install_devtools, Devtools, WindowDevtools};
 pub use painter::SkiaPainter;
-pub use window::{run, AppBuilder, PanicDetails, WindowHandle, WindowOptions};
+pub use window::{
+    run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, WindowHandle, WindowOptions,
+};
+#[cfg(all(feature = "tray", target_os = "linux"))]
+pub use window::{TrayBuilder, TrayIcon};

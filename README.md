@@ -104,6 +104,7 @@ faster, unoptimized build while iterating.
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
+- [Styling scope](docs/styling.md)
 - [Components](docs/components.md)
 - [Theming](docs/theming.md)
 - [Images](docs/images.md)

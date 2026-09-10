@@ -132,6 +132,8 @@ typed `ColorValue` and `LengthValue` values; widgets and the renderer never
 interpret CSS strings.
 Semantic `ColorToken`s are resolved against the window's current color scheme
 at paint time, so a stored style follows theme changes without being rebuilt.
+See the [styling scope](styling.md) for the supported declaration boundary and
+the CSS features intentionally outside it.
 
 Every built-in component implements the `Styled` extension trait. A component
 does not need its own `width`, `background`, or `font_size` forwarders:

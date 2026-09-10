@@ -1,6 +1,35 @@
 use super::*;
 use crate::layout::{column, fixed, padding, row};
-use creamui_core::layout::{AlignItems, Dimension, JustifyContent, Position, Style};
+use creamui_core::layout::{
+    AlignItems, Dimension, JustifyContent, LengthPercentageAuto, Position, Style,
+};
+
+/// An invisible portal-sized hit target placed behind a transient popup.
+///
+/// Absolute children are painted in CreamUI's portal pass, so a normal
+/// full-parent overlay would only cover the trigger's small layout box. This
+/// deliberately oversized layer covers the window instead, allowing a popup
+/// to dismiss reliably when its user clicks anywhere outside it.
+pub(crate) fn portal_dismiss_layer(on_dismiss: impl Fn() + 'static) -> BoxedWidget {
+    const EXTENT: f32 = 1_000_000.0;
+    Box::new(RawButton::new(
+        Style {
+            position: Position::Absolute,
+            inset: creamui_core::layout::Rect {
+                left: LengthPercentageAuto::Length(-EXTENT),
+                right: LengthPercentageAuto::Auto,
+                top: LengthPercentageAuto::Length(-EXTENT),
+                bottom: LengthPercentageAuto::Auto,
+            },
+            size: creamui_core::layout::Size {
+                width: Dimension::Length(EXTENT * 2.0),
+                height: Dimension::Length(EXTENT * 2.0),
+            },
+            ..Default::default()
+        },
+        on_dismiss,
+    ))
+}
 
 /// A full-parent dimmer used as the base of modal dialogs and transient
 /// overlays. Place it after ordinary application content so it paints and

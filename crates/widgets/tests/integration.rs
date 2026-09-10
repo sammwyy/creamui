@@ -13,12 +13,14 @@ use creamui_widgets::raw::{
     RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawView, TextSelection,
 };
 use creamui_widgets::themed::{
-    tab_styles, Button, Checkbox, Link, ListBox, ListView, Overlay, Popover, Pre, ProgressBar,
-    ProgressRing, ScrollView, Select, Slider, TabColors, TabSizing, Table, Tabs, Text, TextArea,
-    TextInput, TreeNode, TreeView,
+    tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Link, ListBox, ListView, Overlay,
+    Popover, Pre, ProgressBar, ProgressRing, ScrollView, Select, Slider, TabColors, TabSizing,
+    Table, Tabs, Text, TextArea, TextInput, TreeNode, TreeView,
 };
 use creamui_widgets::TableColumn;
-use creamui_widgets::{ScrollController, SelectController, TreeController};
+use creamui_widgets::{
+    ColorPickerController, DateTimeController, ScrollController, SelectController, TreeController,
+};
 
 #[derive(Default)]
 struct RecordingPainter {
@@ -313,6 +315,64 @@ fn select_is_controlled_and_its_popup_options_are_clickable() {
             "clicking an option must not fall through to content behind it"
         );
         assert!(!controller.is_open());
+
+        controller.set_open(true);
+        let open = render_frame(build(), size, &mut painter);
+        // The transparent portal layer sits behind the popup but above the
+        // application, so a click elsewhere dismisses it.
+        open.hit_test(Point { x: 300.0, y: 180.0 }).unwrap()();
+        assert!(
+            !controller.is_open(),
+            "clicking outside an open select must dismiss its portal"
+        );
+    });
+}
+
+#[test]
+fn picker_portals_dismiss_on_an_outside_click() {
+    let theme = Theme::dark();
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+        let date = DateTimeController::default();
+        let color = ColorPickerController::default();
+        date.set_open(true);
+        color.set_open(true);
+        let build = || {
+            Box::new(
+                RawView::new(creamui_widgets::layout::row(20.0))
+                    .child(Box::new(DateTimePicker::controlled(&date)))
+                    .child(Box::new(ColorPicker::controlled(
+                        Color::rgb(12, 34, 56),
+                        &color,
+                        |_| {},
+                    ))),
+            ) as creamui_core::BoxedWidget
+        };
+        let mut painter = RecordingPainter::default();
+        let scene = render_frame(
+            build(),
+            Size {
+                width: 700.0,
+                height: 420.0,
+            },
+            &mut painter,
+        );
+        // Both popups are at the left of their fields; this point is in
+        // neither popup and must reach the topmost dismiss layer.
+        scene.hit_test(Point { x: 650.0, y: 400.0 }).unwrap()();
+        assert!(!color.is_open());
+        // The later color picker was topmost here, so rebuild and dismiss
+        // the remaining date picker on a subsequent outside click.
+        let scene = render_frame(
+            build(),
+            Size {
+                width: 700.0,
+                height: 420.0,
+            },
+            &mut painter,
+        );
+        scene.hit_test(Point { x: 650.0, y: 400.0 }).unwrap()();
+        assert!(!date.is_open());
     });
 }
 

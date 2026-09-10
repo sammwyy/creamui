@@ -1018,6 +1018,7 @@ impl WindowState {
                 if let Some(handler) = click_handler {
                     log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
                     handler();
+                    (self.render)();
                 }
             }
             WindowEvent::MouseInput {

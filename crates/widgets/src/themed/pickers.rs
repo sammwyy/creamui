@@ -401,15 +401,19 @@ impl Widget for DateTimePicker {
                 RawText::new("Done", theme.selection_text, 12.).align(TextAlign::Center),
             ));
             content = content.child(Box::new(done));
-            vec![Box::new(
-                Popover::new(popup_style(
-                    self.popup_width,
-                    44.,
-                    theme.spacing_medium,
-                    theme.spacing_medium,
-                ))
-                .child(Box::new(content)),
-            ) as BoxedWidget]
+            let dismiss = self.controller.clone();
+            vec![
+                super::portal_dismiss_layer(move || dismiss.set_open(false)),
+                Box::new(
+                    Popover::new(popup_style(
+                        self.popup_width,
+                        44.,
+                        theme.spacing_medium,
+                        theme.spacing_medium,
+                    ))
+                    .child(Box::new(content)),
+                ) as BoxedWidget,
+            ]
         }
     }
     fn focusable(&self) -> bool {
@@ -722,19 +726,23 @@ impl Widget for ColorPicker {
             .child(Box::new(popup_button("Done", 64., move || {
                 close.set_open(false)
             })));
-            vec![Box::new(
-                Popover::new(popup_style(
-                    popup_width,
-                    44.,
-                    theme.spacing_medium,
-                    theme.spacing_medium,
-                ))
-                .child(Box::new(
-                    RawView::new(column(theme.spacing_medium))
-                        .child(Box::new(picker))
-                        .child(Box::new(summary)),
-                )),
-            ) as BoxedWidget]
+            let dismiss = self.controller.clone();
+            vec![
+                super::portal_dismiss_layer(move || dismiss.set_open(false)),
+                Box::new(
+                    Popover::new(popup_style(
+                        popup_width,
+                        44.,
+                        theme.spacing_medium,
+                        theme.spacing_medium,
+                    ))
+                    .child(Box::new(
+                        RawView::new(column(theme.spacing_medium))
+                            .child(Box::new(picker))
+                            .child(Box::new(summary)),
+                    )),
+                ) as BoxedWidget,
+            ]
         }
     }
     fn focusable(&self) -> bool {

@@ -48,12 +48,12 @@ homepage = "https://github.com/sammwyy/creamui"
 [workspace.dependencies]
 creamui-reactive = { version = "0.1.1", path = "crates/reactive" }
 creamui = { version = "0.1.1", path = "crates/creamui" }
-creamui-core = { version = "0.1.1", path = "crates/core" }
+creamui-core = { version = "0.1.2", path = "crates/core" }
 creamui-theme = { version = "0.1.1", path = "crates/theme" }
 creamui-fonts = { version = "0.1.1", path = "crates/fonts" }
 creamui-widgets = { version = "0.1.1", path = "crates/widgets" }
 creamui-image = { version = "0.1.1", path = "crates/image" }
-creamui-render = { version = "0.1.1", path = "crates/render" }
+creamui-render = { version = "0.1.2", path = "crates/render" }
 creamui-tray = { version = "0.1.1", path = "crates/tray" }
 creamui-devtools = { version = "0.1.1", path = "crates/devtools" }
 creamui-jsx = { version = "0.1.1", path = "crates/jsx" }

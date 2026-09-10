@@ -1,7 +1,7 @@
 [package]
 name = "creamui-core"
 description = "CreamUI's widget tree, layout, and painting abstractions"
-version.workspace = true
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

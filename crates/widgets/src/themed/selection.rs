@@ -186,7 +186,11 @@ impl Widget for Select {
             item.focus_color = Some(self.theme.accent);
             popup = popup.child(Box::new(item));
         }
-        vec![Box::new(popup)]
+        let dismiss = self.controller.clone();
+        vec![
+            super::portal_dismiss_layer(move || dismiss.set_open(false)),
+            Box::new(popup),
+        ]
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         let controller = self.controller.clone();

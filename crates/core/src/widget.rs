@@ -116,12 +116,24 @@ pub trait Painter {
     /// for `id`, sized and positioned at `rect`. Backends without layer
     /// support no-op, so paint calls keep targeting whatever surface was
     /// already active.
-    fn push_layer(&mut self, _id: u64, _rect: Rect) {}
+    ///
+    /// `fresh` marks a full (non-animation-only) paint pass, where the
+    /// surface must be reseeded from whatever is currently behind `rect` —
+    /// otherwise a backend that seeds from a cached backdrop (to avoid
+    /// re-deriving it on every animation tick) must keep reusing the one
+    /// captured the last time `fresh` was true, since the destination isn't
+    /// repainted from scratch in between.
+    fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool) {}
 
     /// Ends the redirect started by [`Painter::push_layer`], compositing the
     /// offscreen surface onto the surface that was active before the
     /// matching `push_layer`.
     fn pop_layer(&mut self) {}
+
+    /// Releases whatever a backend cached for `id` across `push_layer`
+    /// calls. Called once a widget stops being promoted to its own layer,
+    /// so a backdrop/surface cache doesn't outlive the animation it was for.
+    fn forget_layer(&mut self, _id: u64) {}
 
     /// Drains the window-space rects composited by [`Painter::pop_layer`]
     /// since the last call to this method.

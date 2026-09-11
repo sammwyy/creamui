@@ -28,6 +28,11 @@ struct Instance {
     layer_id: u64,
     animating_streak: u8,
     is_layer: bool,
+    /// `is_layer`, or true for any descendant — refreshed bottom-up on every
+    /// full (non-`animated_only`) paint. Lets an animated-only tick prune a
+    /// whole subtree with nothing promoted in it before even computing its
+    /// layout, instead of walking every static node just to find nothing.
+    has_animated_descendant: bool,
 }
 
 fn remove_instance(tree: &mut Tree, instance: Instance) {
@@ -86,6 +91,7 @@ fn reconcile(
             layer_id,
             animating_streak: 0,
             is_layer: false,
+            has_animated_descendant: false,
         };
     };
 
@@ -120,6 +126,7 @@ fn reconcile(
         layer_id: old.layer_id,
         animating_streak: old.animating_streak,
         is_layer: old.is_layer,
+        has_animated_descendant: old.has_animated_descendant,
     }
 }
 
@@ -158,6 +165,14 @@ struct FocusContext {
     counter: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Counts `paint_instance` calls, reset per-test — the only way to
+    /// observe from outside that a subtree was skipped entirely rather
+    /// than walked-but-not-painted (see the `_prunes_` test below).
+    static PAINT_INSTANCE_VISITS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_instance(
     tree: &Tree,
@@ -170,6 +185,14 @@ fn paint_instance(
     mode: PaintMode,
     animated_only: bool,
 ) {
+    #[cfg(test)]
+    PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
+
+    // Nothing here or below is promoted, so an animated-only tick has no
+    // work in this subtree — skip it before even computing layout.
+    if animated_only && !instance.is_layer && !instance.has_animated_descendant {
+        return;
+    }
     let layout = tree
         .layout(instance.node_id)
         .expect("layout was computed for every instantiated node");
@@ -214,9 +237,17 @@ fn paint_instance(
         let resolved = instance.style.resolve(states);
         let colors = painter.color_scheme();
         let radius = resolved.paint.corner_radius.unwrap_or(0.0);
-        layer_active = instance.is_layer;
+        // A not-yet-promoted node is only ever visited on a full (non-
+        // `animated_only`) pass — see the pruning check above — so one call
+        // early is always a full pass too, with `clear()` already behind
+        // it. Waiting until `is_layer` itself flips would mean the *actual*
+        // first `push_layer` could land on a later animated-only tick
+        // instead, capturing a backdrop still contaminated by this widget's
+        // own last direct paint rather than the clean ambient background.
+        layer_active =
+            instance.is_layer || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK;
         if layer_active {
-            painter.push_layer(instance.layer_id, rect);
+            painter.push_layer(instance.layer_id, rect, !animated_only);
         }
         if let Some(background) = resolved.paint.background {
             painter.fill_rect(rect, background.resolve(&colors), radius);
@@ -231,6 +262,7 @@ fn paint_instance(
             instance.animating_streak = instance.animating_streak.saturating_sub(1);
             if instance.animating_streak == 0 {
                 instance.is_layer = false;
+                painter.forget_layer(instance.layer_id);
             }
         }
         // Borders and outlines sit over component-specific content, matching
@@ -356,6 +388,10 @@ fn paint_instance(
     }
     if clips {
         painter.pop_clip();
+    }
+    if !animated_only {
+        instance.has_animated_descendant =
+            instance.is_layer || instance.children.iter().any(|c| c.has_animated_descendant);
     }
     if layer_active {
         painter.pop_layer();
@@ -835,7 +871,7 @@ mod tests {
         fn take_animated(&mut self) -> bool {
             std::mem::take(&mut self.node_animated)
         }
-        fn push_layer(&mut self, _id: u64, _rect: Rect) {
+        fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool) {
             self.push_layer_calls += 1;
         }
     }
@@ -923,5 +959,92 @@ mod tests {
             "a non-animating sibling should not repaint outside a full render"
         );
         assert!(painter.push_layer_calls > 0);
+    }
+
+    struct AbsoluteWrapper {
+        child: Option<BoxedWidget>,
+    }
+    impl crate::widget::Widget for AbsoluteWrapper {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                position: taffy::style::Position::Absolute,
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            self.child.take().into_iter().collect()
+        }
+    }
+
+    #[test]
+    fn repaint_animated_prunes_subtrees_without_any_layer() {
+        let animated_count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |animated_count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![
+                    Box::new(CountingWidget {
+                        count: animated_count,
+                        animate: true,
+                    }),
+                    // A large, entirely static subtree with nothing promoted
+                    // anywhere inside it.
+                    Box::new(Branch { child_count: 200 }),
+                ],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
+        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
+        assert_eq!(animated_count.get(), 2);
+
+        PAINT_INSTANCE_VISITS.with(|c| c.set(0));
+        renderer.repaint_animated(&mut painter, None, false);
+
+        let visits = PAINT_INSTANCE_VISITS.with(|c| c.get());
+        assert!(
+            visits < 20,
+            "an animated-only pass should prune the 200-node static subtree \
+             entirely instead of walking it looking for nothing; visited {visits} nodes"
+        );
+        assert_eq!(
+            animated_count.get(),
+            3,
+            "the promoted widget must still repaint despite the pruning"
+        );
+    }
+
+    #[test]
+    fn repaint_animated_reaches_promoted_layer_under_absolute_ancestor() {
+        let animated_count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |animated_count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(AbsoluteWrapper {
+                    child: Some(Box::new(CountingWidget {
+                        count: animated_count,
+                        animate: true,
+                    })),
+                })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
+        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
+        assert_eq!(animated_count.get(), 2);
+
+        renderer.repaint_animated(&mut painter, None, false);
+        assert_eq!(
+            animated_count.get(),
+            3,
+            "a promoted layer nested under an absolute ancestor — skipped by \
+             the Flow pass — must still be reached and repainted by the Absolute pass"
+        );
     }
 }

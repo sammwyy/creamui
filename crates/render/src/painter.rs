@@ -66,6 +66,13 @@ pub struct SkiaPainter {
     /// know about layers.
     origin: Point,
     layer_pool: HashMap<u64, Pixmap>,
+    /// A snapshot of whatever sat behind a layer's `rect` at the last
+    /// `fresh` `push_layer`, reused on every animation-only tick in between.
+    /// Without this, seeding the layer's own surface from itself would
+    /// re-blend each tick's content onto the *previous* tick's result
+    /// instead of the true backdrop, leaking stale pixels wherever the new
+    /// content doesn't happen to cover them (e.g. scrolling text).
+    backdrop_pool: HashMap<u64, Pixmap>,
     layer_stack: Vec<LayerFrame>,
     /// Window-space rects touched by a layer composite since the last
     /// [`SkiaPainter::take_damage`].
@@ -91,6 +98,7 @@ impl SkiaPainter {
             mask_pool: Vec::new(),
             origin: Point::default(),
             layer_pool: HashMap::new(),
+            backdrop_pool: HashMap::new(),
             layer_stack: Vec::new(),
             damage: Vec::new(),
         }
@@ -102,6 +110,34 @@ impl SkiaPainter {
             y: rect.y - self.origin.y,
             ..rect
         }
+    }
+
+    /// Copies the `phys_w` x `phys_h` region of the current paint target
+    /// that a layer at `rect` sits over, for seeding that layer's surface.
+    /// Out-of-bounds source pixels (partially off-window/off-layer) stay
+    /// transparent, matching a freshly allocated `Pixmap`.
+    fn capture_backdrop(&self, rect: Rect, phys_w: u32, phys_h: u32) -> Pixmap {
+        let ox = ((rect.x - self.origin.x) * self.scale).round() as i64;
+        let oy = ((rect.y - self.origin.y) * self.scale).round() as i64;
+        let src_w = self.pixmap.width() as i64;
+        let src_h = self.pixmap.height() as i64;
+        let src = self.pixmap.pixels();
+        let mut backdrop = Pixmap::new(phys_w, phys_h).expect("non-zero pixmap size");
+        let dst = backdrop.pixels_mut();
+        for ly in 0..phys_h as i64 {
+            let py = oy + ly;
+            if py < 0 || py >= src_h {
+                continue;
+            }
+            for lx in 0..phys_w as i64 {
+                let px = ox + lx;
+                if px < 0 || px >= src_w {
+                    continue;
+                }
+                dst[(ly * phys_w as i64 + lx) as usize] = src[(py * src_w + px) as usize];
+            }
+        }
+        backdrop
     }
 
     /// A zero-filled, `width` x `height` [`Mask`], reusing a pooled one when
@@ -332,15 +368,27 @@ impl Painter for SkiaPainter {
     fn begin_animated_frame(&mut self) {
         self.animated = false;
     }
-    fn push_layer(&mut self, id: u64, rect: Rect) {
+    fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool) {
         let scale = self.scale;
         let phys_w = ((rect.width * scale).round() as u32).max(1);
         let phys_h = ((rect.height * scale).round() as u32).max(1);
+
+        let cached_backdrop_matches = matches!(
+            self.backdrop_pool.get(&id),
+            Some(p) if p.width() == phys_w && p.height() == phys_h
+        );
+        let backdrop = if fresh || !cached_backdrop_matches {
+            self.capture_backdrop(rect, phys_w, phys_h)
+        } else {
+            self.backdrop_pool.remove(&id).expect("checked above")
+        };
+
         let mut layer_pixmap = match self.layer_pool.remove(&id) {
             Some(pixmap) if pixmap.width() == phys_w && pixmap.height() == phys_h => pixmap,
             _ => Pixmap::new(phys_w, phys_h).expect("non-zero pixmap size"),
         };
-        layer_pixmap.fill(tiny_skia::Color::from_rgba(0.0, 0.0, 0.0, 0.0).expect("valid color"));
+        layer_pixmap.data_mut().copy_from_slice(backdrop.data());
+        self.backdrop_pool.insert(id, backdrop);
 
         let mut layer_clip_stack = Vec::new();
         if let Some(parent_mask) = self.clip_stack.last() {
@@ -389,15 +437,29 @@ impl Painter for SkiaPainter {
         self.origin = frame.origin;
         let x = ((frame.rect.x - self.origin.x) * self.scale).round() as i32;
         let y = ((frame.rect.y - self.origin.y) * self.scale).round() as i32;
+        // `Source`, not the default `SourceOver`: the layer was seeded from
+        // its own backdrop before painting, so it's a complete snapshot of
+        // this rect — a transparent layer pixel means "the backdrop was
+        // transparent here", not "leave whatever's already composited".
+        // Blending would leave stale content wherever this tick's paint
+        // doesn't happen to re-cover what the last tick drew.
+        let composite = PixmapPaint {
+            blend_mode: tiny_skia::BlendMode::Source,
+            ..PixmapPaint::default()
+        };
         self.pixmap.draw_pixmap(
             x,
             y,
             finished.as_ref(),
-            &PixmapPaint::default(),
+            &composite,
             Transform::identity(),
             self.clip_stack.last(),
         );
         self.layer_pool.insert(frame.id, finished);
+    }
+    fn forget_layer(&mut self, id: u64) {
+        self.layer_pool.remove(&id);
+        self.backdrop_pool.remove(&id);
     }
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, width: f32) {
         let from = Point {
@@ -703,5 +765,122 @@ mod tests {
         assert!(painter
             .custom_fonts
             .contains_key(&("Custom Family".to_string(), true)));
+    }
+
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct HalfSplit {
+        left: Rc<Cell<bool>>,
+    }
+    impl creamui_core::Widget for HalfSplit {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            painter.animation_time();
+            let half = Rect {
+                x: if self.left.get() {
+                    rect.x
+                } else {
+                    rect.x + rect.width / 2.0
+                },
+                y: rect.y,
+                width: rect.width / 2.0,
+                height: rect.height,
+            };
+            painter.fill_rect(half, Color::rgb(255, 0, 0), 0.0);
+        }
+    }
+
+    #[test]
+    fn promoted_layer_does_not_leak_the_other_ticks_content() {
+        use creamui_core::Renderer;
+
+        let left = Rc::new(Cell::new(true));
+        let build = |left: Rc<Cell<bool>>| -> creamui_core::BoxedWidget {
+            Box::new(HalfSplit { left })
+        };
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        // Two full passes with a `clear()` between them, matching a real
+        // window's render loop — the second one is where the promotion
+        // streak crosses the threshold and starts using a layer.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(left.clone()), viewport, &mut painter);
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(left.clone()), viewport, &mut painter);
+        assert_eq!(painter.pixmap.pixel(4, 5).unwrap().red(), 255);
+        assert_eq!(painter.pixmap.pixel(15, 5).unwrap().alpha(), 0);
+
+        left.set(false);
+        renderer.repaint_animated(&mut painter, None, false);
+        assert_eq!(
+            painter.pixmap.pixel(15, 5).unwrap().red(),
+            255,
+            "the newly painted half should show up"
+        );
+        assert_eq!(
+            painter.pixmap.pixel(4, 5).unwrap().alpha(),
+            0,
+            "the half this tick didn't paint must revert to the backdrop, \
+             not keep showing the other tick's content"
+        );
+
+        left.set(true);
+        renderer.repaint_animated(&mut painter, None, false);
+        assert_eq!(painter.pixmap.pixel(4, 5).unwrap().red(), 255);
+        assert_eq!(
+            painter.pixmap.pixel(15, 5).unwrap().alpha(),
+            0,
+            "switching back must not leave the previous tick's half behind"
+        );
+    }
+
+    #[test]
+    fn push_layer_with_no_cached_backdrop_falls_back_to_capturing_one() {
+        let mut painter = SkiaPainter::new(8, 8);
+        painter.clear(Color::rgba(10, 20, 30, 255));
+        // `fresh: false` with nothing cached yet for this id — the
+        // defensive path `push_layer` must still take instead of seeding
+        // from garbage.
+        painter.push_layer(
+            1,
+            Rect {
+                x: 2.0,
+                y: 2.0,
+                width: 4.0,
+                height: 4.0,
+            },
+            false,
+        );
+        painter.fill_rect(
+            Rect {
+                x: 2.0,
+                y: 2.0,
+                width: 2.0,
+                height: 4.0,
+            },
+            Color::rgb(255, 0, 0),
+            0.0,
+        );
+        painter.pop_layer();
+        assert_eq!(painter.pixmap.pixel(3, 3).unwrap().red(), 255);
+        // The untouched half of the layer came from the captured backdrop
+        // (the clear color), not a transparent hole.
+        let untouched = painter.pixmap.pixel(5, 3).unwrap();
+        assert_eq!((untouched.red(), untouched.green(), untouched.blue()), (10, 20, 30));
     }
 }

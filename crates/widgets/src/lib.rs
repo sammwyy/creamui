@@ -42,7 +42,7 @@ pub use controller::{
 };
 pub use raw::{
     DateTime, RawButton, RawCheckbox, RawColorPicker, RawDateTimePicker, RawFilePicker, RawLink,
-    RawListView, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider, RawSpinner,
+    RawListView, RawMarquee, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider, RawSpinner,
     RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput, RawView,
     TabIndicatorSide, TableColumn, TextSelection,
 };

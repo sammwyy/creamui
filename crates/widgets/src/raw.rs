@@ -128,6 +128,7 @@ mod button;
 mod controls;
 mod dataview;
 mod foundation;
+mod marquee;
 mod navigation;
 mod pickers;
 mod scroll;
@@ -139,6 +140,7 @@ pub use button::*;
 pub use controls::*;
 pub use dataview::*;
 pub use foundation::*;
+pub use marquee::*;
 pub use navigation::*;
 pub use pickers::*;
 pub use scroll::*;
@@ -166,6 +168,7 @@ impl_direct_styled!(
     RawFilePicker,
     RawLink,
     RawListView,
+    RawMarquee,
     RawPre,
     RawQuote,
     RawScrollView,

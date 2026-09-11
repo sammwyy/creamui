@@ -104,6 +104,38 @@ pub trait Painter {
     fn animation_time(&mut self) -> f32 {
         0.0
     }
+
+    /// Reports and resets whether [`Painter::animation_time`] was called
+    /// since the last call to this method. Used by the renderer to attribute
+    /// animation to the one widget that requested it, not the whole frame.
+    fn take_animated(&mut self) -> bool {
+        false
+    }
+
+    /// Redirects subsequent paint calls into an offscreen surface reserved
+    /// for `id`, sized and positioned at `rect`. Backends without layer
+    /// support no-op, so paint calls keep targeting whatever surface was
+    /// already active.
+    fn push_layer(&mut self, _id: u64, _rect: Rect) {}
+
+    /// Ends the redirect started by [`Painter::push_layer`], compositing the
+    /// offscreen surface onto the surface that was active before the
+    /// matching `push_layer`.
+    fn pop_layer(&mut self) {}
+
+    /// Drains the window-space rects composited by [`Painter::pop_layer`]
+    /// since the last call to this method.
+    fn take_damage(&mut self) -> Vec<Rect> {
+        Vec::new()
+    }
+
+    /// Resets whatever [`Painter::animation_time`] set for the *previous*
+    /// frame, mirroring what a full-window `clear()` does for the normal
+    /// render path. Called once before a [`crate::Renderer::repaint_animated`]
+    /// pass, which never clears, so a widget that stopped animating is
+    /// correctly observed as such instead of leaving the redraw scheduler
+    /// polling forever.
+    fn begin_animated_frame(&mut self) {}
     fn stroke_line(&mut self, from: Point, to: Point, color: creamui_theme::Color, width: f32) {
         let steps = ((to.x - from.x).abs().max((to.y - from.y).abs()) * 2.0)
             .ceil()

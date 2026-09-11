@@ -9,9 +9,20 @@ use creamui_fonts::FontWeight;
 use creamui_theme::{Color, ColorScheme};
 use fontdue::layout::HorizontalAlign;
 use std::collections::HashMap;
+use std::mem;
 use tiny_skia::{
     FilterQuality, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, PixmapRef, Stroke, Transform,
 };
+
+/// Saved state of whatever [`SkiaPainter`] was painting into before a
+/// [`Painter::push_layer`], restored by the matching [`Painter::pop_layer`].
+struct LayerFrame {
+    id: u64,
+    rect: Rect,
+    pixmap: Pixmap,
+    clip_stack: Vec<Mask>,
+    origin: Point,
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 type PainterInstant = std::time::Instant;
@@ -33,6 +44,12 @@ pub struct SkiaPainter {
     pub pointer: Option<Point>,
     pub press_origin: Option<Point>,
     pub animated: bool,
+    /// Like `animated`, but reset by [`Painter::take_animated`] rather than
+    /// [`SkiaPainter::clear`], so the renderer can attribute an
+    /// `animation_time` call to the one widget that made it without
+    /// disturbing the frame-level `animated` flag the window's redraw
+    /// scheduler reads.
+    node_animated: bool,
     started: PainterInstant,
     scale: f32,
     color_scheme: ColorScheme,
@@ -43,6 +60,16 @@ pub struct SkiaPainter {
     /// Popped masks, reused by [`SkiaPainter::take_mask`] instead of
     /// reallocating a window-sized buffer on every [`Painter::push_clip`].
     mask_pool: Vec<Mask>,
+    /// Offset subtracted from every incoming (window-space) coordinate
+    /// before rasterizing, so a [`Painter::push_layer`] can redirect drawing
+    /// into a small layer-local `Pixmap` without every draw call needing to
+    /// know about layers.
+    origin: Point,
+    layer_pool: HashMap<u64, Pixmap>,
+    layer_stack: Vec<LayerFrame>,
+    /// Window-space rects touched by a layer composite since the last
+    /// [`SkiaPainter::take_damage`].
+    damage: Vec<Rect>,
 }
 
 impl SkiaPainter {
@@ -56,11 +83,24 @@ impl SkiaPainter {
             pointer: None,
             press_origin: None,
             animated: false,
+            node_animated: false,
             started: PainterInstant::now(),
             scale: 1.0,
             color_scheme: ColorScheme::default(),
             clip_stack: Vec::new(),
             mask_pool: Vec::new(),
+            origin: Point::default(),
+            layer_pool: HashMap::new(),
+            layer_stack: Vec::new(),
+            damage: Vec::new(),
+        }
+    }
+
+    fn local(&self, rect: Rect) -> Rect {
+        Rect {
+            x: rect.x - self.origin.x,
+            y: rect.y - self.origin.y,
+            ..rect
         }
     }
 
@@ -103,6 +143,8 @@ impl SkiaPainter {
         // clear defensively rather than risk stale masks sized for the old pixmap.
         self.clip_stack.clear();
         self.mask_pool.clear();
+        self.layer_stack.clear();
+        self.origin = Point::default();
     }
 
     pub fn clear(&mut self, color: Color) {
@@ -150,6 +192,7 @@ impl SkiaPainter {
         bold: bool,
         italic: bool,
     ) {
+        let rect = self.local(rect);
         let horizontal_align = match align {
             TextAlign::Start => HorizontalAlign::Left,
             TextAlign::Center => HorizontalAlign::Center,
@@ -277,9 +320,94 @@ impl Painter for SkiaPainter {
     }
     fn animation_time(&mut self) -> f32 {
         self.animated = true;
+        self.node_animated = true;
         self.started.elapsed().as_secs_f32()
     }
+    fn take_animated(&mut self) -> bool {
+        mem::take(&mut self.node_animated)
+    }
+    fn take_damage(&mut self) -> Vec<Rect> {
+        mem::take(&mut self.damage)
+    }
+    fn begin_animated_frame(&mut self) {
+        self.animated = false;
+    }
+    fn push_layer(&mut self, id: u64, rect: Rect) {
+        let scale = self.scale;
+        let phys_w = ((rect.width * scale).round() as u32).max(1);
+        let phys_h = ((rect.height * scale).round() as u32).max(1);
+        let mut layer_pixmap = match self.layer_pool.remove(&id) {
+            Some(pixmap) if pixmap.width() == phys_w && pixmap.height() == phys_h => pixmap,
+            _ => Pixmap::new(phys_w, phys_h).expect("non-zero pixmap size"),
+        };
+        layer_pixmap.fill(tiny_skia::Color::from_rgba(0.0, 0.0, 0.0, 0.0).expect("valid color"));
+
+        let mut layer_clip_stack = Vec::new();
+        if let Some(parent_mask) = self.clip_stack.last() {
+            let ox = ((rect.x - self.origin.x) * scale).round() as i64;
+            let oy = ((rect.y - self.origin.y) * scale).round() as i64;
+            let parent_w = parent_mask.width() as i64;
+            let parent_h = parent_mask.height() as i64;
+            let mut mask = Mask::new(phys_w, phys_h).expect("non-zero pixmap size");
+            for ly in 0..phys_h as i64 {
+                let py = oy + ly;
+                for lx in 0..phys_w as i64 {
+                    let px = ox + lx;
+                    let v = if px >= 0 && py >= 0 && px < parent_w && py < parent_h {
+                        parent_mask.data()[(py * parent_w + px) as usize]
+                    } else {
+                        0
+                    };
+                    mask.data_mut()[(ly * phys_w as i64 + lx) as usize] = v;
+                }
+            }
+            layer_clip_stack.push(mask);
+        }
+
+        let saved_pixmap = mem::replace(&mut self.pixmap, layer_pixmap);
+        let saved_clip_stack = mem::replace(&mut self.clip_stack, layer_clip_stack);
+        let saved_origin = self.origin;
+        self.origin = Point {
+            x: rect.x,
+            y: rect.y,
+        };
+        self.damage.push(rect);
+        self.layer_stack.push(LayerFrame {
+            id,
+            rect,
+            pixmap: saved_pixmap,
+            clip_stack: saved_clip_stack,
+            origin: saved_origin,
+        });
+    }
+    fn pop_layer(&mut self) {
+        let Some(frame) = self.layer_stack.pop() else {
+            return;
+        };
+        let finished = mem::replace(&mut self.pixmap, frame.pixmap);
+        self.clip_stack = frame.clip_stack;
+        self.origin = frame.origin;
+        let x = ((frame.rect.x - self.origin.x) * self.scale).round() as i32;
+        let y = ((frame.rect.y - self.origin.y) * self.scale).round() as i32;
+        self.pixmap.draw_pixmap(
+            x,
+            y,
+            finished.as_ref(),
+            &PixmapPaint::default(),
+            Transform::identity(),
+            self.clip_stack.last(),
+        );
+        self.layer_pool.insert(frame.id, finished);
+    }
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, width: f32) {
+        let from = Point {
+            x: from.x - self.origin.x,
+            y: from.y - self.origin.y,
+        };
+        let to = Point {
+            x: to.x - self.origin.x,
+            y: to.y - self.origin.y,
+        };
         let mut path = PathBuilder::new();
         path.move_to(from.x * self.scale, from.y * self.scale);
         path.line_to(to.x * self.scale, to.y * self.scale);
@@ -332,6 +460,7 @@ impl Painter for SkiaPainter {
     }
 
     fn fill_rect(&mut self, rect: Rect, color: Color, corner_radius: f32) {
+        let rect = self.local(rect);
         let Some(path) =
             Self::rounded_rect_path(scale_rect(rect, self.scale), corner_radius * self.scale)
         else {
@@ -362,7 +491,7 @@ impl Painter for SkiaPainter {
         let Some(source) = PixmapRef::from_bytes(pixels, width, height) else {
             return;
         };
-        let rect = scale_rect(rect, self.scale);
+        let rect = scale_rect(self.local(rect), self.scale);
         let transform = Transform::from_row(
             rect.width / width as f32,
             0.0,
@@ -380,6 +509,7 @@ impl Painter for SkiaPainter {
     }
 
     fn stroke_rect(&mut self, rect: Rect, color: Color, width: f32, corner_radius: f32) {
+        let rect = self.local(rect);
         let Some(path) =
             Self::rounded_rect_path(scale_rect(rect, self.scale), corner_radius * self.scale)
         else {
@@ -414,7 +544,7 @@ impl Painter for SkiaPainter {
     fn push_clip_rounded(&mut self, rect: Rect, corner_radius: f32) {
         let width = self.pixmap.width();
         let height = self.pixmap.height();
-        let scaled = scale_rect(rect, self.scale);
+        let scaled = scale_rect(self.local(rect), self.scale);
 
         let Some(path) = Self::rounded_rect_path(scaled, corner_radius * self.scale) else {
             // Degenerate (zero-size) clip rect: nothing inside it can be

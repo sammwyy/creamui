@@ -79,12 +79,21 @@ Legend: `[x]` done and tested, `[ ]` not started, `[~]` partial.
 ## Iteration 2 — foundations for scale (nearly done)
 
 The important blocker to clear before a declarative/JSX layer is worth
-building: right now every signal change rebuilds the *entire* widget tree
-and repaints the *entire* window (see `creamui_render::window::run`'s
-effect closure). Fine for a small counter or a desktop-shell widget; not
-fine for anything with a non-trivial tree. Retained-tree diffing below is
-the prerequisite — building `jsx!` on top of a full-rebuild engine would
-just bake the perf ceiling into every app that uses it.
+building: every signal change still rebuilds the *entire* widget tree and
+repaints the *entire* window (see `creamui_render::window::run`'s effect
+closure). Fine for a small counter or a desktop-shell widget; not fine for
+anything with a non-trivial tree. Retained-tree diffing below is the
+prerequisite — building `jsx!` on top of a full-rebuild engine would just
+bake the perf ceiling into every app that uses it.
+
+The pure-animation case (a widget calling `Painter::animation_time`, e.g. a
+marquee or a spinner, with nothing else changing) no longer goes through
+this path: `Scene`/`Renderer` promote a node to its own layer after a short
+streak of animated frames, and `about_to_wait`'s animation tick repaints
+only promoted layers (`Renderer::repaint_animated`) with a partial GPU
+texture upload, instead of rebuilding/relayouting/repainting the whole
+window at ~30fps for as long as the animation is visible. The
+signal-driven full-rebuild case above is unchanged.
 
 - [x] Retained-tree diffing instead of full rebuild-per-render (perf):
       `creamui_core::Renderer` keeps a persistent `taffy` tree across

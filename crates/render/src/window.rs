@@ -26,7 +26,7 @@ use crate::painter::SkiaPainter;
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
 use creamui_core::{
-    BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Renderer, Scene, Size,
+    BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
@@ -281,6 +281,21 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(gpu) => gpu.present(rgba, width, height),
+            #[cfg(not(target_arch = "wasm32"))]
+            Presenter::Cpu(cpu) => cpu.present(rgba, width, height),
+            #[cfg(target_arch = "wasm32")]
+            Presenter::Web(web) => web.present(rgba, width, height),
+        }
+    }
+
+    /// Like [`Presenter::present`], but only re-uploads `dirty` (window-space
+    /// logical rects, scaled to physical pixels by `scale`) to the GPU
+    /// texture rather than the whole buffer. Backends with no partial-upload
+    /// path fall back to a full [`Presenter::present`].
+    fn present_partial(&mut self, rgba: &[u8], width: u32, height: u32, dirty: &[Rect], scale: f32) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Presenter::Gpu(gpu) => gpu.present_partial(rgba, width, height, dirty, scale),
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Cpu(cpu) => cpu.present(rgba, width, height),
             #[cfg(target_arch = "wasm32")]
@@ -585,9 +600,11 @@ struct WindowSpec {
     repaint: Rc<dyn Fn()>,
     repaint_scene: Rc<dyn Fn()>,
     repaint_light: Rc<dyn Fn()>,
+    repaint_animated: Rc<dyn Fn()>,
     render: Rc<dyn Fn()>,
     dirty: Rc<Cell<bool>>,
     scene_dirty: Rc<Cell<bool>>,
+    animated_damage: Rc<RefCell<Vec<Rect>>>,
     _effect: Effect,
     viewport: Signal<Size>,
     scale_factor: Signal<f64>,
@@ -774,12 +791,20 @@ struct WindowState {
     /// Paint-only refresh (no rebuild, no layout) for hover/press/focus-only
     /// changes — cheap enough to call from every `CursorMoved`.
     repaint_light: Rc<dyn Fn()>,
+    /// Repaints only the widgets currently promoted to their own layer (see
+    /// `Painter::push_layer`), driven by `about_to_wait`'s animation tick.
+    /// Populates `animated_damage` instead of touching `dirty`/`scene_dirty`,
+    /// since it never rebuilds, relayouts, or invalidates the `Scene`.
+    repaint_animated: Rc<dyn Fn()>,
     /// Executes the deferred build/layout/paint pass. Signal writes only
     /// schedule this; `RedrawRequested` performs it once per compositor
     /// frame.
     render: Rc<dyn Fn()>,
     dirty: Rc<Cell<bool>>,
     scene_dirty: Rc<Cell<bool>>,
+    /// Window-space rects painted by the last `repaint_animated`, consumed
+    /// by `RedrawRequested` for a partial GPU texture upload.
+    animated_damage: Rc<RefCell<Vec<Rect>>>,
     _effect: Effect,
     t_run: Instant,
     first_present_logged: bool,
@@ -1105,6 +1130,7 @@ impl WindowState {
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::RedrawRequested => {
+                let mut full_repaint = true;
                 if self.dirty.get() {
                     self.flush_pending_viewport();
                     (self.render)();
@@ -1113,11 +1139,24 @@ impl WindowState {
                     self.scene_dirty.set(false);
                 } else if self.scene_dirty.replace(false) {
                     (self.repaint_scene)();
+                } else {
+                    full_repaint = false;
                 }
+                let damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
                 let frame = self.frame.borrow();
                 let pixmap = &frame.painter.pixmap;
                 if let Some(presenter) = self.presenter.as_mut() {
-                    presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
+                    if full_repaint || damage.is_empty() {
+                        presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
+                    } else {
+                        presenter.present_partial(
+                            pixmap.data(),
+                            pixmap.width(),
+                            pixmap.height(),
+                            &damage,
+                            self.scale_factor.peek() as f32,
+                        );
+                    }
                 }
                 if !self.first_present_logged {
                     self.first_present_logged = true;
@@ -1288,9 +1327,11 @@ impl AppHandler {
                 repaint: spec.repaint,
                 repaint_scene: spec.repaint_scene,
                 repaint_light: spec.repaint_light,
+                repaint_animated: spec.repaint_animated,
                 render: spec.render,
                 dirty: spec.dirty,
                 scene_dirty: spec.scene_dirty,
+                animated_damage: spec.animated_damage,
                 _effect: spec._effect,
                 t_run: t0,
                 first_present_logged: false,
@@ -1422,7 +1463,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             if state.frame.borrow().painter.animated {
                 if now >= state.next_animation {
                     state.next_animation = now + Duration::from_millis(32);
-                    (state.repaint)();
+                    (state.repaint_animated)();
                 }
                 next_wake =
                     Some(next_wake.map_or(state.next_animation, |t| t.min(state.next_animation)));
@@ -1811,6 +1852,40 @@ fn build_window_spec(
         }
     });
 
+    let animated_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Driven by `about_to_wait`'s animation tick: repaints only whatever
+    // widgets are currently promoted to their own layer, with no rebuild,
+    // no layout, and no full-window clear. Doesn't touch `frame.scene` —
+    // a pure animation tick changes no interactive geometry, so the last
+    // full render's `Scene` stays valid.
+    let repaint_animated: Rc<dyn Fn()> = Rc::new({
+        let frame = frame.clone();
+        let window = shared_window.clone();
+        let focused = focused.clone();
+        let caret_visible = caret_visible.clone();
+        let theme_provider = theme_provider.clone();
+        let window_drag = window_drag.clone();
+        let animated_damage = animated_damage.clone();
+        move || {
+            with_theme_scope(&theme_provider, &window_drag, || {
+                let mut frame = frame.borrow_mut();
+                let FrameState {
+                    painter, renderer, ..
+                } = &mut *frame;
+                let damage = renderer.repaint_animated(painter, focused.get(), caret_visible.get());
+                drop(frame);
+                if damage.is_empty() {
+                    return;
+                }
+                animated_damage.borrow_mut().extend(damage);
+                if let Some(window) = window.borrow().as_ref() {
+                    window.request_redraw();
+                }
+            })
+        }
+    });
+
     // `create_effect` wraps this, so it must call `build_ui` itself, right
     // here, to stay subscribed to whatever `Signal`s the active branch
     // reads — a closure that only flips `dirty` for `render` to build later
@@ -1872,9 +1947,11 @@ fn build_window_spec(
         repaint,
         repaint_scene,
         repaint_light,
+        repaint_animated,
         render,
         dirty,
         scene_dirty,
+        animated_damage,
         _effect: effect,
         viewport,
         scale_factor,
@@ -1939,9 +2016,11 @@ mod tests {
                     repaint: spec.repaint,
                     repaint_scene: spec.repaint_scene,
                     repaint_light: spec.repaint_light,
+                    repaint_animated: spec.repaint_animated,
                     render: spec.render,
                     dirty: spec.dirty,
                     scene_dirty: spec.scene_dirty,
+                    animated_damage: spec.animated_damage,
                     _effect: spec._effect,
                     t_run: Instant::now(),
                     first_present_logged: false,

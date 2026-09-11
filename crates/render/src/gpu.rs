@@ -251,7 +251,63 @@ impl GpuState {
         if width != self.tex_width || height != self.tex_height {
             self.resize(width, height);
         }
+        self.write_full(rgba, width, height);
+        self.draw_and_present();
+    }
 
+    /// Like [`GpuState::present`], but only re-uploads the sub-regions of
+    /// `rgba` covered by `dirty` (logical pixels, scaled to physical by
+    /// `scale`) instead of the whole buffer — the bandwidth-sensitive half
+    /// of presenting an unchanged window with one small animating widget.
+    /// Falls back to a full upload if `rgba`'s size doesn't match the
+    /// texture, since that implies a resize this caller didn't account for.
+    pub fn present_partial(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        dirty: &[creamui_core::Rect],
+        scale: f32,
+    ) {
+        if width != self.tex_width || height != self.tex_height {
+            self.resize(width, height);
+            self.write_full(rgba, width, height);
+            self.draw_and_present();
+            return;
+        }
+        for rect in dirty {
+            let x0 = (rect.x * scale).floor().max(0.0) as u32;
+            let y0 = (rect.y * scale).floor().max(0.0) as u32;
+            let x1 = (((rect.x + rect.width) * scale).ceil().max(0.0) as u32).min(width);
+            let y1 = (((rect.y + rect.height) * scale).ceil().max(0.0) as u32).min(height);
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            let (w, h) = (x1 - x0, y1 - y0);
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                rgba,
+                wgpu::ImageDataLayout {
+                    offset: (y0 as u64 * width as u64 + x0 as u64) * 4,
+                    bytes_per_row: Some(4 * width),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.draw_and_present();
+    }
+
+    fn write_full(&mut self, rgba: &[u8], width: u32, height: u32) {
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.texture,
@@ -271,7 +327,9 @@ impl GpuState {
                 depth_or_array_layers: 1,
             },
         );
+    }
 
+    fn draw_and_present(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {

@@ -13,11 +13,21 @@ enum PaintMode {
     Absolute,
 }
 
+/// Consecutive full-paint observations of `animation_time()` being called
+/// (or not) needed to promote a node to its own layer, or fully decay back
+/// out of one. Promotion is quick (2 frames) since a false positive only
+/// costs one extra offscreen buffer; demotion is slower (must decay to 0)
+/// so a briefly-paused animation doesn't thrash the layer pool every frame.
+const LAYER_PROMOTE_STREAK: u8 = 2;
+
 struct Instance {
     widget: BoxedWidget,
     style: crate::Style,
     children: Vec<Instance>,
     node_id: taffy::NodeId,
+    layer_id: u64,
+    animating_streak: u8,
+    is_layer: bool,
 }
 
 fn remove_instance(tree: &mut Tree, instance: Instance) {
@@ -42,7 +52,12 @@ fn remove_instance(tree: &mut Tree, instance: Instance) {
 /// of children will be treated as every item after the reorder point
 /// changing, rather than being matched up by identity — tracked on the
 /// roadmap alongside a real virtual-list/keyed-diff widget.
-fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidget) -> Instance {
+fn reconcile(
+    tree: &mut Tree,
+    existing: Option<Instance>,
+    mut widget: BoxedWidget,
+    next_layer_id: &mut u64,
+) -> Instance {
     let new_child_widgets = widget.children();
     let new_style = widget.style();
     let new_measure = widget.measure();
@@ -52,7 +67,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         let mut child_ids = Vec::with_capacity(new_child_widgets.len());
         let mut children = Vec::with_capacity(new_child_widgets.len());
         for child_widget in new_child_widgets {
-            let child = reconcile(tree, None, child_widget);
+            let child = reconcile(tree, None, child_widget, next_layer_id);
             child_ids.push(child.node_id);
             children.push(child);
         }
@@ -61,11 +76,16 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             .expect("taffy node creation is infallible for well-formed styles");
         tree.set_node_context(node_id, new_measure)
             .expect("setting the context of a freshly created node should not fail");
+        let layer_id = *next_layer_id;
+        *next_layer_id += 1;
         return Instance {
             widget,
             style: new_style,
             children,
             node_id,
+            layer_id,
+            animating_streak: 0,
+            is_layer: false,
         };
     };
 
@@ -77,7 +97,12 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
     let mut new_children = Vec::with_capacity(new_child_widgets.len());
     let mut old_children = old.children.drain(..);
     for child_widget in new_child_widgets {
-        new_children.push(reconcile(tree, old_children.next(), child_widget));
+        new_children.push(reconcile(
+            tree,
+            old_children.next(),
+            child_widget,
+            next_layer_id,
+        ));
     }
     for leftover in old_children {
         remove_instance(tree, leftover);
@@ -92,6 +117,9 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         style: new_style,
         children: new_children,
         node_id: old.node_id,
+        layer_id: old.layer_id,
+        animating_streak: old.animating_streak,
+        is_layer: old.is_layer,
     }
 }
 
@@ -130,15 +158,17 @@ struct FocusContext {
     counter: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_instance(
     tree: &Tree,
-    instance: &Instance,
+    instance: &mut Instance,
     painter: &mut dyn Painter,
     parent_origin: Point,
     clip: Rect,
     focus: &mut FocusContext,
     out: &mut PaintOutputs,
     mode: PaintMode,
+    animated_only: bool,
 ) {
     let layout = tree
         .layout(instance.node_id)
@@ -167,8 +197,12 @@ fn paint_instance(
     }
 
     // During the absolute pass, ordinary ancestors are traversal-only nodes;
-    // an absolute node and its complete subtree are painted normally.
-    let paint_self = mode == PaintMode::Flow || absolute;
+    // an absolute node and its complete subtree are painted normally. In an
+    // animated-only pass, non-layer nodes contribute nothing (their pixels
+    // are already sitting in the target buffer from the last full paint),
+    // so only a promoted node still runs its paint-self block.
+    let paint_self = (mode == PaintMode::Flow || absolute) && (!animated_only || instance.is_layer);
+    let mut layer_active = false;
     if paint_self {
         let focusable = instance.widget.focusable() && instance.widget.on_key().is_some();
         let states = instance
@@ -180,10 +214,25 @@ fn paint_instance(
         let resolved = instance.style.resolve(states);
         let colors = painter.color_scheme();
         let radius = resolved.paint.corner_radius.unwrap_or(0.0);
+        layer_active = instance.is_layer;
+        if layer_active {
+            painter.push_layer(instance.layer_id, rect);
+        }
         if let Some(background) = resolved.paint.background {
             painter.fill_rect(rect, background.resolve(&colors), radius);
         }
         instance.widget.paint(painter, rect);
+        if painter.take_animated() {
+            instance.animating_streak = instance.animating_streak.saturating_add(1);
+            if instance.animating_streak >= LAYER_PROMOTE_STREAK {
+                instance.is_layer = true;
+            }
+        } else {
+            instance.animating_streak = instance.animating_streak.saturating_sub(1);
+            if instance.animating_streak == 0 {
+                instance.is_layer = false;
+            }
+        }
         // Borders and outlines sit over component-specific content, matching
         // CSS box painting and preventing edge-to-edge content from hiding
         // the common decoration.
@@ -205,7 +254,7 @@ fn paint_instance(
         }
     }
 
-    if paint_self {
+    if paint_self && !animated_only {
         if let Some(visible) = rect.intersect(effective_clip) {
             if let Some(handler) = instance.widget.on_click() {
                 out.hits.push((visible, handler));
@@ -272,7 +321,13 @@ fn paint_instance(
     let child_clip = if clips {
         match rect.intersect(effective_clip) {
             Some(c) => c,
-            None => return, // fully clipped away: nothing inside could be visible either
+            None => {
+                // fully clipped away: nothing inside could be visible either
+                if layer_active {
+                    painter.pop_layer();
+                }
+                return;
+            }
         }
     } else {
         effective_clip
@@ -286,7 +341,7 @@ fn paint_instance(
     } else {
         mode
     };
-    for child in &instance.children {
+    for child in instance.children.iter_mut() {
         paint_instance(
             tree,
             child,
@@ -296,10 +351,14 @@ fn paint_instance(
             focus,
             out,
             child_mode,
+            animated_only,
         );
     }
     if clips {
         painter.pop_clip();
+    }
+    if layer_active {
+        painter.pop_layer();
     }
 }
 
@@ -438,6 +497,7 @@ impl Scene {
 pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
+    next_layer_id: u64,
 }
 
 impl Renderer {
@@ -445,6 +505,7 @@ impl Renderer {
         Renderer {
             tree: TaffyTree::new(),
             root: None,
+            next_layer_id: 0,
         }
     }
 
@@ -475,7 +536,7 @@ impl Renderer {
         caret_visible: bool,
     ) -> Scene {
         let previous = self.root.take();
-        let instance = reconcile(&mut self.tree, previous, root);
+        let mut instance = reconcile(&mut self.tree, previous, root, &mut self.next_layer_id);
 
         self.tree
             .compute_layout_with_measure(
@@ -499,23 +560,25 @@ impl Renderer {
         };
         paint_instance(
             &self.tree,
-            &instance,
+            &mut instance,
             painter,
             Point::default(),
             UNCLIPPED,
             &mut focus,
             &mut out,
             PaintMode::Flow,
+            false,
         );
         paint_instance(
             &self.tree,
-            &instance,
+            &mut instance,
             painter,
             Point::default(),
             UNCLIPPED,
             &mut focus,
             &mut out,
             PaintMode::Absolute,
+            false,
         );
         self.root = Some(instance);
         Scene {
@@ -537,7 +600,7 @@ impl Renderer {
         focused_index: Option<usize>,
         caret_visible: bool,
     ) -> Option<Scene> {
-        let instance = self.root.as_ref()?;
+        let instance = self.root.as_mut()?;
         let mut out = PaintOutputs::default();
         let mut focus = FocusContext {
             focused_index,
@@ -553,6 +616,7 @@ impl Renderer {
             &mut focus,
             &mut out,
             PaintMode::Flow,
+            false,
         );
         paint_instance(
             &self.tree,
@@ -563,6 +627,7 @@ impl Renderer {
             &mut focus,
             &mut out,
             PaintMode::Absolute,
+            false,
         );
         Some(Scene {
             hits: out.hits,
@@ -573,6 +638,56 @@ impl Renderer {
             cursors: out.cursors,
             hovers: out.hovers,
         })
+    }
+
+    /// Repaints only the subtrees currently promoted to their own layer
+    /// (see [`Painter::push_layer`]) — no rebuild, no layout, and no work
+    /// for any other node, whose pixels already sit in `painter`'s target
+    /// from the last full [`Renderer::render_focused`]/[`Renderer::repaint_focused`].
+    /// Returns the window-space rects that were repainted, or an empty
+    /// `Vec` if nothing is currently promoted (e.g. hysteresis just demoted
+    /// the last animating widget). The stale [`Scene`] from the last full
+    /// paint remains valid, since a pure animation tick changes no
+    /// interactive geometry.
+    pub fn repaint_animated(
+        &mut self,
+        painter: &mut dyn Painter,
+        focused_index: Option<usize>,
+        caret_visible: bool,
+    ) -> Vec<Rect> {
+        let Some(instance) = self.root.as_mut() else {
+            return Vec::new();
+        };
+        painter.begin_animated_frame();
+        let mut out = PaintOutputs::default();
+        let mut focus = FocusContext {
+            focused_index,
+            caret_visible,
+            counter: 0,
+        };
+        paint_instance(
+            &self.tree,
+            instance,
+            painter,
+            Point::default(),
+            UNCLIPPED,
+            &mut focus,
+            &mut out,
+            PaintMode::Flow,
+            true,
+        );
+        paint_instance(
+            &self.tree,
+            instance,
+            painter,
+            Point::default(),
+            UNCLIPPED,
+            &mut focus,
+            &mut out,
+            PaintMode::Absolute,
+            true,
+        );
+        painter.take_damage()
     }
 }
 
@@ -687,5 +802,126 @@ mod tests {
         let root = renderer.root.as_ref().unwrap();
         assert_eq!(root.children.len(), 4);
         assert_eq!(renderer.tree.children(root.node_id).unwrap().len(), 4);
+    }
+
+    struct AnimPainter {
+        node_animated: bool,
+        push_layer_calls: usize,
+    }
+    impl AnimPainter {
+        fn new() -> Self {
+            AnimPainter {
+                node_animated: false,
+                push_layer_calls: 0,
+            }
+        }
+    }
+    impl Painter for AnimPainter {
+        fn fill_rect(&mut self, _rect: Rect, _color: Color, _corner_radius: f32) {}
+        fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32, _corner_radius: f32) {}
+        fn fill_text(
+            &mut self,
+            _rect: Rect,
+            _text: &str,
+            _color: Color,
+            _font_size: f32,
+            _align: TextAlign,
+        ) {
+        }
+        fn animation_time(&mut self) -> f32 {
+            self.node_animated = true;
+            0.0
+        }
+        fn take_animated(&mut self) -> bool {
+            std::mem::take(&mut self.node_animated)
+        }
+        fn push_layer(&mut self, _id: u64, _rect: Rect) {
+            self.push_layer_calls += 1;
+        }
+    }
+
+    struct CountingWidget {
+        count: Rc<std::cell::Cell<usize>>,
+        animate: bool,
+    }
+    impl crate::widget::Widget for CountingWidget {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, painter: &mut dyn Painter, _rect: Rect) {
+            self.count.set(self.count.get() + 1);
+            if self.animate {
+                painter.animation_time();
+            }
+        }
+    }
+
+    struct Root {
+        children: Vec<BoxedWidget>,
+    }
+    impl crate::widget::Widget for Root {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+    }
+
+    #[test]
+    fn repaint_animated_only_repaints_promoted_layers() {
+        let animated_count = Rc::new(std::cell::Cell::new(0usize));
+        let static_count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |animated_count: Rc<std::cell::Cell<usize>>,
+                     static_count: Rc<std::cell::Cell<usize>>|
+         -> BoxedWidget {
+            Box::new(Root {
+                children: vec![
+                    Box::new(CountingWidget {
+                        count: animated_count,
+                        animate: true,
+                    }),
+                    Box::new(CountingWidget {
+                        count: static_count,
+                        animate: false,
+                    }),
+                ],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        // Two full renders: the animated child's streak crosses
+        // `LAYER_PROMOTE_STREAK` and it gets promoted to a layer.
+        renderer.render(
+            build(animated_count.clone(), static_count.clone()),
+            VIEWPORT,
+            &mut painter,
+        );
+        renderer.render(
+            build(animated_count.clone(), static_count.clone()),
+            VIEWPORT,
+            &mut painter,
+        );
+        assert_eq!(animated_count.get(), 2);
+        assert_eq!(static_count.get(), 2);
+
+        for _ in 0..3 {
+            renderer.repaint_animated(&mut painter, None, false);
+        }
+
+        assert_eq!(
+            animated_count.get(),
+            5,
+            "the promoted widget should keep repainting on every animated-only pass"
+        );
+        assert_eq!(
+            static_count.get(),
+            2,
+            "a non-animating sibling should not repaint outside a full render"
+        );
+        assert!(painter.push_layer_calls > 0);
     }
 }

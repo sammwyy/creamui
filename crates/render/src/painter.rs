@@ -825,6 +825,30 @@ mod tests {
         }
     }
 
+    struct CachedContainer {
+        child: Option<creamui_core::BoxedWidget>,
+    }
+    impl creamui_core::Widget for CachedContainer {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            painter.fill_rect(rect, Color::rgb(0, 0, 255), 0.0);
+        }
+        fn paint_fingerprint(&self) -> Option<u64> {
+            Some(1)
+        }
+        fn children(&mut self) -> Vec<creamui_core::BoxedWidget> {
+            self.child.take().into_iter().collect()
+        }
+    }
+
     #[test]
     fn promoted_layer_does_not_leak_the_other_ticks_content() {
         use creamui_core::Renderer;
@@ -873,6 +897,35 @@ mod tests {
             0,
             "switching back must not leave the previous tick's half behind"
         );
+    }
+
+    #[test]
+    fn cached_parent_does_not_freeze_an_animated_childs_previous_frame() {
+        use creamui_core::Renderer;
+
+        let left = Rc::new(Cell::new(true));
+        let build = |left: Rc<Cell<bool>>| {
+            Box::new(CachedContainer {
+                child: Some(Box::new(HalfSplit { left })),
+            }) as creamui_core::BoxedWidget
+        };
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(left.clone()), viewport, &mut painter);
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(left.clone()), viewport, &mut painter);
+
+        left.set(false);
+        renderer.repaint_animated(&mut painter, None, false);
+
+        assert_eq!(painter.pixmap.pixel(4, 5).unwrap().blue(), 255);
+        assert_eq!(painter.pixmap.pixel(15, 5).unwrap().red(), 255);
     }
 
     #[test]

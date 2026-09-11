@@ -49,6 +49,10 @@ struct Instance {
     /// *wider* clip must not composite a buffer that was never painted that
     /// far in the first place.
     cached_clip: Option<Rect>,
+    /// Window-space bounds used to capture the cached layer. A cached layer
+    /// includes its original backdrop, so it must be repainted when a
+    /// scrolling ancestor translates it to a different position.
+    cached_rect: Option<Rect>,
 }
 
 fn remove_instance(tree: &mut Tree, instance: Instance) {
@@ -111,6 +115,7 @@ fn reconcile(
             content_fingerprint: None,
             cached_states: None,
             cached_clip: None,
+            cached_rect: None,
         };
     };
 
@@ -149,6 +154,7 @@ fn reconcile(
         content_fingerprint: old.content_fingerprint,
         cached_states: old.cached_states,
         cached_clip: old.cached_clip,
+        cached_rect: old.cached_rect,
     }
 }
 
@@ -268,11 +274,11 @@ fn paint_instance(
         // and state match alone can't tell a layer cached under a narrower
         // clip from one cached with nothing cut off, so the ambient clip in
         // effect at capture time must match too.
-        let cache_hit = !animated_only
-            && fingerprint.is_some()
+        let cache_hit = fingerprint.is_some()
             && fingerprint == instance.content_fingerprint
             && instance.cached_states == Some(states)
             && instance.cached_clip == Some(effective_clip)
+            && instance.cached_rect == Some(rect)
             && painter.composite_cached_layer(instance.layer_id, rect);
 
         if !cache_hit {
@@ -339,6 +345,11 @@ fn paint_instance(
             instance.content_fingerprint = fingerprint;
             instance.cached_states = fingerprint.map(|_| states);
             instance.cached_clip = fingerprint.map(|_| effective_clip);
+            instance.cached_rect = fingerprint.map(|_| rect);
+            if layer_active && fingerprint.is_some() {
+                painter.pop_layer();
+                layer_active = false;
+            }
         }
     }
 
@@ -986,6 +997,26 @@ mod tests {
         }
     }
 
+    struct ScrollWrapper {
+        offset: Rc<std::cell::Cell<f32>>,
+        child: Option<BoxedWidget>,
+    }
+    impl crate::widget::Widget for ScrollWrapper {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            self.child.take().into_iter().collect()
+        }
+        fn scroll_offset(&self) -> Point {
+            Point {
+                x: 0.0,
+                y: self.offset.get(),
+            }
+        }
+    }
+
     #[test]
     fn fingerprint_cache_skips_repaint_when_content_is_unchanged() {
         let count = Rc::new(std::cell::Cell::new(0usize));
@@ -1027,6 +1058,31 @@ mod tests {
         renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
         renderer.render(build(count.clone(), 2), VIEWPORT, &mut painter);
         assert_eq!(count.get(), 2, "a changed fingerprint must repaint");
+    }
+
+    #[test]
+    fn fingerprint_cache_repaints_when_a_scroll_ancestor_moves_the_widget() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let offset = Rc::new(std::cell::Cell::new(0.0));
+        let root = Box::new(ScrollWrapper {
+            offset: offset.clone(),
+            child: Some(Box::new(FingerprintWidget {
+                count: count.clone(),
+                fingerprint: 1,
+            })),
+        });
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(root, VIEWPORT, &mut painter);
+        offset.set(20.0);
+        renderer.repaint_focused(&mut painter, None, false);
+
+        assert_eq!(
+            count.get(),
+            2,
+            "a cached layer must repaint at its new scroll position"
+        );
     }
 
     #[test]

@@ -1151,7 +1151,7 @@ impl WindowState {
                 if let Some((Some(handler), local)) = handler {
                     handler(delta_y);
                     if local {
-                        (self.repaint_scene)();
+                        (self.repaint_light)();
                     }
                 }
             }

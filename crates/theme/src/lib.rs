@@ -2,7 +2,7 @@
 //! while [`Theme`] owns the shape and behaviour of components.
 
 /// An 8-bit sRGB color with alpha.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Color {
     pub r: u8,
     pub g: u8,

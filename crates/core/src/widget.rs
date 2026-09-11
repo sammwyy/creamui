@@ -44,7 +44,7 @@ pub struct Modifiers {
 pub type MeasureFn = Box<dyn Fn(Size<Option<f32>>, Size<AvailableSpace>) -> Size<f32>>;
 
 /// Horizontal text alignment within a widget's painted rect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {
     #[default]
     Center,
@@ -134,6 +134,16 @@ pub trait Painter {
     /// calls. Called once a widget stops being promoted to its own layer,
     /// so a backdrop/surface cache doesn't outlive the animation it was for.
     fn forget_layer(&mut self, _id: u64) {}
+
+    /// Composites the layer last painted under `id` (by a `push_layer`/
+    /// `pop_layer` pair) onto the current target at `rect`, without
+    /// repainting it. Returns `false` (compositing nothing) if there's no
+    /// cached layer for `id`, or its cached size doesn't match `rect`'s
+    /// physical size — the caller must fall back to a normal
+    /// `push_layer`/paint/`pop_layer` pass in that case.
+    fn composite_cached_layer(&mut self, _id: u64, _rect: Rect) -> bool {
+        false
+    }
 
     /// Drains the window-space rects composited by [`Painter::pop_layer`]
     /// since the last call to this method.
@@ -300,6 +310,19 @@ pub trait Widget {
     /// the parent's coordinate space). The renderer paints the common
     /// background, border, radius, and outline first. Does not paint children.
     fn paint(&self, painter: &mut dyn Painter, rect: Rect);
+
+    /// A cheap, stable hash of everything that affects this widget's own
+    /// paint output (not its children's) — e.g. text + color + font size
+    /// for a text widget. `None` (the default) opts out of content
+    /// caching: always safe, just earns no benefit. Must not depend on
+    /// anything that legitimately changes every frame — a widget that
+    /// calls [`Painter::animation_time`] should leave this `None` rather
+    /// than hashing something time-derived, since that would just
+    /// silently disable the cache every frame rather than corrupt
+    /// anything, and there's no reason to bother.
+    fn paint_fingerprint(&self) -> Option<u64> {
+        None
+    }
 
     /// Takes ownership of this widget's children, in layout order, leaving
     /// it childless. Takes `&mut self` (rather than consuming the widget)

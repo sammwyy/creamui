@@ -461,6 +461,32 @@ impl Painter for SkiaPainter {
         self.layer_pool.remove(&id);
         self.backdrop_pool.remove(&id);
     }
+    fn composite_cached_layer(&mut self, id: u64, rect: Rect) -> bool {
+        let scale = self.scale;
+        let phys_w = ((rect.width * scale).round() as u32).max(1);
+        let phys_h = ((rect.height * scale).round() as u32).max(1);
+        let Some(cached) = self.layer_pool.get(&id) else {
+            return false;
+        };
+        if cached.width() != phys_w || cached.height() != phys_h {
+            return false;
+        }
+        let x = ((rect.x - self.origin.x) * scale).round() as i32;
+        let y = ((rect.y - self.origin.y) * scale).round() as i32;
+        let composite = PixmapPaint {
+            blend_mode: tiny_skia::BlendMode::Source,
+            ..PixmapPaint::default()
+        };
+        self.pixmap.draw_pixmap(
+            x,
+            y,
+            cached.as_ref(),
+            &composite,
+            Transform::identity(),
+            self.clip_stack.last(),
+        );
+        true
+    }
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, width: f32) {
         let from = Point {
             x: from.x - self.origin.x,
@@ -882,5 +908,406 @@ mod tests {
         // (the clear color), not a transparent hole.
         let untouched = painter.pixmap.pixel(5, 3).unwrap();
         assert_eq!((untouched.red(), untouched.green(), untouched.blue()), (10, 20, 30));
+    }
+
+    struct HoverAware {
+        fingerprint: u64,
+        paints: Rc<Cell<usize>>,
+    }
+    impl creamui_core::Widget for HoverAware {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            self.paints.set(self.paints.get() + 1);
+            let color = if painter.hovered(rect) {
+                Color::rgb(255, 0, 0)
+            } else {
+                Color::rgb(0, 0, 255)
+            };
+            painter.fill_rect(rect, color, 0.0);
+        }
+        fn paint_fingerprint(&self) -> Option<u64> {
+            Some(self.fingerprint)
+        }
+    }
+
+    #[test]
+    fn fingerprint_cache_does_not_hide_a_hover_change() {
+        use creamui_core::Renderer;
+
+        let paints = Rc::new(Cell::new(0usize));
+        let build = |paints: Rc<Cell<usize>>| -> creamui_core::BoxedWidget {
+            Box::new(HoverAware {
+                fingerprint: 1,
+                paints,
+            })
+        };
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        painter.pointer = None;
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(paints.clone()), viewport, &mut painter);
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
+        assert_eq!(paints.get(), 1);
+
+        // Same fingerprint, same (unhovered) state: an unrelated rebuild
+        // should reuse the cached layer rather than repaint.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(paints.clone()), viewport, &mut painter);
+        assert_eq!(paints.get(), 1, "an unchanged fingerprint and state should hit the cache");
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
+
+        // Same fingerprint, but now hovered: the cache must not hide this.
+        painter.pointer = Some(Point { x: 10.0, y: 5.0 });
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(paints.clone()), viewport, &mut painter);
+        assert_eq!(
+            paints.get(),
+            2,
+            "a hover-driven appearance change must invalidate the cache despite a matching fingerprint"
+        );
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().red(), 255);
+    }
+
+    #[test]
+    fn raw_button_hover_background_is_not_hidden_by_the_fingerprint_cache() {
+        use creamui_core::{PaintStyle, Renderer, StateStyle, Style};
+        use creamui_widgets::RawButton;
+
+        let style = Style::new()
+            .layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+            .background(Color::rgb(0, 0, 255))
+            .hover(StateStyle {
+                paint: PaintStyle {
+                    background: Some(Color::rgb(255, 0, 0).into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        painter.pointer = None;
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(RawButton::new(style.clone(), || {})),
+            viewport,
+            &mut painter,
+        );
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
+
+        // Same fingerprint, still unhovered: an unrelated rebuild should hit
+        // the cache instead of repainting.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(RawButton::new(style.clone(), || {})),
+            viewport,
+            &mut painter,
+        );
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
+
+        // Same fingerprint, now hovered: the cache must not hide this.
+        painter.pointer = Some(Point { x: 10.0, y: 5.0 });
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(RawButton::new(style, || {})),
+            viewport,
+            &mut painter,
+        );
+        assert_eq!(
+            painter.pixmap.pixel(10, 5).unwrap().red(),
+            255,
+            "a hover-driven background change must invalidate the cache despite a matching fingerprint"
+        );
+    }
+
+    struct ReproLeaf {
+        tag: String,
+        color: Color,
+    }
+    impl creamui_core::Widget for ReproLeaf {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            painter.fill_rect(rect, self.color, 0.0);
+        }
+        fn paint_fingerprint(&self) -> Option<u64> {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.tag.hash(&mut hasher);
+            Some(hasher.finish())
+        }
+    }
+
+    struct ReproContainer {
+        children: Vec<creamui_core::BoxedWidget>,
+        column: bool,
+        width: f32,
+        height: f32,
+    }
+    impl creamui_core::Widget for ReproContainer {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(self.width),
+                    height: creamui_core::layout::Dimension::Length(self.height),
+                },
+                flex_direction: if self.column {
+                    creamui_core::layout::FlexDirection::Column
+                } else {
+                    creamui_core::layout::FlexDirection::Row
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<creamui_core::BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+        // Deliberately no `paint_fingerprint` override, matching
+        // `creamui_widgets::layout::Flex`/generic containers: never cached.
+    }
+
+    fn repro_card(name_tag: String, icon_has_fingerprint: bool) -> creamui_core::BoxedWidget {
+        let icon: creamui_core::BoxedWidget = if icon_has_fingerprint {
+            Box::new(ReproLeaf {
+                tag: "icon".to_string(),
+                color: Color::rgb(0, 255, 0),
+            })
+        } else {
+            Box::new(ReproContainer {
+                children: Vec::new(),
+                column: false,
+                width: 20.0,
+                height: 10.0,
+            })
+        };
+        Box::new(ReproContainer {
+            children: vec![
+                icon,
+                Box::new(ReproLeaf {
+                    tag: name_tag,
+                    color: Color::rgb(255, 0, 255),
+                }),
+            ],
+            column: true,
+            width: 20.0,
+            height: 20.0,
+        })
+    }
+
+    #[test]
+    fn positional_reconcile_across_a_root_type_change_does_not_blank_out_labels() {
+        use creamui_core::Renderer;
+
+        const N: usize = 140;
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20 * N as u32, 20);
+        let viewport = creamui_core::Size {
+            width: 20.0 * N as f32,
+            height: 20.0,
+        };
+
+        // Render 1: a single "Loading…" leaf at the root — matches
+        // `app_drawer::build()`'s `apps.is_empty()` branch.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(ReproLeaf {
+                tag: "loading".to_string(),
+                color: Color::rgb(255, 255, 0),
+            }),
+            viewport,
+            &mut painter,
+        );
+
+        // Render 2: the root becomes a row of N cards, each with an
+        // icon slot (no fingerprint, matching a fallback-avatar `Flex`)
+        // and a name label — matches the grid appearing once the catalog
+        // loads.
+        let build_grid = |icon_has_fingerprint: bool| -> creamui_core::BoxedWidget {
+            Box::new(ReproContainer {
+                children: (0..N)
+                    .map(|i| repro_card(format!("name-{i}"), icon_has_fingerprint))
+                    .collect(),
+                column: false,
+                width: 20.0 * N as f32,
+                height: 20.0,
+            })
+        };
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build_grid(false), viewport, &mut painter);
+
+        // Render 3: icons resolve — each icon slot switches from the
+        // no-fingerprint container to a fingerprinted leaf, matching the
+        // fallback-avatar-`Flex` -> `Image` swap in `app_card()`. Card
+        // structure and every name label are otherwise unchanged.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build_grid(true), viewport, &mut painter);
+
+        let mut blank = Vec::new();
+        for i in 0..N {
+            let x = (i as u32) * 20 + 10;
+            let y = 15;
+            let pixel = painter.pixmap.pixel(x, y).unwrap();
+            if (pixel.red(), pixel.green(), pixel.blue()) != (255, 0, 255) {
+                blank.push(i);
+            }
+        }
+        assert!(
+            blank.is_empty(),
+            "{} of {N} name labels did not render their expected color at their \
+             own position after the icon-slot type swap: {blank:?}",
+            blank.len()
+        );
+    }
+
+    struct ClipAncestor {
+        width: f32,
+        child: Option<creamui_core::BoxedWidget>,
+    }
+    impl creamui_core::Widget for ClipAncestor {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(self.width),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                ..Default::default()
+            })
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<creamui_core::BoxedWidget> {
+            self.child.take().into_iter().collect()
+        }
+        fn clips_children(&self) -> bool {
+            true
+        }
+    }
+
+    struct CountingLeaf {
+        tag: String,
+        color: Color,
+        paints: Rc<Cell<usize>>,
+    }
+    impl creamui_core::Widget for CountingLeaf {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                // Matches real scrollable content: keeps its own size
+                // instead of shrinking to fit a narrower ancestor, so only
+                // the paint-time clip (not layout) differs between renders.
+                flex_shrink: 0.0,
+                ..Default::default()
+            })
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            self.paints.set(self.paints.get() + 1);
+            painter.fill_rect(rect, self.color, 0.0);
+        }
+        fn paint_fingerprint(&self) -> Option<u64> {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.tag.hash(&mut hasher);
+            Some(hasher.finish())
+        }
+    }
+
+    #[test]
+    fn fingerprint_cache_seeded_under_a_narrow_clip_stays_wrong_after_the_clip_widens() {
+        use creamui_core::Renderer;
+
+        let paints = Rc::new(Cell::new(0usize));
+        let leaf = |paints: Rc<Cell<usize>>| -> creamui_core::BoxedWidget {
+            Box::new(CountingLeaf {
+                tag: "leaf".to_string(),
+                color: Color::rgb(255, 0, 255),
+                paints,
+            })
+        };
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        // First-ever paint happens under a narrow ancestor clip (only the
+        // leaf's first 5 physical columns are visible) — the leaf's
+        // fingerprint alone promotes it to a layer on this very paint.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(ClipAncestor {
+                width: 5.0,
+                child: Some(leaf(paints.clone())),
+            }),
+            viewport,
+            &mut painter,
+        );
+        assert_eq!(painter.pixmap.pixel(2, 5).unwrap().red(), 255);
+        assert_eq!(
+            painter.pixmap.pixel(15, 5).unwrap().alpha(),
+            0,
+            "sanity check: the narrow clip hides the rest on the first paint"
+        );
+        assert_eq!(paints.get(), 1);
+
+        // The ancestor's clip widens to the leaf's full width. Same
+        // fingerprint, same (unhovered) state — this is exactly the
+        // situation `paint_instance` treats as a cache hit.
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(
+            Box::new(ClipAncestor {
+                width: 20.0,
+                child: Some(leaf(paints.clone())),
+            }),
+            viewport,
+            &mut painter,
+        );
+        assert_eq!(
+            paints.get(),
+            2,
+            "a widened ambient clip must force a repaint, not reuse a layer \
+             that was never painted past the old, narrower clip"
+        );
+        assert_eq!(
+            painter.pixmap.pixel(15, 5).unwrap().red(),
+            255,
+            "now-visible content must render even though it was never painted \
+             the first time the layer was cached under a narrower clip"
+        );
     }
 }

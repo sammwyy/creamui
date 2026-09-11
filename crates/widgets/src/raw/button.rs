@@ -71,6 +71,30 @@ impl Widget for RawButton {
 
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
+    fn paint_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        // Hover/press are covered by `paint_instance`'s `cached_states`
+        // guard; resolving against `NORMAL` here only needs to catch a real
+        // change to the button's own background/border/outline.
+        let paint = self
+            .style
+            .resolve(creamui_core::StyleState::NORMAL)
+            .paint;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.disabled.hash(&mut hasher);
+        paint.background.hash(&mut hasher);
+        paint
+            .border
+            .map(|b| (b.color, b.width.to_bits()))
+            .hash(&mut hasher);
+        paint.corner_radius.map(f32::to_bits).hash(&mut hasher);
+        paint
+            .outline
+            .map(|o| (o.color, o.width.to_bits()))
+            .hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
     }
@@ -89,5 +113,70 @@ impl Widget for RawButton {
         } else {
             CursorIcon::Pointer
         })
+    }
+}
+
+#[cfg(test)]
+mod raw_button_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn identical_background_hashes_equal() {
+        let a = RawButton::new(
+            creamui_core::Style::new().background(Color::rgb(1, 2, 3)),
+            || {},
+        );
+        let b = RawButton::new(
+            creamui_core::Style::new().background(Color::rgb(1, 2, 3)),
+            || {},
+        );
+        assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn different_background_hashes_differently() {
+        let a = RawButton::new(
+            creamui_core::Style::new().background(Color::rgb(1, 2, 3)),
+            || {},
+        );
+        let b = RawButton::new(
+            creamui_core::Style::new().background(Color::rgb(4, 5, 6)),
+            || {},
+        );
+        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn different_corner_radius_hashes_differently() {
+        let a = RawButton::new(
+            creamui_core::Style::new()
+                .background(Color::rgb(1, 2, 3))
+                .corner_radius(4.0),
+            || {},
+        );
+        let b = RawButton::new(
+            creamui_core::Style::new()
+                .background(Color::rgb(1, 2, 3))
+                .corner_radius(8.0),
+            || {},
+        );
+        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn layout_only_change_does_not_affect_fingerprint() {
+        let a = RawButton::new(
+            creamui_core::Style::new()
+                .background(Color::rgb(1, 2, 3))
+                .width(10.0),
+            || {},
+        );
+        let b = RawButton::new(
+            creamui_core::Style::new()
+                .background(Color::rgb(1, 2, 3))
+                .width(200.0),
+            || {},
+        );
+        assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
     }
 }

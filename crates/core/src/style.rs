@@ -11,7 +11,7 @@ use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
 /// Semantic colors resolved against the active [`ColorScheme`] at paint time.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColorToken {
     Surface,
     SurfaceElevated,
@@ -55,7 +55,7 @@ impl ColorToken {
 }
 
 /// A concrete color or a semantic theme token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ColorValue {
     Literal(Color),
     Token(ColorToken),

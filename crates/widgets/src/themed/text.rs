@@ -80,6 +80,10 @@ impl Widget for Text {
         self.inner.paint(painter, rect);
     }
 
+    fn paint_fingerprint(&self) -> Option<u64> {
+        self.inner.paint_fingerprint()
+    }
+
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
@@ -153,6 +157,10 @@ impl Widget for Heading {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect);
+    }
+
+    fn paint_fingerprint(&self) -> Option<u64> {
+        self.inner.paint_fingerprint()
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {

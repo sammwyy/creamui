@@ -184,7 +184,29 @@ impl Widget for Card {
         self.inner.paint(painter, rect);
     }
 
+    fn paint_fingerprint(&self) -> Option<u64> {
+        self.inner.paint_fingerprint()
+    }
+
     fn children(&mut self) -> Vec<BoxedWidget> {
         Widget::children(&mut self.inner)
+    }
+}
+
+#[cfg(test)]
+mod card_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn delegates_to_the_inner_view_instead_of_the_default_none() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(
+                creamui_theme::Theme::dark(),
+            ));
+            let a = Card::new(Style::default());
+            let b = Card::new(Style::default());
+            assert!(a.paint_fingerprint().is_some());
+            assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
+        });
     }
 }

@@ -31,6 +31,7 @@ use creamui_core::{
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -48,7 +49,6 @@ use winit::window::{
     CursorIcon as WinitCursorIcon, ResizeDirection, Window, WindowAttributes, WindowId, WindowLevel,
 };
 
-#[cfg(all(feature = "tray", target_os = "linux"))]
 use winit::event_loop::EventLoopProxy;
 
 /// How long the text-input caret stays in each visibility phase while
@@ -321,6 +321,9 @@ pub struct AppHandle {
 struct AppCommands {
     windows: Vec<PendingWindow>,
     exit_requested: bool,
+    proxy: EventLoopProxy<AppEvent>,
+    next_job_id: u64,
+    background_jobs: HashMap<u64, Box<dyn FnOnce(Box<dyn Any + Send>)>>,
 }
 
 impl AppHandle {
@@ -346,6 +349,62 @@ impl AppHandle {
     /// system tray icon.
     pub fn exit(&self) {
         self.commands.borrow_mut().exit_requested = true;
+    }
+
+    /// Runs `work` on a new background thread; once it finishes, `on_done`
+    /// runs on the UI thread with the result, safe to touch `Signal`s from.
+    /// `work` must be `Send` (it crosses the thread boundary); `on_done`
+    /// does not, since it only ever runs here.
+    pub fn spawn_background<T, F, D>(&self, work: F, on_done: D)
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+        D: FnOnce(T) + 'static,
+    {
+        let (job_id, proxy) = {
+            let mut commands = self.commands.borrow_mut();
+            let job_id = commands.next_job_id;
+            commands.next_job_id += 1;
+            commands.background_jobs.insert(
+                job_id,
+                Box::new(move |value: Box<dyn Any + Send>| {
+                    let value = *value
+                        .downcast::<T>()
+                        .expect("creamui-render: background job result type mismatch");
+                    on_done(value);
+                }),
+            );
+            (job_id, commands.proxy.clone())
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || {
+            let result: Box<dyn Any + Send> = Box::new(work());
+            let _ = proxy.send_event(AppEvent::BackgroundJob(job_id, result));
+        });
+        // No threads on wasm32: run inline and resolve immediately so
+        // `spawn_background` behaves like a (blocking) no-op there rather
+        // than silently dropping the job.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let result: Box<dyn Any + Send> = Box::new(work());
+            let _ = proxy.send_event(AppEvent::BackgroundJob(job_id, result));
+        }
+    }
+}
+
+/// Looks up and runs the `on_done` continuation registered by
+/// [`AppHandle::spawn_background`] for `job_id`, if it hasn't already been
+/// resolved (e.g. by a duplicate/stale event). Factored out of
+/// [`AppHandler::user_event`] so it's callable without a real
+/// `ActiveEventLoop`.
+fn resolve_background_job(
+    commands: &Rc<RefCell<AppCommands>>,
+    job_id: u64,
+    value: Box<dyn Any + Send>,
+) {
+    let callback = commands.borrow_mut().background_jobs.remove(&job_id);
+    if let Some(callback) = callback {
+        callback(value);
     }
 }
 
@@ -1343,6 +1402,7 @@ impl AppHandler {
 enum AppEvent {
     #[cfg(all(feature = "tray", target_os = "linux"))]
     TrayMenu(String),
+    BackgroundJob(u64, Box<dyn Any + Send>),
 }
 
 impl ApplicationHandler<AppEvent> for AppHandler {
@@ -1409,10 +1469,8 @@ impl ApplicationHandler<AppEvent> for AppHandler {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
-        #[cfg(not(all(feature = "tray", target_os = "linux")))]
-        let _ = &event;
-        #[cfg(all(feature = "tray", target_os = "linux"))]
         match event {
+            #[cfg(all(feature = "tray", target_os = "linux"))]
             AppEvent::TrayMenu(id) => {
                 for tray in &self.trays {
                     if let Some(action) = tray.actions.get(&id) {
@@ -1420,6 +1478,9 @@ impl ApplicationHandler<AppEvent> for AppHandler {
                         break;
                     }
                 }
+            }
+            AppEvent::BackgroundJob(job_id, value) => {
+                resolve_background_job(&self.commands, job_id, value);
             }
         }
         self.drain_app_commands(event_loop);
@@ -1641,6 +1702,9 @@ fn run_windows(
     let commands = Rc::new(RefCell::new(AppCommands {
         windows: Vec::new(),
         exit_requested: false,
+        proxy: event_loop.create_proxy(),
+        next_job_id: 0,
+        background_jobs: HashMap::new(),
     }));
     let app = AppHandle {
         commands: commands.clone(),
@@ -2183,5 +2247,87 @@ mod tests {
     #[test]
     fn frame_scope_is_available_to_lazy_children() {
         let _harness = WindowEventHarness::new(|_| Box::new(ThemeInChildren));
+    }
+
+    // `EventLoop::build()` refuses to run outside the main thread, which
+    // `cargo test` never is — the X11 `any_thread` escape hatch is the only
+    // way to get a real `EventLoopProxy` here, and winit allows only one
+    // `EventLoop` per process ever, so the (leaked) loop behind it is
+    // shared across every test that needs a proxy. This only proves the
+    // registration/dispatch logic below; the hop through a real running
+    // `ActiveEventLoop`'s `user_event` is pre-existing winit machinery
+    // already exercised by the tray feature, not re-tested here.
+    #[cfg(target_os = "linux")]
+    fn test_proxy() -> EventLoopProxy<AppEvent> {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        static PROXY: std::sync::OnceLock<EventLoopProxy<AppEvent>> = std::sync::OnceLock::new();
+        PROXY
+            .get_or_init(|| {
+                let mut builder = EventLoop::<AppEvent>::with_user_event();
+                builder.with_any_thread(true);
+                let event_loop = builder
+                    .build()
+                    .expect("failed to build a headless event loop");
+                let proxy = event_loop.create_proxy();
+                std::mem::forget(event_loop);
+                proxy
+            })
+            .clone()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn spawn_background_runs_work_off_thread_and_resolve_background_job_delivers_it() {
+        let commands = Rc::new(RefCell::new(AppCommands {
+            windows: Vec::new(),
+            exit_requested: false,
+            proxy: test_proxy(),
+            next_job_id: 0,
+            background_jobs: HashMap::new(),
+        }));
+        let handle = AppHandle {
+            commands: commands.clone(),
+        };
+
+        let result: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+        let result_for_done = result.clone();
+        let (worked_tx, worked_rx) = std::sync::mpsc::channel::<std::thread::ThreadId>();
+        handle.spawn_background(
+            move || {
+                let _ = worked_tx.send(std::thread::current().id());
+                42u32
+            },
+            move |value| result_for_done.set(Some(value)),
+        );
+
+        let worker_thread = worked_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("work did not run on a background thread in time");
+        assert_ne!(
+            worker_thread,
+            std::thread::current().id(),
+            "work must run off the calling thread"
+        );
+
+        assert_eq!(commands.borrow().background_jobs.len(), 1);
+        assert!(result.get().is_none(), "on_done must not have run yet");
+
+        resolve_background_job(&commands, 0, Box::new(42u32));
+
+        assert_eq!(result.get(), Some(42));
+        assert!(commands.borrow().background_jobs.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolve_background_job_is_a_no_op_for_an_unknown_or_already_resolved_id() {
+        let commands = Rc::new(RefCell::new(AppCommands {
+            windows: Vec::new(),
+            exit_requested: false,
+            proxy: test_proxy(),
+            next_job_id: 0,
+            background_jobs: HashMap::new(),
+        }));
+        resolve_background_job(&commands, 99, Box::new(0u32));
     }
 }

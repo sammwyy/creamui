@@ -8,7 +8,7 @@ use creamui_core::{
 use creamui_theme::{use_theme, Color, Theme};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Symbol {
     Appearance,
     Display,
@@ -192,6 +192,15 @@ impl Widget for Icon {
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         Self::draw(self.symbol, painter, rect, self.color);
+    }
+
+    fn paint_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.symbol.hash(&mut hasher);
+        self.color.hash(&mut hasher);
+        self.size.to_bits().hash(&mut hasher);
+        Some(hasher.finish())
     }
 }
 
@@ -463,5 +472,31 @@ impl Widget for Choice {
     }
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, c: bool) {
         self.inner.paint_focused_overlay(p, r, c);
+    }
+}
+
+#[cfg(test)]
+mod icon_fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn identical_icons_hash_equal() {
+        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
+        let b = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
+        assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn different_symbol_hashes_differently() {
+        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
+        let b = Icon::new(Symbol::Close, Color::rgb(1, 2, 3));
+        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn different_size_hashes_differently() {
+        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3)).size(18.0);
+        let b = Icon::new(Symbol::Check, Color::rgb(1, 2, 3)).size(24.0);
+        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
     }
 }

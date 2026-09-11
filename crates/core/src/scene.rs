@@ -33,6 +33,22 @@ struct Instance {
     /// whole subtree with nothing promoted in it before even computing its
     /// layout, instead of walking every static node just to find nothing.
     has_animated_descendant: bool,
+    /// The [`crate::Widget::paint_fingerprint`] the cached layer under
+    /// `layer_id` was last painted against, if the widget opts in.
+    content_fingerprint: Option<u64>,
+    /// The resolved hover/press/focus/disabled state in effect when
+    /// `content_fingerprint` was last refreshed. A fingerprint match alone
+    /// isn't enough to reuse the cache — the widget's *resolved* appearance
+    /// can depend on this live interaction state too (e.g. a hover
+    /// highlight), so both must match.
+    cached_states: Option<crate::StyleState>,
+    /// The ambient clip rect in effect the last time this layer was freshly
+    /// painted. A clipping ancestor (e.g. a `ScrollView`) restricts what
+    /// actually gets rasterized into the cached layer — pixels outside that
+    /// clip are never drawn, not merely hidden — so a later reuse under a
+    /// *wider* clip must not composite a buffer that was never painted that
+    /// far in the first place.
+    cached_clip: Option<Rect>,
 }
 
 fn remove_instance(tree: &mut Tree, instance: Instance) {
@@ -92,6 +108,9 @@ fn reconcile(
             animating_streak: 0,
             is_layer: false,
             has_animated_descendant: false,
+            content_fingerprint: None,
+            cached_states: None,
+            cached_clip: None,
         };
     };
 
@@ -127,6 +146,9 @@ fn reconcile(
         animating_streak: old.animating_streak,
         is_layer: old.is_layer,
         has_animated_descendant: old.has_animated_descendant,
+        content_fingerprint: old.content_fingerprint,
+        cached_states: old.cached_states,
+        cached_clip: old.cached_clip,
     }
 }
 
@@ -234,55 +256,89 @@ fn paint_instance(
             .with_hovered(painter.hovered(rect))
             .with_pressed(painter.pressed(rect))
             .with_focused(focusable && focus.focused_index == Some(focus.counter));
-        let resolved = instance.style.resolve(states);
-        let colors = painter.color_scheme();
-        let radius = resolved.paint.corner_radius.unwrap_or(0.0);
-        // A not-yet-promoted node is only ever visited on a full (non-
-        // `animated_only`) pass — see the pruning check above — so one call
-        // early is always a full pass too, with `clear()` already behind
-        // it. Waiting until `is_layer` itself flips would mean the *actual*
-        // first `push_layer` could land on a later animated-only tick
-        // instead, capturing a backdrop still contaminated by this widget's
-        // own last direct paint rather than the clean ambient background.
-        layer_active =
-            instance.is_layer || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK;
-        if layer_active {
-            painter.push_layer(instance.layer_id, rect, !animated_only);
-        }
-        if let Some(background) = resolved.paint.background {
-            painter.fill_rect(rect, background.resolve(&colors), radius);
-        }
-        instance.widget.paint(painter, rect);
-        if painter.take_animated() {
-            instance.animating_streak = instance.animating_streak.saturating_add(1);
-            if instance.animating_streak >= LAYER_PROMOTE_STREAK {
-                instance.is_layer = true;
+
+        let fingerprint = instance.widget.paint_fingerprint();
+        // A fingerprint match alone doesn't prove the cached pixels are
+        // still correct — the widget's *resolved* appearance can also
+        // depend on live hover/press/focus state that has nothing to do
+        // with its own fingerprint (see `cached_states`'s doc comment).
+        // A clipping ancestor restricts what actually gets rasterized into
+        // the cached layer, not just what's visible when compositing it —
+        // pixels outside that clip were never painted at all. A fingerprint
+        // and state match alone can't tell a layer cached under a narrower
+        // clip from one cached with nothing cut off, so the ambient clip in
+        // effect at capture time must match too.
+        let cache_hit = !animated_only
+            && fingerprint.is_some()
+            && fingerprint == instance.content_fingerprint
+            && instance.cached_states == Some(states)
+            && instance.cached_clip == Some(effective_clip)
+            && painter.composite_cached_layer(instance.layer_id, rect);
+
+        if !cache_hit {
+            let resolved = instance.style.resolve(states);
+            let colors = painter.color_scheme();
+            let radius = resolved.paint.corner_radius.unwrap_or(0.0);
+            // A not-yet-promoted node is only ever visited on a full (non-
+            // `animated_only`) pass — see the pruning check above — so one call
+            // early is always a full pass too, with `clear()` already behind
+            // it. Waiting until `is_layer` itself flips would mean the *actual*
+            // first `push_layer` could land on a later animated-only tick
+            // instead, capturing a backdrop still contaminated by this widget's
+            // own last direct paint rather than the clean ambient background.
+            // A fingerprinted widget is promoted unconditionally, on the same
+            // reasoning — its first paint must seed the cache a fresh pass
+            // reads back on the next unrelated rebuild.
+            layer_active = instance.is_layer
+                || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK
+                || fingerprint.is_some();
+            if layer_active {
+                painter.push_layer(instance.layer_id, rect, !animated_only);
             }
-        } else {
-            instance.animating_streak = instance.animating_streak.saturating_sub(1);
-            if instance.animating_streak == 0 {
-                instance.is_layer = false;
-                painter.forget_layer(instance.layer_id);
+            if let Some(background) = resolved.paint.background {
+                painter.fill_rect(rect, background.resolve(&colors), radius);
             }
-        }
-        // Borders and outlines sit over component-specific content, matching
-        // CSS box painting and preventing edge-to-edge content from hiding
-        // the common decoration.
-        if let Some(border) = resolved.paint.border {
-            painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
-        }
-        if let Some(outline) = resolved.paint.outline {
-            painter.stroke_rect(
-                Rect {
-                    x: rect.x - outline.width,
-                    y: rect.y - outline.width,
-                    width: rect.width + outline.width * 2.0,
-                    height: rect.height + outline.width * 2.0,
-                },
-                outline.color.resolve(&colors),
-                outline.width,
-                radius + outline.width,
-            );
+            instance.widget.paint(painter, rect);
+            if painter.take_animated() {
+                instance.animating_streak = instance.animating_streak.saturating_add(1);
+                if instance.animating_streak >= LAYER_PROMOTE_STREAK {
+                    instance.is_layer = true;
+                }
+            } else {
+                instance.animating_streak = instance.animating_streak.saturating_sub(1);
+                if instance.animating_streak == 0 {
+                    instance.is_layer = false;
+                    // A fingerprinted widget never calls `animation_time()`,
+                    // so this branch runs on every one of its paints —
+                    // forgetting its layer here would evict the cache this
+                    // same paint just seeded.
+                    if fingerprint.is_none() {
+                        painter.forget_layer(instance.layer_id);
+                    }
+                }
+            }
+            // Borders and outlines sit over component-specific content, matching
+            // CSS box painting and preventing edge-to-edge content from hiding
+            // the common decoration.
+            if let Some(border) = resolved.paint.border {
+                painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
+            }
+            if let Some(outline) = resolved.paint.outline {
+                painter.stroke_rect(
+                    Rect {
+                        x: rect.x - outline.width,
+                        y: rect.y - outline.width,
+                        width: rect.width + outline.width * 2.0,
+                        height: rect.height + outline.width * 2.0,
+                    },
+                    outline.color.resolve(&colors),
+                    outline.width,
+                    radius + outline.width,
+                );
+            }
+            instance.content_fingerprint = fingerprint;
+            instance.cached_states = fingerprint.map(|_| states);
+            instance.cached_clip = fingerprint.map(|_| effective_clip);
         }
     }
 
@@ -843,12 +899,14 @@ mod tests {
     struct AnimPainter {
         node_animated: bool,
         push_layer_calls: usize,
+        cached_layers: std::collections::HashSet<u64>,
     }
     impl AnimPainter {
         fn new() -> Self {
             AnimPainter {
                 node_animated: false,
                 push_layer_calls: 0,
+                cached_layers: std::collections::HashSet::new(),
             }
         }
     }
@@ -871,8 +929,15 @@ mod tests {
         fn take_animated(&mut self) -> bool {
             std::mem::take(&mut self.node_animated)
         }
-        fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool) {
+        fn push_layer(&mut self, id: u64, _rect: Rect, _fresh: bool) {
             self.push_layer_calls += 1;
+            self.cached_layers.insert(id);
+        }
+        fn composite_cached_layer(&mut self, id: u64, _rect: Rect) -> bool {
+            self.cached_layers.contains(&id)
+        }
+        fn forget_layer(&mut self, id: u64) {
+            self.cached_layers.remove(&id);
         }
     }
 
@@ -903,6 +968,65 @@ mod tests {
         fn children(&mut self) -> Vec<BoxedWidget> {
             std::mem::take(&mut self.children)
         }
+    }
+
+    struct FingerprintWidget {
+        count: Rc<std::cell::Cell<usize>>,
+        fingerprint: u64,
+    }
+    impl crate::widget::Widget for FingerprintWidget {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {
+            self.count.set(self.count.get() + 1);
+        }
+        fn paint_fingerprint(&self) -> Option<u64> {
+            Some(self.fingerprint)
+        }
+    }
+
+    #[test]
+    fn fingerprint_cache_skips_repaint_when_content_is_unchanged() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
+        assert_eq!(count.get(), 1);
+
+        // A second render with an identical fingerprint simulates an
+        // unrelated sibling triggering a rebuild — this widget's own
+        // content never changed, so it should reuse its cached layer.
+        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
+        assert_eq!(
+            count.get(),
+            1,
+            "an unrelated rebuild with an unchanged fingerprint should not repaint"
+        );
+    }
+
+    #[test]
+    fn fingerprint_cache_repaints_when_content_changes() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
+        renderer.render(build(count.clone(), 2), VIEWPORT, &mut painter);
+        assert_eq!(count.get(), 2, "a changed fingerprint must repaint");
     }
 
     #[test]

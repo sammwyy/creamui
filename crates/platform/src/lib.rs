@@ -1,12 +1,14 @@
 //! Common window-platform types for CreamUI.
 
+#[cfg(feature = "wayland")]
+pub mod wayland;
 mod winit;
 
 pub use self::winit::{
     ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon, EventLoop, EventLoopBuilder,
     EventLoopProxy, InputSerial, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
-    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PopupOptions, ResizeDirection,
-    Window, WindowAttributes, WindowEvent, WindowId, WindowLevel,
+    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PopupOptions, PopupPlacement,
+    ResizeDirection, Window, WindowAttributes, WindowEvent, WindowId, WindowLevel,
 };
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};

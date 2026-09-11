@@ -144,6 +144,12 @@ pub struct KeyEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputSerial(pub u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupPlacement {
+    Above,
+    Below,
+}
+
 #[derive(Debug, Clone)]
 pub struct PopupOptions {
     pub parent: Arc<Window>,
@@ -152,6 +158,7 @@ pub struct PopupOptions {
     pub anchor_width: f32,
     pub anchor_height: f32,
     pub input_serial: Option<InputSerial>,
+    pub placement: PopupPlacement,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +206,7 @@ pub enum WindowEvent {
     },
     KeyboardInput(KeyEvent),
     ModifiersChanged(Modifiers),
+    PopupDone,
     RedrawRequested,
     Other,
 }
@@ -395,19 +403,6 @@ impl ActiveEventLoop<'_> {
 
 impl PlatformBackend for ActiveEventLoop<'_> {
     fn kind(&self) -> BackendKind {
-        #[cfg(all(target_os = "linux", feature = "wayland"))]
-        {
-            return BackendKind::Wayland;
-        }
-        #[cfg(all(target_os = "linux", feature = "x11", not(feature = "wayland")))]
-        {
-            return BackendKind::X11;
-        }
-        #[cfg(target_os = "windows")]
-        {
-            return BackendKind::Windows;
-        }
-        #[allow(unreachable_code)]
         BackendKind::Winit
     }
 

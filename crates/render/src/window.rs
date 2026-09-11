@@ -33,7 +33,7 @@ use creamui_platform::{
     ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, EventLoop,
     EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
     Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta,
-    PopupOptions as PlatformPopupOptions, ResizeDirection, Window,
+    PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection, Window,
     WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
@@ -178,6 +178,7 @@ pub struct PopupOptions {
     parent: WindowHandle,
     anchor: Rect,
     input_serial: Option<InputSerial>,
+    placement: PopupPlacement,
 }
 
 impl PopupOptions {
@@ -187,11 +188,22 @@ impl PopupOptions {
             parent,
             anchor,
             input_serial,
+            placement: PopupPlacement::Below,
         }
     }
 
     pub fn with_input_serial(mut self, input_serial: InputSerial) -> Self {
         self.input_serial = Some(input_serial);
+        self
+    }
+
+    pub fn above(mut self) -> Self {
+        self.placement = PopupPlacement::Above;
+        self
+    }
+
+    pub fn below(mut self) -> Self {
+        self.placement = PopupPlacement::Below;
         self
     }
 }
@@ -201,6 +213,7 @@ impl std::fmt::Debug for PopupOptions {
         f.debug_struct("PopupOptions")
             .field("anchor", &self.anchor)
             .field("input_serial", &self.input_serial)
+            .field("placement", &self.placement)
             .finish()
     }
 }
@@ -1246,6 +1259,12 @@ impl WindowState {
                     handler();
                 }
             }
+            WindowEvent::PopupDone => {
+                self.close_requested.set(true);
+                if let Some(handler) = self.focus_lost_handler.borrow().as_ref().cloned() {
+                    handler();
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let scale = self.scale_factor.peek();
                 // Convention: positive `delta_y` reveals content further
@@ -1411,6 +1430,7 @@ impl AppHandler {
                             anchor_width: popup.anchor.width,
                             anchor_height: popup.anchor.height,
                             input_serial: popup.input_serial,
+                            placement: popup.placement,
                         },
                     )
                     .expect("failed to create popup")
@@ -2387,6 +2407,13 @@ mod tests {
         );
         harness.state.pointer_pos = Point { x: 50.0, y: 50.0 };
         assert_eq!(harness.state.resize_direction(), None);
+    }
+
+    #[test]
+    fn popup_done_requests_close() {
+        let mut harness = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        harness.send(WindowEvent::PopupDone);
+        assert!(harness.state.close_requested.get());
     }
 
     #[test]

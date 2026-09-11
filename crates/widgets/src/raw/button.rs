@@ -6,6 +6,7 @@ pub struct RawButton {
     pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
     pub on_click: Rc<dyn Fn()>,
+    pub on_click_at: Option<Rc<dyn Fn(Point)>>,
     pub disabled: bool,
 }
 
@@ -18,6 +19,7 @@ impl RawButton {
             style,
             children: Vec::new(),
             on_click: Rc::new(on_click),
+            on_click_at: None,
             disabled: false,
         }
     }
@@ -29,6 +31,11 @@ impl RawButton {
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
+        self
+    }
+
+    pub fn with_click_position(mut self, on_click: impl Fn(Point) + 'static) -> Self {
+        self.on_click_at = Some(Rc::new(on_click));
         self
     }
 
@@ -76,10 +83,7 @@ impl Widget for RawButton {
         // Hover/press are covered by `paint_instance`'s `cached_states`
         // guard; resolving against `NORMAL` here only needs to catch a real
         // change to the button's own background/border/outline.
-        let paint = self
-            .style
-            .resolve(creamui_core::StyleState::NORMAL)
-            .paint;
+        let paint = self.style.resolve(creamui_core::StyleState::NORMAL).paint;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.disabled.hash(&mut hasher);
         paint.background.hash(&mut hasher);
@@ -104,6 +108,14 @@ impl Widget for RawButton {
             None
         } else {
             Some(self.on_click.clone())
+        }
+    }
+
+    fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        if self.disabled {
+            None
+        } else {
+            self.on_click_at.clone()
         }
     }
 

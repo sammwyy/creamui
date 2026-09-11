@@ -339,6 +339,12 @@ pub trait Widget {
         None
     }
 
+    /// Optional click handler that receives the pointer position in the
+    /// widget's window-local coordinate space.
+    fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        None
+    }
+
     /// Optional intrinsic-size function for content-sized leaves (e.g.
     /// text). Default: `None`, meaning this widget's size is fully
     /// determined by its `Style` (the common case for containers).

@@ -215,6 +215,14 @@ impl Widget for Grid {
     fn children(&mut self) -> Vec<BoxedWidget> {
         self.inner.children()
     }
+
+    fn clips_children(&self) -> bool {
+        true
+    }
+
+    fn clip_corner_radius(&self) -> f32 {
+        self.inner.style().paint.corner_radius.unwrap_or(0.0)
+    }
 }
 
 /// A positioned child of a [`Grid`]. Grid lines are 1-indexed, matching CSS.

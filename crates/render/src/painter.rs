@@ -854,9 +854,8 @@ mod tests {
         use creamui_core::Renderer;
 
         let left = Rc::new(Cell::new(true));
-        let build = |left: Rc<Cell<bool>>| -> creamui_core::BoxedWidget {
-            Box::new(HalfSplit { left })
-        };
+        let build =
+            |left: Rc<Cell<bool>>| -> creamui_core::BoxedWidget { Box::new(HalfSplit { left }) };
         let viewport = creamui_core::Size {
             width: 20.0,
             height: 10.0,
@@ -960,7 +959,10 @@ mod tests {
         // The untouched half of the layer came from the captured backdrop
         // (the clear color), not a transparent hole.
         let untouched = painter.pixmap.pixel(5, 3).unwrap();
-        assert_eq!((untouched.red(), untouched.green(), untouched.blue()), (10, 20, 30));
+        assert_eq!(
+            (untouched.red(), untouched.green(), untouched.blue()),
+            (10, 20, 30)
+        );
     }
 
     struct HoverAware {
@@ -1020,7 +1022,11 @@ mod tests {
         // should reuse the cached layer rather than repaint.
         painter.clear(Color::rgba(0, 0, 0, 0));
         renderer.render(build(paints.clone()), viewport, &mut painter);
-        assert_eq!(paints.get(), 1, "an unchanged fingerprint and state should hit the cache");
+        assert_eq!(
+            paints.get(),
+            1,
+            "an unchanged fingerprint and state should hit the cache"
+        );
         assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
 
         // Same fingerprint, but now hovered: the cache must not hide this.

@@ -1,7 +1,7 @@
 //! Window creation and the reactive render loop.
 //!
-//! [`run`] opens a single window; [`AppBuilder`] opens several, all sharing
-//! one process and one winit event loop — e.g. a desktop-shell dock where
+//! [`run`] opens one window; [`AppBuilder`] opens several, all sharing one
+//! platform event loop — e.g. a desktop-shell dock where
 //! each icon/panel is its own window but spawning a process per icon would
 //! multiply fixed per-process overhead (runtime, allocator, embedded font,
 //! and — for the GPU backend — the graphics driver) for no benefit. Every
@@ -29,6 +29,13 @@ use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
 };
+use creamui_platform::{
+    ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, EventLoop,
+    EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
+    Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta,
+    PopupOptions as PlatformPopupOptions, ResizeDirection, Window,
+    WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel,
+};
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
 use std::any::Any;
@@ -41,15 +48,6 @@ use std::time::Duration;
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
-use winit::window::{
-    CursorIcon as WinitCursorIcon, ResizeDirection, Window, WindowAttributes, WindowId, WindowLevel,
-};
-
-use winit::event_loop::EventLoopProxy;
 
 /// How long the text-input caret stays in each visibility phase while
 /// blinking (on, then off, then on again).
@@ -79,16 +77,16 @@ fn set_if_changed<T: Clone + PartialEq + 'static>(signal: &Signal<T>, value: T) 
     }
 }
 
-fn translate_cursor_icon(icon: CursorIcon) -> WinitCursorIcon {
+fn translate_cursor_icon(icon: CursorIcon) -> PlatformCursorIcon {
     match icon {
-        CursorIcon::Default => WinitCursorIcon::Default,
-        CursorIcon::Text => WinitCursorIcon::Text,
-        CursorIcon::Pointer => WinitCursorIcon::Pointer,
-        CursorIcon::NotAllowed => WinitCursorIcon::NotAllowed,
-        CursorIcon::ResizeHorizontal => WinitCursorIcon::EwResize,
-        CursorIcon::ResizeVertical => WinitCursorIcon::NsResize,
-        CursorIcon::ResizeNwse => WinitCursorIcon::NwseResize,
-        CursorIcon::ResizeNesw => WinitCursorIcon::NeswResize,
+        CursorIcon::Default => PlatformCursorIcon::Default,
+        CursorIcon::Text => PlatformCursorIcon::Text,
+        CursorIcon::Pointer => PlatformCursorIcon::Pointer,
+        CursorIcon::NotAllowed => PlatformCursorIcon::NotAllowed,
+        CursorIcon::ResizeHorizontal => PlatformCursorIcon::ResizeHorizontal,
+        CursorIcon::ResizeVertical => PlatformCursorIcon::ResizeVertical,
+        CursorIcon::ResizeNwse => PlatformCursorIcon::ResizeNwse,
+        CursorIcon::ResizeNesw => PlatformCursorIcon::ResizeNesw,
     }
 }
 
@@ -101,24 +99,24 @@ fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
     }
 }
 
-/// Translates a winit logical key into CreamUI's backend-agnostic [`Key`].
+/// Translates a platform logical key into CreamUI's backend-agnostic [`Key`].
 /// Returns `None` for keys with no CreamUI meaning (modifiers, function
 /// keys, etc.) — those are silently ignored rather than delivered.
-fn translate_key(key: &WinitKey) -> Option<Key> {
+fn translate_key(key: &PlatformKey) -> Option<Key> {
     match key {
-        WinitKey::Character(s) => s.chars().next().map(Key::Char),
-        WinitKey::Named(NamedKey::Space) => Some(Key::Char(' ')),
-        WinitKey::Named(NamedKey::Backspace) => Some(Key::Backspace),
-        WinitKey::Named(NamedKey::Delete) => Some(Key::Delete),
-        WinitKey::Named(NamedKey::Enter) => Some(Key::Enter),
-        WinitKey::Named(NamedKey::Tab) => Some(Key::Tab),
-        WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
-        WinitKey::Named(NamedKey::ArrowLeft) => Some(Key::Left),
-        WinitKey::Named(NamedKey::ArrowRight) => Some(Key::Right),
-        WinitKey::Named(NamedKey::ArrowUp) => Some(Key::Up),
-        WinitKey::Named(NamedKey::ArrowDown) => Some(Key::Down),
-        WinitKey::Named(NamedKey::Home) => Some(Key::Home),
-        WinitKey::Named(NamedKey::End) => Some(Key::End),
+        PlatformKey::Character(s) => s.chars().next().map(Key::Char),
+        PlatformKey::Space => Some(Key::Char(' ')),
+        PlatformKey::Backspace => Some(Key::Backspace),
+        PlatformKey::Delete => Some(Key::Delete),
+        PlatformKey::Enter => Some(Key::Enter),
+        PlatformKey::Tab => Some(Key::Tab),
+        PlatformKey::Escape => Some(Key::Escape),
+        PlatformKey::Left => Some(Key::Left),
+        PlatformKey::Right => Some(Key::Right),
+        PlatformKey::Up => Some(Key::Up),
+        PlatformKey::Down => Some(Key::Down),
+        PlatformKey::Home => Some(Key::Home),
+        PlatformKey::End => Some(Key::End),
         _ => None,
     }
 }
@@ -130,6 +128,8 @@ pub struct WindowOptions {
     pub title: String,
     pub width: u32,
     pub height: u32,
+    /// Optional logical screen position used when creating the window.
+    pub position: Option<(i32, i32)>,
     pub resizable: bool,
     pub decorations: bool,
     pub transparent: bool,
@@ -150,6 +150,7 @@ impl Default for WindowOptions {
             title: "CreamUI".to_string(),
             width: 800,
             height: 600,
+            position: None,
             resizable: true,
             decorations: true,
             transparent: false,
@@ -157,6 +158,50 @@ impl Default for WindowOptions {
             backend: RenderBackend::default(),
             theme: Theme::default(),
         }
+    }
+}
+
+impl WindowOptions {
+    /// Sets the initial logical screen position before the native window is
+    /// created. This is preferable to moving the window after creation,
+    /// especially on Wayland where compositors may ignore late moves.
+    pub fn at_position(mut self, x: i32, y: i32) -> Self {
+        self.position = Some((x, y));
+        self
+    }
+}
+
+/// Configuration for a popup anchored to a rectangle in its parent window.
+/// The Wayland backend uses the input serial to create an `xdg_popup`.
+#[derive(Clone)]
+pub struct PopupOptions {
+    parent: WindowHandle,
+    anchor: Rect,
+    input_serial: Option<InputSerial>,
+}
+
+impl PopupOptions {
+    pub fn new(parent: WindowHandle, anchor: Rect) -> Self {
+        let input_serial = parent.last_input_serial.get();
+        Self {
+            parent,
+            anchor,
+            input_serial,
+        }
+    }
+
+    pub fn with_input_serial(mut self, input_serial: InputSerial) -> Self {
+        self.input_serial = Some(input_serial);
+        self
+    }
+}
+
+impl std::fmt::Debug for PopupOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PopupOptions")
+            .field("anchor", &self.anchor)
+            .field("input_serial", &self.input_serial)
+            .finish()
     }
 }
 
@@ -292,7 +337,14 @@ impl Presenter {
     /// logical rects, scaled to physical pixels by `scale`) to the GPU
     /// texture rather than the whole buffer. Backends with no partial-upload
     /// path fall back to a full [`Presenter::present`].
-    fn present_partial(&mut self, rgba: &[u8], width: u32, height: u32, dirty: &[Rect], scale: f32) {
+    fn present_partial(
+        &mut self,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        dirty: &[Rect],
+        scale: f32,
+    ) {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(gpu) => gpu.present_partial(rgba, width, height, dirty, scale),
@@ -339,6 +391,26 @@ impl AppHandle {
     ) {
         self.commands.borrow_mut().windows.push(PendingWindow {
             options,
+            popup: None,
+            clear_color,
+            on_window_ready: Box::new(on_window_ready),
+            build_ui: Box::new(build_ui),
+        });
+    }
+
+    /// Queues a popup relative to a rectangle in its parent window. Its
+    /// requested size remains subject to platform negotiation.
+    pub fn append_popup(
+        &self,
+        options: WindowOptions,
+        popup: PopupOptions,
+        clear_color: Color,
+        on_window_ready: impl FnOnce(WindowHandle) + 'static,
+        build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+    ) {
+        self.commands.borrow_mut().windows.push(PendingWindow {
+            options,
+            popup: Some(popup),
             clear_color,
             on_window_ready: Box::new(on_window_ready),
             build_ui: Box::new(build_ui),
@@ -527,7 +599,7 @@ struct InstalledTray {
 /// handler. Cheap to clone; every clone shares the same underlying window.
 ///
 /// Handed to a window's `on_window_ready` callback once that window has
-/// actually been created (winit windows don't exist until the event loop
+/// actually been created (platform windows don't exist until the event loop
 /// resumes, so this can't be available any earlier). All methods are no-ops
 /// if called after the window has closed.
 #[derive(Clone)]
@@ -535,6 +607,8 @@ pub struct WindowHandle {
     window: SharedWindow,
     theme: ThemeProvider,
     close_requested: Rc<Cell<bool>>,
+    focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
 }
 
@@ -544,15 +618,39 @@ impl WindowHandle {
     /// dragging the window border.
     pub fn resize(&self, width: u32, height: u32) {
         if let Some(window) = self.window.borrow().as_ref() {
-            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width, height));
+            window.request_inner_size(LogicalSize::new(width as f64, height as f64));
         }
     }
 
     /// Moves the window's top-left corner to a logical-pixel screen position.
     pub fn set_position(&self, x: i32, y: i32) {
         if let Some(window) = self.window.borrow().as_ref() {
-            window.set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+            window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
         }
+    }
+
+    /// Returns the window's top-left position in logical screen pixels.
+    pub fn position(&self) -> Option<(i32, i32)> {
+        let window = self.window.borrow();
+        let window = window.as_ref()?;
+        let position = window.outer_position()?;
+        let scale = window.scale_factor();
+        Some((
+            (position.x as f64 / scale) as i32,
+            (position.y as f64 / scale) as i32,
+        ))
+    }
+
+    /// Returns the current monitor's logical size in pixels.
+    pub fn monitor_size(&self) -> Option<(i32, i32)> {
+        let window = self.window.borrow();
+        let window = window.as_ref()?;
+        let size = window.monitor_size()?;
+        let scale = window.scale_factor();
+        Some((
+            (size.width as f64 / scale) as i32,
+            (size.height as f64 / scale) as i32,
+        ))
     }
 
     /// Pins (or unpins) the window above all others — the standard
@@ -575,6 +673,12 @@ impl WindowHandle {
         }
     }
 
+    /// Registers a callback invoked when the native window loses focus.
+    /// Registering a new callback replaces the previous one.
+    pub fn on_focus_lost(&self, handler: impl Fn() + 'static) {
+        *self.focus_lost_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
     /// Hides the window while retaining its UI state and native resources.
     /// Use [`show`](Self::show) to make it visible again. Wayland does not
     /// support changing a window's visibility; use `close` plus
@@ -591,7 +695,7 @@ impl WindowHandle {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_visible(true);
             window.set_minimized(false);
-            window.focus_window();
+            window.focus();
             window.request_redraw();
         }
     }
@@ -655,6 +759,7 @@ impl WindowHandle {
 /// once [`AppBuilder::run`] starts the shared event loop.
 struct WindowSpec {
     options: WindowOptions,
+    popup: Option<PopupOptions>,
     on_window_ready: Box<dyn FnOnce(WindowHandle)>,
     repaint: Rc<dyn Fn()>,
     repaint_scene: Rc<dyn Fn()>,
@@ -670,6 +775,8 @@ struct WindowSpec {
     frame: Rc<RefCell<FrameState>>,
     shared_window: SharedWindow,
     close_requested: Rc<Cell<bool>>,
+    focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    last_input_serial: Rc<Cell<Option<InputSerial>>>,
     theme_provider: ThemeProvider,
     focused: Rc<Cell<Option<usize>>>,
     caret_visible: Rc<Cell<bool>>,
@@ -713,6 +820,7 @@ pub struct AppBuilder {
 /// any of them need it).
 struct PendingWindow {
     options: WindowOptions,
+    popup: Option<PopupOptions>,
     clear_color: Color,
     on_window_ready: Box<dyn FnOnce(WindowHandle)>,
     build_ui: Box<dyn Fn(Size) -> BoxedWidget>,
@@ -776,6 +884,7 @@ impl AppBuilder {
     ) -> Self {
         self.specs.push(PendingWindow {
             options,
+            popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
             build_ui: Box::new(build_ui),
@@ -804,7 +913,7 @@ impl Default for AppBuilder {
     }
 }
 
-/// Per-window state for a window that has actually been created (its winit
+/// Per-window state for a window that has actually been created (its platform
 /// [`Window`] exists and its presenter is ready). Lives in [`AppHandler`],
 /// keyed by [`WindowId`], from the moment `resumed` creates it until
 /// `CloseRequested` removes it.
@@ -814,11 +923,13 @@ struct WindowState {
     frame: Rc<RefCell<FrameState>>,
     window: SharedWindow,
     close_requested: Rc<Cell<bool>>,
+    focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
     presenter: Option<Presenter>,
     pointer_pos: Point,
-    modifiers: ModifiersState,
+    modifiers: PlatformModifiers,
     /// Index into the current `Scene`'s focusables, if any widget has
     /// keyboard focus. Only stable while the widget tree's shape doesn't
     /// change — see `Scene`'s doc comment. Shared with `repaint` (below) so
@@ -1044,10 +1155,11 @@ impl WindowState {
                 }
             }
             WindowEvent::MouseInput {
-                state: ElementState::Pressed,
+                pressed: true,
                 button: MouseButton::Left,
-                ..
+                serial,
             } => {
+                self.last_input_serial.set(serial);
                 self.frame.borrow_mut().painter.press_origin = Some(self.pointer_pos);
                 (self.repaint_light)();
                 if let Some(direction) = self.resize_direction() {
@@ -1062,6 +1174,7 @@ impl WindowState {
                 };
 
                 let click_handler = scene.hit_test(self.pointer_pos).cloned();
+                let click_handler_at = scene.hit_test_at(self.pointer_pos).cloned();
                 let new_focus = scene.focus_hit_test(self.pointer_pos);
                 let focus_changed = new_focus != self.focused.get();
                 self.focused.set(new_focus);
@@ -1099,14 +1212,18 @@ impl WindowState {
                         rect,
                     );
                 }
-                if let Some(handler) = click_handler {
+                if let Some(handler) = click_handler_at {
+                    log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
+                    handler(self.pointer_pos);
+                    (self.render)();
+                } else if let Some(handler) = click_handler {
                     log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
                     handler();
                     (self.render)();
                 }
             }
             WindowEvent::MouseInput {
-                state: ElementState::Released,
+                pressed: false,
                 button: MouseButton::Left,
                 ..
             } => {
@@ -1114,7 +1231,7 @@ impl WindowState {
                 self.frame.borrow_mut().painter.press_origin = None;
                 (self.repaint_light)();
             }
-            WindowEvent::CursorLeft { .. } => {
+            WindowEvent::CursorLeft => {
                 self.frame.borrow_mut().painter.pointer = None;
                 if let Some((_, callback)) = self.hovered.take() {
                     callback(false);
@@ -1125,6 +1242,9 @@ impl WindowState {
                 self.frame.borrow_mut().painter.press_origin = None;
                 self.dragging = None;
                 (self.repaint_light)();
+                if let Some(handler) = self.focus_lost_handler.borrow().as_ref().cloned() {
+                    handler();
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let scale = self.scale_factor.peek();
@@ -1132,8 +1252,8 @@ impl WindowState {
                 // down (increases a scroll view's offset), matching
                 // "natural" wheel-down scrolling.
                 let delta_y: f32 = match delta {
-                    winit::event::MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
+                    MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
+                    MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
                 };
 
                 let frame = self.frame.borrow();
@@ -1155,15 +1275,11 @@ impl WindowState {
                     }
                 }
             }
-            WindowEvent::KeyboardInput {
-                event,
-                is_synthetic: false,
-                ..
-            } => {
-                if event.state != ElementState::Pressed {
+            WindowEvent::KeyboardInput(event) if !event.synthetic => {
+                if !event.pressed {
                     return;
                 }
-                if event.logical_key == WinitKey::Named(NamedKey::F3) {
+                if event.key == PlatformKey::F3 {
                     let toggled = {
                         let mut frame = self.frame.borrow_mut();
                         frame
@@ -1176,18 +1292,18 @@ impl WindowState {
                     }
                     return;
                 }
-                let Some(key) = translate_key(&event.logical_key) else {
+                let Some(key) = translate_key(&event.key) else {
                     return;
                 };
                 self.handle_key_input(KeyInput {
                     key,
                     modifiers: Modifiers {
-                        ctrl: self.modifiers.control_key(),
-                        shift: self.modifiers.shift_key(),
+                        ctrl: self.modifiers.ctrl,
+                        shift: self.modifiers.shift,
                     },
                 });
             }
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
             WindowEvent::RedrawRequested => {
                 let mut full_repaint = true;
                 if self.dirty.get() {
@@ -1233,7 +1349,7 @@ impl WindowState {
 /// The shared [`ApplicationHandler`] driving every window opened by
 /// [`AppBuilder`] (and, for a single window, [`run`]) from one event loop.
 struct AppHandler {
-    /// Drained the first time `resumed` runs: creates each window's winit
+    /// Drained the first time `resumed` runs: creates each platform
     /// `Window` and presenter, then moves it into `windows`. `resumed` can
     /// in principle be called again later (e.g. mobile lifecycle), at which
     /// point this is already empty and a no-op.
@@ -1262,28 +1378,47 @@ struct AppHandler {
 }
 
 impl AppHandler {
-    fn create_window(&mut self, event_loop: &ActiveEventLoop, spec: WindowSpec) {
+    fn create_window(&mut self, event_loop: &ActiveEventLoop<'_>, spec: WindowSpec) {
         let t0 = Instant::now();
-        let attrs = WindowAttributes::default()
-            .with_title(spec.options.title.clone())
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                spec.options.width,
-                spec.options.height,
-            ))
-            .with_resizable(spec.options.resizable)
-            .with_decorations(spec.options.decorations)
-            .with_transparent(spec.options.transparent);
-        #[cfg(target_arch = "wasm32")]
-        let attrs = {
-            use winit::platform::web::WindowAttributesExtWebSys;
-            attrs.with_append(true)
+        let attrs = PlatformWindowAttributes {
+            title: spec.options.title.clone(),
+            size: LogicalSize::new(spec.options.width as f64, spec.options.height as f64),
+            position: spec
+                .options
+                .position
+                .map(|(x, y)| LogicalPosition::new(x as f64, y as f64)),
+            resizable: spec.options.resizable,
+            decorations: spec.options.decorations,
+            transparent: spec.options.transparent,
         };
 
-        let window = Arc::new(
-            event_loop
+        let window = match spec.popup.as_ref() {
+            Some(popup) => {
+                let parent = popup
+                    .parent
+                    .window
+                    .borrow()
+                    .as_ref()
+                    .cloned()
+                    .expect("creamui-render: the popup parent window no longer exists");
+                event_loop
+                    .create_popup(
+                        attrs,
+                        PlatformPopupOptions {
+                            parent,
+                            anchor_x: popup.anchor.x,
+                            anchor_y: popup.anchor.y,
+                            anchor_width: popup.anchor.width,
+                            anchor_height: popup.anchor.height,
+                            input_serial: popup.input_serial,
+                        },
+                    )
+                    .expect("failed to create popup")
+            }
+            None => event_loop
                 .create_window(attrs)
                 .expect("failed to create window"),
-        );
+        };
         // Show the window the instant it exists rather than waiting for
         // GPU init (adapter/device/pipeline — several hundred ms on
         // Windows) to finish. That init cost doesn't go away, but the
@@ -1355,6 +1490,8 @@ impl AppHandler {
             window: spec.shared_window.clone(),
             theme: spec.theme_provider.clone(),
             close_requested: spec.close_requested.clone(),
+            focus_lost_handler: spec.focus_lost_handler.clone(),
+            last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
         });
 
@@ -1368,11 +1505,13 @@ impl AppHandler {
                 frame: spec.frame,
                 window: spec.shared_window.clone(),
                 close_requested: spec.close_requested,
+                focus_lost_handler: spec.focus_lost_handler,
+                last_input_serial: spec.last_input_serial,
                 close_behavior: spec.options.close_behavior,
                 frameless_resizable,
                 presenter: Some(presenter),
                 pointer_pos: Point::default(),
-                modifiers: ModifiersState::default(),
+                modifiers: PlatformModifiers::default(),
                 focused: spec.focused,
                 caret_visible: spec.caret_visible,
                 next_blink: Instant::now() + CARET_BLINK_INTERVAL,
@@ -1406,7 +1545,7 @@ enum AppEvent {
 }
 
 impl ApplicationHandler<AppEvent> for AppHandler {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
         #[cfg(all(feature = "tray", target_os = "linux"))]
         if self.trays.is_empty() {
             self.trays = std::mem::take(&mut self.pending_trays)
@@ -1433,7 +1572,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
 
     fn window_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
+        event_loop: &ActiveEventLoop<'_>,
         window_id: WindowId,
         event: WindowEvent,
     ) {
@@ -1468,7 +1607,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop<'_>, event: AppEvent) {
         match event {
             #[cfg(all(feature = "tray", target_os = "linux"))]
             AppEvent::TrayMenu(id) => {
@@ -1486,7 +1625,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
         self.drain_app_commands(event_loop);
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
         self.drain_app_commands(event_loop);
         if self.commands.borrow().exit_requested {
             event_loop.exit();
@@ -1547,7 +1686,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
 }
 
 impl AppHandler {
-    fn drain_app_commands(&mut self, event_loop: &ActiveEventLoop) {
+    fn drain_app_commands(&mut self, event_loop: &ActiveEventLoop<'_>) {
         let (windows, exit_requested) = {
             let mut commands = self.commands.borrow_mut();
             (
@@ -1580,7 +1719,7 @@ impl AppHandler {
         }
     }
 
-    fn close_window(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+    fn close_window(&mut self, event_loop: &ActiveEventLoop<'_>, window_id: WindowId) {
         log::debug!("creamui-render: close requested for window {window_id:?}");
         if let Some(state) = self.windows.remove(&window_id) {
             state.window.borrow_mut().take();
@@ -1737,13 +1876,12 @@ fn run_windows(
         .expect("event loop exited with an error");
     #[cfg(target_arch = "wasm32")]
     {
-        use winit::platform::web::EventLoopExtWebSys;
         event_loop.spawn_app(handler);
     }
 }
 
 /// Builds one window's pre-creation state (signals, frame buffer, reactive
-/// effect) — everything that doesn't depend on the winit `Window` actually
+/// effect) — everything that doesn't depend on the platform `Window` actually
 /// existing yet. `resumed` finishes the job once the event loop starts.
 fn build_window_spec(
     index: usize,
@@ -1753,6 +1891,7 @@ fn build_window_spec(
 ) -> WindowSpec {
     let PendingWindow {
         options,
+        popup,
         clear_color,
         on_window_ready,
         build_ui,
@@ -1779,6 +1918,8 @@ fn build_window_spec(
         }
     });
     let close_requested = Rc::new(Cell::new(false));
+    let focus_lost_handler = Rc::new(RefCell::new(None));
+    let last_input_serial = Rc::new(Cell::new(None));
     let theme_provider = ThemeProvider::new(options.theme);
     let build_ui: Rc<dyn Fn(Size) -> BoxedWidget> = Rc::from(build_ui);
     let focused: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
@@ -1968,7 +2109,7 @@ fn build_window_spec(
             with_theme_scope(&theme_provider, &window_drag, || {
                 let logical_size = viewport.peek();
                 *pending_root.borrow_mut() = Some(build_ui_with_recovery(&build_ui, logical_size));
-                // The first reactive run happens before winit has created the
+                // The first reactive run happens before the platform has created the
                 // window, so render immediately to provide its initial frame.
                 // Afterwards merely mark dirty and let RedrawRequested coalesce
                 // all input updates into one layout/paint pass.
@@ -2007,6 +2148,7 @@ fn build_window_spec(
 
     WindowSpec {
         options,
+        popup,
         on_window_ready,
         repaint,
         repaint_scene,
@@ -2022,6 +2164,8 @@ fn build_window_spec(
         frame,
         shared_window,
         close_requested,
+        focus_lost_handler,
+        last_input_serial,
         theme_provider,
         focused,
         caret_visible,
@@ -2032,7 +2176,6 @@ fn build_window_spec(
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use winit::event::DeviceId;
 
     struct WindowEventHarness {
         state: WindowState,
@@ -2048,6 +2191,7 @@ mod tests {
                         height: 100,
                         ..WindowOptions::default()
                     },
+                    popup: None,
                     clear_color: Color::rgba(0, 0, 0, 255),
                     on_window_ready: Box::new(|_| {}),
                     build_ui: Box::new(build_ui),
@@ -2062,11 +2206,13 @@ mod tests {
                     frame: spec.frame,
                     window: spec.shared_window,
                     close_requested: spec.close_requested,
+                    focus_lost_handler: spec.focus_lost_handler,
+                    last_input_serial: spec.last_input_serial,
                     close_behavior: CloseBehavior::Close,
                     frameless_resizable: false,
                     presenter: None,
                     pointer_pos: Point::default(),
-                    modifiers: ModifiersState::default(),
+                    modifiers: PlatformModifiers::default(),
                     focused: spec.focused,
                     caret_visible: spec.caret_visible,
                     next_blink: Instant::now() + CARET_BLINK_INTERVAL,
@@ -2214,13 +2360,12 @@ mod tests {
         });
 
         harness.send(WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(),
-            position: winit::dpi::PhysicalPosition::new(20.0, 20.0),
+            position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },
         });
         harness.send(WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
-            state: ElementState::Pressed,
+            pressed: true,
             button: MouseButton::Left,
+            serial: None,
         });
         harness.key(KeyInput {
             key: Key::Char('x'),
@@ -2251,15 +2396,14 @@ mod tests {
 
     // `EventLoop::build()` refuses to run outside the main thread, which
     // `cargo test` never is — the X11 `any_thread` escape hatch is the only
-    // way to get a real `EventLoopProxy` here, and winit allows only one
-    // `EventLoop` per process ever, so the (leaked) loop behind it is
+    // way to get a real `EventLoopProxy` here, and the adapter allows only one
+    // `EventLoop` per process, so the (leaked) loop behind it is
     // shared across every test that needs a proxy. This only proves the
     // registration/dispatch logic below; the hop through a real running
-    // `ActiveEventLoop`'s `user_event` is pre-existing winit machinery
+    // `ActiveEventLoop`'s `user_event` is pre-existing adapter machinery
     // already exercised by the tray feature, not re-tested here.
     #[cfg(target_os = "linux")]
     fn test_proxy() -> EventLoopProxy<AppEvent> {
-        use winit::platform::x11::EventLoopBuilderExtX11;
         static PROXY: std::sync::OnceLock<EventLoopProxy<AppEvent>> = std::sync::OnceLock::new();
         PROXY
             .get_or_init(|| {

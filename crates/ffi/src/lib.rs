@@ -979,6 +979,7 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         title: unsafe { cstr_to_string(options.title) },
         width: options.width,
         height: options.height,
+        position: None,
         resizable: options.resizable != 0,
         decorations: options.decorations != 0,
         transparent: options.transparent != 0,

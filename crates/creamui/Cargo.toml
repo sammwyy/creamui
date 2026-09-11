@@ -27,6 +27,7 @@ full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray"]
 [dependencies]
 creamui-core = { workspace = true }
 creamui-reactive = { workspace = true }
+creamui-platform = { workspace = true }
 creamui-render = { workspace = true }
 creamui-devtools = { workspace = true, optional = true }
 creamui-theme = { workspace = true }

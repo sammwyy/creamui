@@ -6,6 +6,7 @@
 
 pub use creamui_core as core;
 pub use creamui_fonts as fonts;
+pub use creamui_platform as platform;
 pub use creamui_reactive as reactive;
 pub use creamui_render as render;
 pub use creamui_theme as theme;

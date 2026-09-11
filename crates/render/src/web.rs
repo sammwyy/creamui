@@ -1,10 +1,9 @@
-//! Browser presentation: copies the CPU-rasterized frame into winit's canvas.
+//! Web presentation: copies the rasterized frame into the platform canvas.
 
+use creamui_platform::Window;
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
-use winit::platform::web::WindowExtWebSys;
-use winit::window::Window;
 
 pub struct WebState {
     canvas: HtmlCanvasElement,
@@ -15,7 +14,7 @@ impl WebState {
     pub fn new(window: Arc<Window>) -> Self {
         let canvas = window
             .canvas()
-            .expect("winit did not create a canvas for the CreamUI web demo");
+            .expect("the platform did not create a canvas for the web demo");
         let context = canvas
             .get_context("2d")
             .expect("could not obtain canvas context")
@@ -27,7 +26,7 @@ impl WebState {
 
     pub fn present(&mut self, rgba: &[u8], width: u32, height: u32) {
         // The `<canvas>` backing pixel buffer (its `width`/`height` IDL
-        // attributes) is independent of its CSS box size and winit never
+        // attributes) is independent of its CSS box size and the platform never
         // touches it — left at the browser default (300x150) it silently
         // crops every frame and the CSS-sized box then stretches that crop,
         // rendering blurry. Keep it in lockstep with the painted frame so a

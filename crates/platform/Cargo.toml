@@ -1,0 +1,25 @@
+[package]
+name = "creamui-platform"
+description = "Window, event, and native-surface abstraction for CreamUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["gui", "windowing", "wayland", "x11"]
+categories = ["gui"]
+
+[features]
+default = ["winit-adapter"]
+winit-adapter = []
+wayland = ["winit-adapter"]
+x11 = ["winit-adapter"]
+windows = ["winit-adapter"]
+
+[dependencies]
+raw-window-handle = { workspace = true }
+winit = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }

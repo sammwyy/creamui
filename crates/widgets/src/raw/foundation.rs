@@ -53,10 +53,7 @@ impl Widget for RawView {
 
     fn paint_fingerprint(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
-        let paint = self
-            .style
-            .resolve(creamui_core::StyleState::NORMAL)
-            .paint;
+        let paint = self.style.resolve(creamui_core::StyleState::NORMAL).paint;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         paint.background.hash(&mut hasher);
         paint
@@ -73,6 +70,14 @@ impl Widget for RawView {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
+    }
+
+    fn clips_children(&self) -> bool {
+        true
+    }
+
+    fn clip_corner_radius(&self) -> f32 {
+        self.style.paint.corner_radius.unwrap_or(0.0)
     }
 }
 

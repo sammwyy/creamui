@@ -1,6 +1,6 @@
 [package]
 name = "creamui-render"
-description = "wgpu + winit windowing and rendering backend for CreamUI"
+description = "Rendering backend for CreamUI"
 version = "0.1.2"
 edition.workspace = true
 license.workspace = true
@@ -8,11 +8,15 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 readme = "README.md"
-keywords = ["gui", "ui", "winit", "wgpu"]
+keywords = ["gui", "ui", "rendering", "wgpu"]
 categories = ["gui"]
 
 [features]
-default = []
+default = ["platform-winit"]
+platform-winit = ["creamui-platform/winit-adapter"]
+platform-wayland = ["creamui-platform/wayland"]
+platform-x11 = ["creamui-platform/x11"]
+platform-windows = ["creamui-platform/windows"]
 # Native Linux system-tray integration through the freedesktop
 # StatusNotifierItem D-Bus protocol. It is opt-in and does not use GTK.
 tray = ["dep:creamui-tray", "creamui-tray/linux-status-notifier"]
@@ -23,7 +27,7 @@ creamui-theme = { workspace = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-tray = { workspace = true, optional = true }
-winit = { workspace = true }
+creamui-platform = { workspace = true }
 tiny-skia = { workspace = true }
 fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }

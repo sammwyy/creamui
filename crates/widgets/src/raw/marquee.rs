@@ -11,6 +11,8 @@ pub struct RawMarquee {
     pub style: creamui_core::Style,
     pub font_size: f32,
     pub color: Color,
+    pub font_family: Option<String>,
+    pub bold: bool,
 }
 
 impl RawMarquee {
@@ -23,6 +25,8 @@ impl RawMarquee {
             }),
             font_size,
             color,
+            font_family: None,
+            bold: false,
         }
     }
 
@@ -40,7 +44,19 @@ impl RawMarquee {
             }),
             font_size,
             color,
+            font_family: None,
+            bold: false,
         }
+    }
+
+    pub fn font_family(mut self, family: impl Into<String>) -> Self {
+        self.font_family = Some(family.into());
+        self
+    }
+
+    pub fn bold(mut self, active: bool) -> Self {
+        self.bold = active;
+        self
     }
 
     fn estimated_width(&self) -> f32 {
@@ -77,7 +93,7 @@ impl Widget for RawMarquee {
         let overflow = text_width - rect.width;
         if overflow <= 0.0 {
             painter.push_clip(rect);
-            painter.fill_text(
+            painter.fill_text_font(
                 Rect {
                     width: rect.width + text_width + 1024.0,
                     ..rect
@@ -86,6 +102,9 @@ impl Widget for RawMarquee {
                 self.color,
                 self.font_size,
                 TextAlign::Start,
+                self.font_family.as_deref(),
+                self.bold,
+                false,
             );
             painter.pop_clip();
             return;
@@ -96,7 +115,7 @@ impl Widget for RawMarquee {
         let phase = painter.animation_time() % cycle.as_secs_f32();
         let offset = ping_pong_offset(phase, travel);
         painter.push_clip(rect);
-        painter.fill_text(
+        painter.fill_text_font(
             Rect {
                 x: rect.x - offset,
                 y: rect.y,
@@ -107,6 +126,9 @@ impl Widget for RawMarquee {
             self.color,
             self.font_size,
             TextAlign::Start,
+            self.font_family.as_deref(),
+            self.bold,
+            false,
         );
         painter.pop_clip();
     }
@@ -130,8 +152,7 @@ mod tests {
 
         let return_start = pause + move_time + pause;
         assert!(
-            (ping_pong_offset(return_start + move_time / 2.0, travel) - travel / 2.0).abs()
-                < 0.01
+            (ping_pong_offset(return_start + move_time / 2.0, travel) - travel / 2.0).abs() < 0.01
         );
         let cycle_end = return_start + move_time;
         assert!(ping_pong_offset(cycle_end, travel).abs() < 0.01);

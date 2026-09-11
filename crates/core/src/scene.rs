@@ -1,7 +1,8 @@
 use crate::geometry::{Point, Rect, Size};
 use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter};
 use std::rc::Rc;
-use taffy::prelude::{AvailableSpace, TaffyTree};
+use taffy::prelude::{AvailableSpace, Dimension, TaffyTree};
+use taffy::style::Position;
 
 type Tree = TaffyTree<MeasureFn>;
 
@@ -97,7 +98,7 @@ fn reconcile(
             children.push(child);
         }
         let node_id = tree
-            .new_with_children(new_style.layout.clone(), &child_ids)
+            .new_with_children(constrain_inflow(new_style.layout.clone()), &child_ids)
             .expect("taffy node creation is infallible for well-formed styles");
         tree.set_node_context(node_id, new_measure)
             .expect("setting the context of a freshly created node should not fail");
@@ -119,7 +120,7 @@ fn reconcile(
         };
     };
 
-    tree.set_style(old.node_id, new_style.layout.clone())
+    tree.set_style(old.node_id, constrain_inflow(new_style.layout.clone()))
         .expect("updating the style of an existing node should not fail");
     tree.set_node_context(old.node_id, new_measure)
         .expect("updating the context of an existing node should not fail");
@@ -158,18 +159,37 @@ fn reconcile(
     }
 }
 
-/// Effectively "no clip": large enough that intersecting any on-screen rect
-/// against it is a no-op. Used as the ambient clip at the root of the tree.
-const UNCLIPPED: Rect = Rect {
-    x: -1_000_000.0,
-    y: -1_000_000.0,
-    width: 2_000_000.0,
-    height: 2_000_000.0,
-};
+fn viewport_rect(viewport: Size) -> Rect {
+    Rect {
+        x: 0.0,
+        y: 0.0,
+        width: viewport.width.max(0.0),
+        height: viewport.height.max(0.0),
+    }
+}
+
+fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
+    if style.min_size.width == Dimension::Auto {
+        style.min_size.width = Dimension::Length(0.0);
+    }
+    if style.min_size.height == Dimension::Auto {
+        style.min_size.height = Dimension::Length(0.0);
+    }
+    if style.position != Position::Absolute && style.flex_shrink > 0.0 {
+        if style.max_size.width == Dimension::Auto {
+            style.max_size.width = Dimension::Percent(1.0);
+        }
+        if style.max_size.height == Dimension::Auto {
+            style.max_size.height = Dimension::Percent(1.0);
+        }
+    }
+    style
+}
 
 #[derive(Default)]
 struct PaintOutputs {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
+    hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     focusables: Vec<(Rect, Rc<dyn Fn(KeyInput)>)>,
     /// `(visible_rect, full_rect, handler)` — hit-testing uses the
     /// clip-visible portion, but the handler is called with the widget's
@@ -208,6 +228,7 @@ fn paint_instance(
     painter: &mut dyn Painter,
     parent_origin: Point,
     clip: Rect,
+    viewport: Rect,
     focus: &mut FocusContext,
     out: &mut PaintOutputs,
     mode: PaintMode,
@@ -237,7 +258,7 @@ fn paint_instance(
         .unwrap_or(false);
     // Absolute layers are portals.
     let effective_clip = if mode == PaintMode::Absolute && absolute {
-        UNCLIPPED
+        viewport
     } else {
         clip
     };
@@ -358,6 +379,9 @@ fn paint_instance(
             if let Some(handler) = instance.widget.on_click() {
                 out.hits.push((visible, handler));
             }
+            if let Some(handler) = instance.widget.on_click_at() {
+                out.hits_at.push((visible, handler));
+            }
             if instance.widget.focusable() {
                 if let Some(on_key) = instance.widget.on_key() {
                     if focus.focused_index == Some(focus.counter) {
@@ -447,6 +471,7 @@ fn paint_instance(
             painter,
             child_origin,
             child_clip,
+            viewport,
             focus,
             out,
             child_mode,
@@ -477,6 +502,7 @@ fn paint_instance(
 /// — see `scene::reconcile`'s docs on structural (not keyed) reconciliation.
 pub struct Scene {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
+    hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     focusables: Vec<(Rect, Rc<dyn Fn(KeyInput)>)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
@@ -502,6 +528,16 @@ impl Scene {
     /// Returns the click handler for the topmost widget containing `point`, if any.
     pub fn hit_test(&self, point: Point) -> Option<&Rc<dyn Fn()>> {
         self.hits
+            .iter()
+            .rev()
+            .find(|(rect, _)| rect.contains(point))
+            .map(|(_, handler)| handler)
+    }
+
+    /// Returns the click handler with the pointer position for the topmost
+    /// widget containing `point`, if any.
+    pub fn hit_test_at(&self, point: Point) -> Option<&Rc<dyn Fn(Point)>> {
+        self.hits_at
             .iter()
             .rev()
             .find(|(rect, _)| rect.contains(point))
@@ -601,6 +637,7 @@ pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
     next_layer_id: u64,
+    viewport: Size,
 }
 
 impl Renderer {
@@ -609,6 +646,7 @@ impl Renderer {
             tree: TaffyTree::new(),
             root: None,
             next_layer_id: 0,
+            viewport: Size::default(),
         }
     }
 
@@ -655,6 +693,9 @@ impl Renderer {
             )
             .expect("layout computation should not fail for a well-formed tree");
 
+        self.viewport = viewport;
+        let clip = viewport_rect(viewport);
+        painter.push_clip(clip);
         let mut out = PaintOutputs::default();
         let mut focus = FocusContext {
             focused_index,
@@ -666,7 +707,8 @@ impl Renderer {
             &mut instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Flow,
@@ -677,15 +719,18 @@ impl Renderer {
             &mut instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Absolute,
             false,
         );
+        painter.pop_clip();
         self.root = Some(instance);
         Scene {
             hits: out.hits,
+            hits_at: out.hits_at,
             focusables: out.focusables,
             draggables: out.draggables,
             drag_starts: out.drag_starts,
@@ -704,6 +749,8 @@ impl Renderer {
         caret_visible: bool,
     ) -> Option<Scene> {
         let instance = self.root.as_mut()?;
+        let clip = viewport_rect(self.viewport);
+        painter.push_clip(clip);
         let mut out = PaintOutputs::default();
         let mut focus = FocusContext {
             focused_index,
@@ -715,7 +762,8 @@ impl Renderer {
             instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Flow,
@@ -726,14 +774,17 @@ impl Renderer {
             instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Absolute,
             false,
         );
+        painter.pop_clip();
         Some(Scene {
             hits: out.hits,
+            hits_at: out.hits_at,
             focusables: out.focusables,
             draggables: out.draggables,
             drag_starts: out.drag_starts,
@@ -762,6 +813,8 @@ impl Renderer {
             return Vec::new();
         };
         painter.begin_animated_frame();
+        let clip = viewport_rect(self.viewport);
+        painter.push_clip(clip);
         let mut out = PaintOutputs::default();
         let mut focus = FocusContext {
             focused_index,
@@ -773,7 +826,8 @@ impl Renderer {
             instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Flow,
@@ -784,12 +838,14 @@ impl Renderer {
             instance,
             painter,
             Point::default(),
-            UNCLIPPED,
+            clip,
+            clip,
             &mut focus,
             &mut out,
             PaintMode::Absolute,
             true,
         );
+        painter.pop_clip();
         painter.take_damage()
     }
 }
@@ -1226,5 +1282,105 @@ mod tests {
             "a promoted layer nested under an absolute ancestor — skipped by \
              the Flow pass — must still be reached and repainted by the Absolute pass"
         );
+    }
+
+    struct SizedClick {
+        width: f32,
+        height: f32,
+        flex_shrink: f32,
+        clicked: Rc<std::cell::Cell<bool>>,
+    }
+    impl crate::widget::Widget for SizedClick {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(self.width),
+                    height: Dimension::Length(self.height),
+                },
+                flex_shrink: self.flex_shrink,
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+            let clicked = self.clicked.clone();
+            Some(Rc::new(move || clicked.set(true)))
+        }
+    }
+
+    struct ColumnRoot {
+        height: f32,
+        children: Vec<BoxedWidget>,
+    }
+    impl crate::widget::Widget for ColumnRoot {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                display: taffy::style::Display::Flex,
+                flex_direction: taffy::style::FlexDirection::Column,
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(100.0),
+                    height: Dimension::Length(self.height),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+    }
+
+    #[test]
+    fn inflow_child_cannot_exceed_parent() {
+        let clicked = Rc::new(std::cell::Cell::new(false));
+        let scene = render_frame(
+            Box::new(ColumnRoot {
+                height: 100.0,
+                children: vec![Box::new(SizedClick {
+                    width: 100.0,
+                    height: 400.0,
+                    flex_shrink: 1.0,
+                    clicked: clicked.clone(),
+                })],
+            }),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &mut NoopPainter,
+        );
+        assert!(scene.hit_test(Point { x: 50.0, y: 150.0 }).is_none());
+        scene
+            .hit_test(Point { x: 50.0, y: 50.0 })
+            .expect("capped child still fills the parent")();
+        assert!(clicked.get());
+    }
+
+    #[test]
+    fn viewport_clips_hit_testing_of_nonshrinking_overflow() {
+        let clicked = Rc::new(std::cell::Cell::new(false));
+        let scene = render_frame(
+            Box::new(ColumnRoot {
+                height: 100.0,
+                children: vec![Box::new(SizedClick {
+                    width: 100.0,
+                    height: 400.0,
+                    flex_shrink: 0.0,
+                    clicked: clicked.clone(),
+                })],
+            }),
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+            &mut NoopPainter,
+        );
+        assert!(scene.hit_test(Point { x: 50.0, y: 150.0 }).is_none());
+        scene
+            .hit_test(Point { x: 50.0, y: 50.0 })
+            .expect("visible slice inside the viewport stays hittable")();
+        assert!(clicked.get());
     }
 }

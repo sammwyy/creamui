@@ -4,8 +4,8 @@
 //! shape/text rasterization stays on the CPU (see [`crate::painter`]) while
 //! the GPU only owns compositing and presentation.
 
+use creamui_platform::Window;
 use std::sync::Arc;
-use winit::window::Window;
 
 const SHADER_SRC: &str = r#"
 struct VertexOutput {

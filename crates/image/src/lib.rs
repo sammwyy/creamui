@@ -183,7 +183,11 @@ impl Widget for Image {
         self.data.width.hash(&mut hasher);
         self.data.height.hash(&mut hasher);
         self.fit.hash(&mut hasher);
-        self.style.paint.corner_radius.map(f32::to_bits).hash(&mut hasher);
+        self.style
+            .paint
+            .corner_radius
+            .map(f32::to_bits)
+            .hash(&mut hasher);
         Some(hasher.finish())
     }
 

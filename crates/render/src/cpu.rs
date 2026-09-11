@@ -2,9 +2,9 @@
 //! window surface via `softbuffer`, with no GPU instance/adapter/device
 //! involved.
 
+use creamui_platform::Window;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use winit::window::Window;
 
 pub struct CpuState {
     surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,

@@ -11,7 +11,7 @@ mod style;
 mod widget;
 
 pub use geometry::{Point, Rect, Size};
-pub use scene::{diag_take_resolve_stats, render_frame, Renderer, Scene};
+pub use scene::{render_frame, Renderer, Scene};
 pub use style::{
     Border, ColorToken, ColorValue, InteractionState, InteractionStyles, LengthValue, PaintStyle,
     ResolvedStyle, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,

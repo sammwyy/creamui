@@ -6,19 +6,6 @@ use taffy::style::Position;
 
 type Tree = TaffyTree<MeasureFn>;
 
-thread_local! {
-    static DIAG_RESOLVE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
-    static DIAG_RESOLVE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    static DIAG_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-pub fn diag_take_resolve_stats() -> (u128, u64, u64) {
-    (
-        DIAG_RESOLVE_NS.with(|c| c.replace(0)),
-        DIAG_RESOLVE_CALLS.with(|c| c.replace(0)),
-        DIAG_VISITS.with(|c| c.replace(0)),
-    )
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PaintMode {
@@ -253,7 +240,6 @@ fn paint_instance(
 ) {
     #[cfg(test)]
     PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
-    DIAG_VISITS.with(|c| c.set(c.get() + 1));
 
     // Nothing here or below is promoted, so an animated-only tick has no
     // work in this subtree — skip it before even computing layout.
@@ -327,10 +313,7 @@ fn paint_instance(
             && painter.composite_cached_layer(instance.layer_id, rect);
 
         if !cache_hit {
-            let diag_t = std::time::Instant::now();
             let resolved = instance.style.resolve(states);
-            DIAG_RESOLVE_NS.with(|c| c.set(c.get() + diag_t.elapsed().as_nanos()));
-            DIAG_RESOLVE_CALLS.with(|c| c.set(c.get() + 1));
             let colors = painter.color_scheme();
             let radius = resolved.paint.corner_radius.unwrap_or(0.0);
             // A not-yet-promoted node is only ever visited on a full (non-

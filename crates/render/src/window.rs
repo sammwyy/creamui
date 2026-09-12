@@ -172,6 +172,11 @@ impl WindowOptions {
         self
     }
 
+    pub fn top_panel(mut self) -> Self {
+        self.role = WindowRole::TopPanel;
+        self
+    }
+
     pub fn bottom_panel(mut self) -> Self {
         self.role = WindowRole::BottomPanel;
         self
@@ -1067,7 +1072,6 @@ impl WindowState {
 
     fn flush_pending_viewport(&mut self) {
         if let Some(viewport) = self.pending_viewport.take() {
-            log::debug!("creamui-render: DIAG flush_pending_viewport viewport={viewport:?}");
             self.viewport.set(viewport);
             (self.repaint)();
         }
@@ -1114,10 +1118,6 @@ impl WindowState {
                     width: (new_size.width as f64 / scale) as f32,
                     height: (new_size.height as f64 / scale) as f32,
                 };
-                log::debug!(
-                    "creamui-render: DIAG Resized new_size={new_size:?} scale={scale} viewport={viewport:?} current={:?}",
-                    self.viewport.peek()
-                );
                 self.queue_viewport(viewport);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -1193,12 +1193,6 @@ impl WindowState {
                     });
                     drop(frame);
                     if pending.is_some() {
-                        log::debug!(
-                            "creamui-render: DIAG CursorMoved queue pointer_pos={:?} pending={:?} viewport={:?}",
-                            self.pointer_pos,
-                            pending.as_ref().map(|(local, rect, _)| (*local, *rect)),
-                            self.viewport.peek()
-                        );
                         self.pending_drag = pending;
                         if let Some(window) = self.window.borrow().as_ref() {
                             window.request_redraw();
@@ -1213,11 +1207,6 @@ impl WindowState {
                 button: MouseButton::Left,
                 serial,
             } => {
-                log::debug!(
-                    "creamui-render: DIAG MouseInput pressed=true pointer_pos={:?} dragging_was={:?}",
-                    self.pointer_pos,
-                    self.dragging
-                );
                 self.last_input_serial.set(serial);
                 self.frame.borrow_mut().painter.press_origin = Some(self.pointer_pos);
                 (self.repaint_light)();
@@ -1274,10 +1263,6 @@ impl WindowState {
                     );
                 }
                 if let Some((index, rect, handler, drag_end)) = drag_start {
-                    log::debug!(
-                        "creamui-render: DIAG drag_start index={index} rect={rect:?} pointer_pos={:?}",
-                        self.pointer_pos
-                    );
                     self.dragging = Some(index);
                     self.drag_end = drag_end;
                     let local = Point {
@@ -1304,11 +1289,6 @@ impl WindowState {
                 button: MouseButton::Left,
                 ..
             } => {
-                log::debug!(
-                    "creamui-render: DIAG MouseInput pressed=false pointer_pos={:?} dragging_was={:?}",
-                    self.pointer_pos,
-                    self.dragging
-                );
                 self.dragging = None;
                 self.pending_drag = None;
                 self.frame.borrow_mut().painter.press_origin = None;
@@ -1335,10 +1315,6 @@ impl WindowState {
                 (self.repaint_light)();
             }
             WindowEvent::Focused(false) => {
-                log::debug!(
-                    "creamui-render: DIAG Focused(false) dragging_was={:?}",
-                    self.dragging
-                );
                 self.frame.borrow_mut().painter.press_origin = None;
                 self.dragging = None;
                 self.pending_drag = None;
@@ -1413,31 +1389,20 @@ impl WindowState {
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
             WindowEvent::RedrawRequested => {
                 if let Some((local, rect, handler)) = self.pending_drag.take() {
-                    log::debug!(
-                        "creamui-render: DIAG RedrawRequested flush local={local:?} rect={rect:?} viewport={:?}",
-                        self.viewport.peek()
-                    );
                     handler(local, rect);
                 }
                 let mut full_repaint = true;
-                let t_diag = Instant::now();
-                let diag_path;
                 if self.dirty.get() {
                     self.flush_pending_viewport();
                     (self.render)();
                     // `render` already repaints the scene, so a pending
                     // `scene_dirty` from earlier in the same event is moot.
                     self.scene_dirty.set(false);
-                    diag_path = "render";
                 } else if self.scene_dirty.replace(false) {
                     (self.repaint_scene)();
-                    diag_path = "repaint_scene";
                 } else {
                     full_repaint = false;
-                    diag_path = "none";
                 }
-                let diag_paint_us = t_diag.elapsed().as_micros();
-                let diag_layer_stats = self.frame.borrow_mut().painter.diag_take_stats();
                 let damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
                 if !self
                     .window
@@ -1449,7 +1414,6 @@ impl WindowState {
                 }
                 let frame = self.frame.borrow();
                 let pixmap = &frame.painter.pixmap;
-                let t_present = Instant::now();
                 if let Some(presenter) = self.presenter.as_mut() {
                     if full_repaint || damage.is_empty() {
                         presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
@@ -1462,23 +1426,6 @@ impl WindowState {
                             self.scale_factor.peek() as f32,
                         );
                     }
-                }
-                if diag_path != "none" {
-                    let (resolve_ns, resolve_calls, visits) =
-                        creamui_core::diag_take_resolve_stats();
-                    eprintln!(
-                        "DIAG RedrawRequested path={diag_path} paint_us={diag_paint_us} present_us={} full_repaint={full_repaint} pixels={}x{} push_layer_calls={} cache_hit_calls={} backdrop_capture_us={} composite_us={} resolve_us={} resolve_calls={} visits={}",
-                        t_present.elapsed().as_micros(),
-                        pixmap.width(),
-                        pixmap.height(),
-                        diag_layer_stats.0,
-                        diag_layer_stats.1,
-                        diag_layer_stats.2,
-                        diag_layer_stats.3,
-                        resolve_ns / 1000,
-                        resolve_calls,
-                        visits
-                    );
                 }
                 if !self.first_present_logged {
                     self.first_present_logged = true;

@@ -216,7 +216,10 @@ impl ActiveEventLoop<'_> {
         if runtime.layer_shell.is_some()
             && matches!(
                 attributes.role,
-                WindowRole::Desktop | WindowRole::Overlay | WindowRole::BottomPanel
+                WindowRole::Desktop
+                    | WindowRole::Overlay
+                    | WindowRole::TopPanel
+                    | WindowRole::BottomPanel
             )
         {
             return create_layer_window(&mut runtime, self.queue_handle, id, attributes);
@@ -493,7 +496,12 @@ fn create_layer_window(
             input_region.destroy();
         }
     } else {
-        layer_surface.set_anchor(Anchor::Bottom | Anchor::Left | Anchor::Right);
+        let edge = if attributes.role == WindowRole::TopPanel {
+            Anchor::Top
+        } else {
+            Anchor::Bottom
+        };
+        layer_surface.set_anchor(edge | Anchor::Left | Anchor::Right);
         layer_surface.set_size(0, attributes.size.height.ceil().max(1.0) as u32);
         layer_surface.set_exclusive_zone(attributes.size.height.ceil().max(1.0) as i32);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);

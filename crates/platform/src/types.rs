@@ -61,6 +61,7 @@ pub enum WindowRole {
     Normal,
     Desktop,
     Overlay,
+    TopPanel,
     BottomPanel,
 }
 

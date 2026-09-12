@@ -2,18 +2,18 @@
 //! window surface via `softbuffer`, with no GPU instance/adapter/device
 //! involved.
 
-use creamui_platform::Window;
+use creamui_platform::PlatformWindow;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
 pub struct CpuState {
-    surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    surface: softbuffer::Surface<Arc<dyn PlatformWindow>, Arc<dyn PlatformWindow>>,
     width: u32,
     height: u32,
 }
 
 impl CpuState {
-    pub fn new(window: Arc<Window>) -> Self {
+    pub fn new(window: Arc<dyn PlatformWindow>) -> Self {
         let context =
             softbuffer::Context::new(window.clone()).expect("failed to create softbuffer context");
         let surface = softbuffer::Surface::new(&context, window)

@@ -7,6 +7,9 @@ pub struct RawButton {
     pub children: Vec<BoxedWidget>,
     pub on_click: Rc<dyn Fn()>,
     pub on_click_at: Option<Rc<dyn Fn(Point)>>,
+    pub on_drag: Option<Rc<dyn Fn(Point, Rect)>>,
+    pub on_drag_start: Option<Rc<dyn Fn(Point, Rect)>>,
+    pub on_drag_end: Option<Rc<dyn Fn()>>,
     pub disabled: bool,
 }
 
@@ -20,6 +23,9 @@ impl RawButton {
             children: Vec::new(),
             on_click: Rc::new(on_click),
             on_click_at: None,
+            on_drag: None,
+            on_drag_start: None,
+            on_drag_end: None,
             disabled: false,
         }
     }
@@ -36,6 +42,21 @@ impl RawButton {
 
     pub fn with_click_position(mut self, on_click: impl Fn(Point) + 'static) -> Self {
         self.on_click_at = Some(Rc::new(on_click));
+        self
+    }
+
+    pub fn with_drag(mut self, on_drag: impl Fn(Point, Rect) + 'static) -> Self {
+        self.on_drag = Some(Rc::new(on_drag));
+        self
+    }
+
+    pub fn with_drag_start(mut self, on_drag_start: impl Fn(Point, Rect) + 'static) -> Self {
+        self.on_drag_start = Some(Rc::new(on_drag_start));
+        self
+    }
+
+    pub fn with_drag_end(mut self, on_drag_end: impl Fn() + 'static) -> Self {
+        self.on_drag_end = Some(Rc::new(on_drag_end));
         self
     }
 
@@ -79,6 +100,9 @@ impl Widget for RawButton {
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn paint_fingerprint(&self) -> Option<u64> {
+        if !self.children.is_empty() {
+            return None;
+        }
         use std::hash::{Hash, Hasher};
         // Hover/press are covered by `paint_instance`'s `cached_states`
         // guard; resolving against `NORMAL` here only needs to catch a real
@@ -117,6 +141,20 @@ impl Widget for RawButton {
         } else {
             self.on_click_at.clone()
         }
+    }
+
+    fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        (!self.disabled).then(|| self.on_drag.clone()).flatten()
+    }
+
+    fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        (!self.disabled)
+            .then(|| self.on_drag_start.clone())
+            .flatten()
+    }
+
+    fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
+        (!self.disabled).then(|| self.on_drag_end.clone()).flatten()
     }
 
     fn cursor_icon(&self) -> Option<CursorIcon> {

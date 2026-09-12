@@ -1,3 +1,5 @@
+pub mod runtime;
+
 use crate::{InputSerial, LogicalSize, PopupOptions, PopupPlacement};
 use smithay_client_toolkit::{
     compositor::{Surface, SurfaceData},

@@ -6,6 +6,20 @@ use taffy::style::Position;
 
 type Tree = TaffyTree<MeasureFn>;
 
+thread_local! {
+    static DIAG_RESOLVE_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    static DIAG_RESOLVE_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static DIAG_VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub fn diag_take_resolve_stats() -> (u128, u64, u64) {
+    (
+        DIAG_RESOLVE_NS.with(|c| c.replace(0)),
+        DIAG_RESOLVE_CALLS.with(|c| c.replace(0)),
+        DIAG_VISITS.with(|c| c.replace(0)),
+    )
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PaintMode {
     /// Paint ordinary flow nodes, deferring every absolutely positioned node.
@@ -56,10 +70,11 @@ struct Instance {
     cached_rect: Option<Rect>,
 }
 
-fn remove_instance(tree: &mut Tree, instance: Instance) {
+fn remove_instance(tree: &mut Tree, instance: Instance, painter: &mut dyn Painter) {
     for child in instance.children {
-        remove_instance(tree, child);
+        remove_instance(tree, child, painter);
     }
+    painter.forget_layer(instance.layer_id);
     let _ = tree.remove(instance.node_id);
 }
 
@@ -83,6 +98,7 @@ fn reconcile(
     existing: Option<Instance>,
     mut widget: BoxedWidget,
     next_layer_id: &mut u64,
+    painter: &mut dyn Painter,
 ) -> Instance {
     let new_child_widgets = widget.children();
     let new_style = widget.style();
@@ -93,7 +109,7 @@ fn reconcile(
         let mut child_ids = Vec::with_capacity(new_child_widgets.len());
         let mut children = Vec::with_capacity(new_child_widgets.len());
         for child_widget in new_child_widgets {
-            let child = reconcile(tree, None, child_widget, next_layer_id);
+            let child = reconcile(tree, None, child_widget, next_layer_id, painter);
             child_ids.push(child.node_id);
             children.push(child);
         }
@@ -133,10 +149,11 @@ fn reconcile(
             old_children.next(),
             child_widget,
             next_layer_id,
+            painter,
         ));
     }
     for leftover in old_children {
-        remove_instance(tree, leftover);
+        remove_instance(tree, leftover, painter);
     }
 
     let child_ids: Vec<_> = new_children.iter().map(|c| c.node_id).collect();
@@ -195,7 +212,7 @@ struct PaintOutputs {
     /// clip-visible portion, but the handler is called with the widget's
     /// full (unclipped) rect so e.g. a slider can divide by its own real
     /// width regardless of how much of it a scroll ancestor currently shows.
-    draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
+    draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
@@ -236,6 +253,7 @@ fn paint_instance(
 ) {
     #[cfg(test)]
     PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
+    DIAG_VISITS.with(|c| c.set(c.get() + 1));
 
     // Nothing here or below is promoted, so an animated-only tick has no
     // work in this subtree — skip it before even computing layout.
@@ -295,15 +313,24 @@ fn paint_instance(
         // and state match alone can't tell a layer cached under a narrower
         // clip from one cached with nothing cut off, so the ambient clip in
         // effect at capture time must match too.
+        let cached_clip_covers = instance.cached_clip.is_some_and(|cached| {
+            cached.x <= effective_clip.x
+                && cached.y <= effective_clip.y
+                && cached.x + cached.width >= effective_clip.x + effective_clip.width
+                && cached.y + cached.height >= effective_clip.y + effective_clip.height
+        });
         let cache_hit = fingerprint.is_some()
             && fingerprint == instance.content_fingerprint
             && instance.cached_states == Some(states)
-            && instance.cached_clip == Some(effective_clip)
+            && cached_clip_covers
             && instance.cached_rect == Some(rect)
             && painter.composite_cached_layer(instance.layer_id, rect);
 
         if !cache_hit {
+            let diag_t = std::time::Instant::now();
             let resolved = instance.style.resolve(states);
+            DIAG_RESOLVE_NS.with(|c| c.set(c.get() + diag_t.elapsed().as_nanos()));
+            DIAG_RESOLVE_CALLS.with(|c| c.set(c.get() + 1));
             let colors = painter.color_scheme();
             let radius = resolved.paint.corner_radius.unwrap_or(0.0);
             // A not-yet-promoted node is only ever visited on a full (non-
@@ -394,7 +421,8 @@ fn paint_instance(
                 }
             }
             if let Some(on_drag) = instance.widget.on_drag() {
-                out.draggables.push((visible, rect, on_drag));
+                out.draggables
+                    .push((visible, rect, on_drag, instance.widget.on_drag_end()));
             }
             if let Some(on_drag_start) = instance.widget.on_drag_start() {
                 out.drag_starts.push((visible, rect, on_drag_start));
@@ -504,7 +532,7 @@ pub struct Scene {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     focusables: Vec<(Rect, Rc<dyn Fn(KeyInput)>)>,
-    draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
+    draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
@@ -567,7 +595,7 @@ impl Scene {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (visible, _, _))| visible.contains(point))
+            .find(|(_, (visible, _, _, _))| visible.contains(point))
             .map(|(index, _)| index)
     }
 
@@ -575,7 +603,13 @@ impl Scene {
     pub fn draggable_at(&self, index: usize) -> Option<(Rect, &Rc<dyn Fn(Point, Rect)>)> {
         self.draggables
             .get(index)
-            .map(|(_, full, handler)| (*full, handler))
+            .map(|(_, full, handler, _)| (*full, handler))
+    }
+
+    pub fn drag_end_at(&self, index: usize) -> Option<Rc<dyn Fn()>> {
+        self.draggables
+            .get(index)
+            .and_then(|(_, _, _, handler)| handler.clone())
     }
 
     pub fn drag_start_at(&self, point: Point) -> Option<(Rect, Rc<dyn Fn(Point, Rect)>)> {
@@ -677,7 +711,13 @@ impl Renderer {
         caret_visible: bool,
     ) -> Scene {
         let previous = self.root.take();
-        let mut instance = reconcile(&mut self.tree, previous, root, &mut self.next_layer_id);
+        let mut instance = reconcile(
+            &mut self.tree,
+            previous,
+            root,
+            &mut self.next_layer_id,
+            painter,
+        );
 
         self.tree
             .compute_layout_with_measure(
@@ -1138,6 +1178,32 @@ mod tests {
             count.get(),
             2,
             "a cached layer must repaint at its new scroll position"
+        );
+    }
+
+    #[test]
+    fn removing_a_promoted_instance_forgets_its_cached_layer() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let with_child = |count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(FingerprintWidget { count, fingerprint: 1 })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+
+        renderer.render(with_child(count.clone()), VIEWPORT, &mut painter);
+        assert_eq!(
+            painter.cached_layers.len(),
+            1,
+            "a fingerprinted widget is promoted unconditionally"
+        );
+
+        renderer.render(Box::new(Root { children: vec![] }), VIEWPORT, &mut painter);
+        assert!(
+            painter.cached_layers.is_empty(),
+            "removing a promoted instance must release its cached layer"
         );
     }
 

@@ -1,6 +1,6 @@
 //! Web presentation: copies the rasterized frame into the platform canvas.
 
-use creamui_platform::Window;
+use creamui_platform::PlatformWindow;
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
@@ -11,7 +11,7 @@ pub struct WebState {
 }
 
 impl WebState {
-    pub fn new(window: Arc<Window>) -> Self {
+    pub fn new(window: Arc<dyn PlatformWindow>) -> Self {
         let canvas = window
             .canvas()
             .expect("the platform did not create a canvas for the web demo");

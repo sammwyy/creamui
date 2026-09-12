@@ -384,6 +384,10 @@ pub trait Widget {
         None
     }
 
+    fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
+
     /// Optional scroll-wheel handler, called with the vertical scroll delta
     /// (in logical pixels; positive scrolls content up, i.e. reveals
     /// content further down) when the pointer is over this widget's rect.

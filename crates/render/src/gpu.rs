@@ -4,7 +4,7 @@
 //! shape/text rasterization stays on the CPU (see [`crate::painter`]) while
 //! the GPU only owns compositing and presentation.
 
-use creamui_platform::Window;
+use creamui_platform::PlatformWindow;
 use std::sync::Arc;
 
 const SHADER_SRC: &str = r#"
@@ -72,7 +72,11 @@ impl GpuState {
         })
     }
 
-    pub fn new(window: Arc<Window>, instance: &wgpu::Instance, transparent: bool) -> Self {
+    pub fn new(
+        window: Arc<dyn PlatformWindow>,
+        instance: &wgpu::Instance,
+        transparent: bool,
+    ) -> Self {
         let t0 = std::time::Instant::now();
         let size = window.inner_size();
         log::debug!("creamui-render: instance ready: {:?}", t0.elapsed());
@@ -284,6 +288,16 @@ impl GpuState {
                 continue;
             }
             let (w, h) = (x1 - x0, y1 - y0);
+            let row_bytes = w as usize * 4;
+            let aligned_row_bytes =
+                row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize);
+            let mut pixels = vec![0; aligned_row_bytes * h as usize];
+            for row in 0..h as usize {
+                let source = ((y0 as usize + row) * width as usize + x0 as usize) * 4;
+                let destination = row * aligned_row_bytes;
+                pixels[destination..destination + row_bytes]
+                    .copy_from_slice(&rgba[source..source + row_bytes]);
+            }
             self.queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &self.texture,
@@ -291,10 +305,10 @@ impl GpuState {
                     origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
                     aspect: wgpu::TextureAspect::All,
                 },
-                rgba,
+                &pixels,
                 wgpu::ImageDataLayout {
-                    offset: (y0 as u64 * width as u64 + x0 as u64) * 4,
-                    bytes_per_row: Some(4 * width),
+                    offset: 0,
+                    bytes_per_row: Some(aligned_row_bytes as u32),
                     rows_per_image: Some(h),
                 },
                 wgpu::Extent3d {

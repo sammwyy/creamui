@@ -77,6 +77,10 @@ pub struct SkiaPainter {
     /// Window-space rects touched by a layer composite since the last
     /// [`SkiaPainter::take_damage`].
     damage: Vec<Rect>,
+    diag_push_layer_calls: usize,
+    diag_cache_hit_calls: usize,
+    diag_backdrop_capture_us: u128,
+    diag_composite_us: u128,
 }
 
 impl SkiaPainter {
@@ -101,7 +105,20 @@ impl SkiaPainter {
             backdrop_pool: HashMap::new(),
             layer_stack: Vec::new(),
             damage: Vec::new(),
+            diag_push_layer_calls: 0,
+            diag_cache_hit_calls: 0,
+            diag_backdrop_capture_us: 0,
+            diag_composite_us: 0,
         }
+    }
+
+    pub fn diag_take_stats(&mut self) -> (usize, usize, u128, u128) {
+        (
+            mem::take(&mut self.diag_push_layer_calls),
+            mem::take(&mut self.diag_cache_hit_calls),
+            mem::take(&mut self.diag_backdrop_capture_us),
+            mem::take(&mut self.diag_composite_us),
+        )
     }
 
     fn local(&self, rect: Rect) -> Rect {
@@ -369,6 +386,7 @@ impl Painter for SkiaPainter {
         self.animated = false;
     }
     fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool) {
+        self.diag_push_layer_calls += 1;
         let scale = self.scale;
         let phys_w = ((rect.width * scale).round() as u32).max(1);
         let phys_h = ((rect.height * scale).round() as u32).max(1);
@@ -378,7 +396,10 @@ impl Painter for SkiaPainter {
             Some(p) if p.width() == phys_w && p.height() == phys_h
         );
         let backdrop = if fresh || !cached_backdrop_matches {
-            self.capture_backdrop(rect, phys_w, phys_h)
+            let t = PainterInstant::now();
+            let backdrop = self.capture_backdrop(rect, phys_w, phys_h);
+            self.diag_backdrop_capture_us += t.elapsed().as_micros();
+            backdrop
         } else {
             self.backdrop_pool.remove(&id).expect("checked above")
         };
@@ -477,14 +498,17 @@ impl Painter for SkiaPainter {
             blend_mode: tiny_skia::BlendMode::Source,
             ..PixmapPaint::default()
         };
+        let t = PainterInstant::now();
         self.pixmap.draw_pixmap(
             x,
             y,
             cached.as_ref(),
             &composite,
             Transform::identity(),
-            self.clip_stack.last(),
+            None, // DIAG EXPERIMENT: was self.clip_stack.last()
         );
+        self.diag_composite_us += t.elapsed().as_micros();
+        self.diag_cache_hit_calls += 1;
         true
     }
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, width: f32) {

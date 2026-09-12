@@ -13,7 +13,7 @@ categories = ["gui"]
 [features]
 default = ["winit-adapter"]
 winit-adapter = []
-wayland = ["winit-adapter", "dep:smithay-client-toolkit"]
+wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr"]
 x11 = ["winit-adapter"]
 windows = ["winit-adapter"]
 
@@ -21,6 +21,11 @@ windows = ["winit-adapter"]
 raw-window-handle = { workspace = true }
 winit = { workspace = true }
 smithay-client-toolkit = { version = "0.19", optional = true }
+wayland-client = { version = "0.31", features = ["system"], optional = true }
+wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

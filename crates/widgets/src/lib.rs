@@ -43,8 +43,8 @@ pub use controller::{
 pub use raw::{
     DateTime, RawButton, RawCheckbox, RawColorPicker, RawDateTimePicker, RawFilePicker, RawLink,
     RawListView, RawMarquee, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider,
-    RawSpinner, RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput, RawView,
-    TabIndicatorSide, TableColumn, TextSelection,
+    RawSpinner, RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput,
+    RawTranslate, RawView, TabIndicatorSide, TableColumn, TextSelection,
 };
 pub use themed::{
     tab_styles, AlertDialog, Avatar, Badge, Button, ButtonSize, ButtonState, ButtonVariant, Card,

@@ -32,9 +32,9 @@ use creamui_core::{
 use creamui_platform::{
     ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, EventLoop,
     EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
-    Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta,
-    PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection, Window,
-    WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel,
+    Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta, PlatformWindow,
+    PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection,
+    WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
@@ -133,6 +133,7 @@ pub struct WindowOptions {
     pub resizable: bool,
     pub decorations: bool,
     pub transparent: bool,
+    pub role: WindowRole,
     /// How a close request from the window manager is handled.
     pub close_behavior: CloseBehavior,
     /// Which backend composites the CPU-rasterized frame to the window:
@@ -154,6 +155,7 @@ impl Default for WindowOptions {
             resizable: true,
             decorations: true,
             transparent: false,
+            role: WindowRole::Normal,
             close_behavior: CloseBehavior::Close,
             backend: RenderBackend::default(),
             theme: Theme::default(),
@@ -167,6 +169,11 @@ impl WindowOptions {
     /// especially on Wayland where compositors may ignore late moves.
     pub fn at_position(mut self, x: i32, y: i32) -> Self {
         self.position = Some((x, y));
+        self
+    }
+
+    pub fn bottom_panel(mut self) -> Self {
+        self.role = WindowRole::BottomPanel;
         self
     }
 }
@@ -369,7 +376,7 @@ impl Presenter {
     }
 }
 
-type SharedWindow = Rc<RefCell<Option<Arc<Window>>>>;
+type SharedWindow = Rc<RefCell<Option<Arc<dyn PlatformWindow>>>>;
 
 /// Handle for the application event loop.
 ///
@@ -967,6 +974,12 @@ struct WindowState {
     /// Index into the current `Scene`'s draggables while the left mouse
     /// button is held down over one, `None` otherwise.
     dragging: Option<usize>,
+    drag_end: Option<Rc<dyn Fn()>>,
+    drag_click: Option<DragClick>,
+    /// Latest drag-handler call computed since the last flush, superseding
+    /// whatever `CursorMoved` queued it before — only the position current
+    /// at the next `RedrawRequested` is dispatched, not every raw event.
+    pending_drag: Option<(Point, Rect, Rc<dyn Fn(Point, Rect)>)>,
     /// Invalidates this window. Signal changes and caret/focus updates are
     /// coalesced until the next `RedrawRequested` frame.
     repaint: Rc<dyn Fn()>,
@@ -991,6 +1004,13 @@ struct WindowState {
     _effect: Effect,
     t_run: Instant,
     first_present_logged: bool,
+}
+
+struct DragClick {
+    origin: Point,
+    on_click: Option<Rc<dyn Fn()>>,
+    on_click_at: Option<Rc<dyn Fn(Point)>>,
+    moved: bool,
 }
 
 impl WindowState {
@@ -1047,6 +1067,7 @@ impl WindowState {
 
     fn flush_pending_viewport(&mut self) {
         if let Some(viewport) = self.pending_viewport.take() {
+            log::debug!("creamui-render: DIAG flush_pending_viewport viewport={viewport:?}");
             self.viewport.set(viewport);
             (self.repaint)();
         }
@@ -1093,6 +1114,10 @@ impl WindowState {
                     width: (new_size.width as f64 / scale) as f32,
                     height: (new_size.height as f64 / scale) as f32,
                 };
+                log::debug!(
+                    "creamui-render: DIAG Resized new_size={new_size:?} scale={scale} viewport={viewport:?} current={:?}",
+                    self.viewport.peek()
+                );
                 self.queue_viewport(viewport);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
@@ -1108,8 +1133,11 @@ impl WindowState {
                     y: (position.y / scale) as f32,
                 };
                 self.frame.borrow_mut().painter.pointer = Some(self.pointer_pos);
-                (self.repaint_light)();
-
+                if let Some(drag_click) = self.drag_click.as_mut() {
+                    let dx = self.pointer_pos.x - drag_click.origin.x;
+                    let dy = self.pointer_pos.y - drag_click.origin.y;
+                    drag_click.moved |= dx.hypot(dy) >= 4.0;
+                }
                 let hovered_cursor =
                     self.resize_direction()
                         .map(resize_cursor)
@@ -1154,17 +1182,30 @@ impl WindowState {
 
                 if let Some(index) = self.dragging {
                     let frame = self.frame.borrow();
-                    if let Some(scene) = frame.scene.as_ref() {
-                        if let Some((rect, handler)) = scene.draggable_at(index) {
+                    let pending = frame.scene.as_ref().and_then(|scene| {
+                        scene.draggable_at(index).map(|(rect, handler)| {
                             let local = Point {
                                 x: self.pointer_pos.x - rect.x,
                                 y: self.pointer_pos.y - rect.y,
                             };
-                            let handler = handler.clone();
-                            drop(frame);
-                            handler(local, rect);
+                            (local, rect, handler.clone())
+                        })
+                    });
+                    drop(frame);
+                    if pending.is_some() {
+                        log::debug!(
+                            "creamui-render: DIAG CursorMoved queue pointer_pos={:?} pending={:?} viewport={:?}",
+                            self.pointer_pos,
+                            pending.as_ref().map(|(local, rect, _)| (*local, *rect)),
+                            self.viewport.peek()
+                        );
+                        self.pending_drag = pending;
+                        if let Some(window) = self.window.borrow().as_ref() {
+                            window.request_redraw();
                         }
                     }
+                } else {
+                    (self.repaint_light)();
                 }
             }
             WindowEvent::MouseInput {
@@ -1172,6 +1213,11 @@ impl WindowState {
                 button: MouseButton::Left,
                 serial,
             } => {
+                log::debug!(
+                    "creamui-render: DIAG MouseInput pressed=true pointer_pos={:?} dragging_was={:?}",
+                    self.pointer_pos,
+                    self.dragging
+                );
                 self.last_input_serial.set(serial);
                 self.frame.borrow_mut().painter.press_origin = Some(self.pointer_pos);
                 (self.repaint_light)();
@@ -1192,12 +1238,22 @@ impl WindowState {
                 let focus_changed = new_focus != self.focused.get();
                 self.focused.set(new_focus);
                 let drag_start = scene.drag_hit_test(self.pointer_pos).and_then(|index| {
-                    scene
-                        .draggable_at(index)
-                        .map(|(rect, handler)| (index, rect, handler.clone()))
+                    scene.draggable_at(index).map(|(rect, handler)| {
+                        (index, rect, handler.clone(), scene.drag_end_at(index))
+                    })
                 });
                 let drag_anchor = scene.drag_start_at(self.pointer_pos);
                 drop(frame);
+
+                let has_drag = drag_start.is_some();
+                if has_drag && (click_handler.is_some() || click_handler_at.is_some()) {
+                    self.drag_click = Some(DragClick {
+                        origin: self.pointer_pos,
+                        on_click: click_handler.clone(),
+                        on_click_at: click_handler_at.clone(),
+                        moved: false,
+                    });
+                }
 
                 if focus_changed {
                     // Reset the blink phase so the caret appears solid the
@@ -1208,14 +1264,6 @@ impl WindowState {
                     (self.repaint_light)();
                 }
 
-                if let Some((index, rect, handler)) = drag_start {
-                    self.dragging = Some(index);
-                    let local = Point {
-                        x: self.pointer_pos.x - rect.x,
-                        y: self.pointer_pos.y - rect.y,
-                    };
-                    handler(local, rect);
-                }
                 if let Some((rect, handler)) = drag_anchor {
                     handler(
                         Point {
@@ -1224,6 +1272,22 @@ impl WindowState {
                         },
                         rect,
                     );
+                }
+                if let Some((index, rect, handler, drag_end)) = drag_start {
+                    log::debug!(
+                        "creamui-render: DIAG drag_start index={index} rect={rect:?} pointer_pos={:?}",
+                        self.pointer_pos
+                    );
+                    self.dragging = Some(index);
+                    self.drag_end = drag_end;
+                    let local = Point {
+                        x: self.pointer_pos.x - rect.x,
+                        y: self.pointer_pos.y - rect.y,
+                    };
+                    handler(local, rect);
+                }
+                if has_drag {
+                    return;
                 }
                 if let Some(handler) = click_handler_at {
                     log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
@@ -1240,8 +1304,27 @@ impl WindowState {
                 button: MouseButton::Left,
                 ..
             } => {
+                log::debug!(
+                    "creamui-render: DIAG MouseInput pressed=false pointer_pos={:?} dragging_was={:?}",
+                    self.pointer_pos,
+                    self.dragging
+                );
                 self.dragging = None;
+                self.pending_drag = None;
                 self.frame.borrow_mut().painter.press_origin = None;
+                if let Some(handler) = self.drag_end.take() {
+                    handler();
+                }
+                if let Some(drag_click) = self.drag_click.take() {
+                    if !drag_click.moved {
+                        if let Some(handler) = drag_click.on_click_at {
+                            handler(self.pointer_pos);
+                        } else if let Some(handler) = drag_click.on_click {
+                            handler();
+                        }
+                        (self.render)();
+                    }
+                }
                 (self.repaint_light)();
             }
             WindowEvent::CursorLeft => {
@@ -1252,8 +1335,13 @@ impl WindowState {
                 (self.repaint_light)();
             }
             WindowEvent::Focused(false) => {
+                log::debug!(
+                    "creamui-render: DIAG Focused(false) dragging_was={:?}",
+                    self.dragging
+                );
                 self.frame.borrow_mut().painter.press_origin = None;
                 self.dragging = None;
+                self.pending_drag = None;
                 (self.repaint_light)();
                 if let Some(handler) = self.focus_lost_handler.borrow().as_ref().cloned() {
                     handler();
@@ -1324,21 +1412,44 @@ impl WindowState {
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
             WindowEvent::RedrawRequested => {
+                if let Some((local, rect, handler)) = self.pending_drag.take() {
+                    log::debug!(
+                        "creamui-render: DIAG RedrawRequested flush local={local:?} rect={rect:?} viewport={:?}",
+                        self.viewport.peek()
+                    );
+                    handler(local, rect);
+                }
                 let mut full_repaint = true;
+                let t_diag = Instant::now();
+                let diag_path;
                 if self.dirty.get() {
                     self.flush_pending_viewport();
                     (self.render)();
                     // `render` already repaints the scene, so a pending
                     // `scene_dirty` from earlier in the same event is moot.
                     self.scene_dirty.set(false);
+                    diag_path = "render";
                 } else if self.scene_dirty.replace(false) {
                     (self.repaint_scene)();
+                    diag_path = "repaint_scene";
                 } else {
                     full_repaint = false;
+                    diag_path = "none";
                 }
+                let diag_paint_us = t_diag.elapsed().as_micros();
+                let diag_layer_stats = self.frame.borrow_mut().painter.diag_take_stats();
                 let damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
+                if !self
+                    .window
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|window| window.is_ready())
+                {
+                    return;
+                }
                 let frame = self.frame.borrow();
                 let pixmap = &frame.painter.pixmap;
+                let t_present = Instant::now();
                 if let Some(presenter) = self.presenter.as_mut() {
                     if full_repaint || damage.is_empty() {
                         presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
@@ -1351,6 +1462,23 @@ impl WindowState {
                             self.scale_factor.peek() as f32,
                         );
                     }
+                }
+                if diag_path != "none" {
+                    let (resolve_ns, resolve_calls, visits) =
+                        creamui_core::diag_take_resolve_stats();
+                    eprintln!(
+                        "DIAG RedrawRequested path={diag_path} paint_us={diag_paint_us} present_us={} full_repaint={full_repaint} pixels={}x{} push_layer_calls={} cache_hit_calls={} backdrop_capture_us={} composite_us={} resolve_us={} resolve_calls={} visits={}",
+                        t_present.elapsed().as_micros(),
+                        pixmap.width(),
+                        pixmap.height(),
+                        diag_layer_stats.0,
+                        diag_layer_stats.1,
+                        diag_layer_stats.2,
+                        diag_layer_stats.3,
+                        resolve_ns / 1000,
+                        resolve_calls,
+                        visits
+                    );
                 }
                 if !self.first_present_logged {
                     self.first_present_logged = true;
@@ -1409,6 +1537,7 @@ impl AppHandler {
             resizable: spec.options.resizable,
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
+            role: spec.options.role,
         };
 
         let window = match spec.popup.as_ref() {
@@ -1418,7 +1547,7 @@ impl AppHandler {
                     .window
                     .borrow()
                     .as_ref()
-                    .cloned()
+                    .map(|window| window.id())
                     .expect("creamui-render: the popup parent window no longer exists");
                 event_loop
                     .create_popup(
@@ -1495,10 +1624,7 @@ impl AppHandler {
             t0.elapsed()
         );
 
-        // Present the already-painted first frame (built by the initial
-        // `create_effect` run in `run_windows`, before this window
-        // existed).
-        {
+        if window.is_ready() {
             let frame = spec.frame.borrow();
             let pixmap = &frame.painter.pixmap;
             presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
@@ -1542,6 +1668,9 @@ impl AppHandler {
                 current_cursor: CursorIcon::Default,
                 hovered: None,
                 dragging: None,
+                drag_end: None,
+                drag_click: None,
+                pending_drag: None,
                 repaint: spec.repaint,
                 repaint_scene: spec.repaint_scene,
                 repaint_light: spec.repaint_light,
@@ -1742,7 +1871,9 @@ impl AppHandler {
     fn close_window(&mut self, event_loop: &ActiveEventLoop<'_>, window_id: WindowId) {
         log::debug!("creamui-render: close requested for window {window_id:?}");
         if let Some(state) = self.windows.remove(&window_id) {
-            state.window.borrow_mut().take();
+            if let Some(window) = state.window.borrow_mut().take() {
+                window.close();
+            }
         }
         if self.windows.is_empty() && self.exit_when_last_window_closes {
             event_loop.exit();
@@ -2243,6 +2374,9 @@ mod tests {
                     current_cursor: CursorIcon::Default,
                     hovered: None,
                     dragging: None,
+                    drag_end: None,
+                    drag_click: None,
+                    pending_drag: None,
                     repaint: spec.repaint,
                     repaint_scene: spec.repaint_scene,
                     repaint_light: spec.repaint_light,
@@ -2394,6 +2528,73 @@ mod tests {
 
         assert_eq!(clicks.get(), 1);
         assert_eq!(keys.get(), "x");
+    }
+
+    struct DraggableWidget {
+        calls: Rc<RefCell<Vec<Point>>>,
+    }
+
+    impl creamui_core::Widget for DraggableWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(100.0),
+                    height: creamui_core::layout::Dimension::Length(100.0),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+            let calls = self.calls.clone();
+            Some(Rc::new(move |local, _rect| calls.borrow_mut().push(local)))
+        }
+    }
+
+    #[test]
+    fn cursor_moved_during_a_drag_coalesces_to_the_latest_position_per_redraw() {
+        let calls: Rc<RefCell<Vec<Point>>> = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let calls = calls.clone();
+            move |_| {
+                Box::new(DraggableWidget {
+                    calls: calls.clone(),
+                })
+            }
+        });
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        assert_eq!(calls.borrow().len(), 1, "the initial press dispatches immediately");
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },
+        });
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 30.0, y: 30.0 },
+        });
+        assert_eq!(
+            calls.borrow().len(),
+            1,
+            "raw motion events during a drag must not each dispatch the handler"
+        );
+
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(
+            calls.borrow().len(),
+            2,
+            "a redraw flushes exactly one call, for the latest queued position"
+        );
+        assert_eq!(calls.borrow()[1], Point { x: 30.0, y: 30.0 });
     }
 
     #[test]

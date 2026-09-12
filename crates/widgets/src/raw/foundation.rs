@@ -52,6 +52,9 @@ impl Widget for RawView {
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn paint_fingerprint(&self) -> Option<u64> {
+        if !self.children.is_empty() {
+            return None;
+        }
         use std::hash::{Hash, Hasher};
         let paint = self.style.resolve(creamui_core::StyleState::NORMAL).paint;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -78,6 +81,47 @@ impl Widget for RawView {
 
     fn clip_corner_radius(&self) -> f32 {
         self.style.paint.corner_radius.unwrap_or(0.0)
+    }
+}
+
+pub struct RawTranslate {
+    pub style: creamui_core::Style,
+    pub children: Vec<BoxedWidget>,
+    pub translation: Rc<Cell<Point>>,
+}
+
+impl RawTranslate {
+    pub fn new(style: impl Into<creamui_core::Style>, translation: Rc<Cell<Point>>) -> Self {
+        Self {
+            style: style.into(),
+            children: Vec::new(),
+            translation,
+        }
+    }
+
+    pub fn child(mut self, widget: BoxedWidget) -> Self {
+        self.children.push(widget);
+        self
+    }
+}
+
+impl Widget for RawTranslate {
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
+    }
+
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn scroll_offset(&self) -> Point {
+        let translation = self.translation.get();
+        Point {
+            x: -translation.x,
+            y: -translation.y,
+        }
     }
 }
 

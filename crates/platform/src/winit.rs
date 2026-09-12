@@ -1,7 +1,7 @@
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
 use winit::application::ApplicationHandler as WinitApplicationHandler;
 use winit::event::{
     ElementState, MouseButton as WinitMouseButton, MouseScrollDelta as WinitScrollDelta,
@@ -18,206 +18,17 @@ use winit::window::{
     WindowLevel as WinitWindowLevel,
 };
 
-use crate::{BackendKind, PlatformBackend, PlatformWindow};
+use crate::{
+    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
+    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
+    PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId, WindowLevel,
+};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WindowId(WinitWindowId);
-
-impl fmt::Debug for WindowId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("WindowId").field(&self.0).finish()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogicalSize {
-    pub width: f64,
-    pub height: f64,
-}
-
-impl LogicalSize {
-    pub const fn new(width: f64, height: f64) -> Self {
-        Self { width, height }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogicalPosition {
-    pub x: f64,
-    pub y: f64,
-}
-
-impl LogicalPosition {
-    pub const fn new(x: f64, y: f64) -> Self {
-        Self { x, y }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PhysicalSize {
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PhysicalPosition {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowLevel {
-    Normal,
-    AlwaysOnTop,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorIcon {
-    Default,
-    Text,
-    Pointer,
-    NotAllowed,
-    ResizeHorizontal,
-    ResizeVertical,
-    ResizeNwse,
-    ResizeNesw,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResizeDirection {
-    East,
-    West,
-    North,
-    South,
-    NorthWest,
-    NorthEast,
-    SouthWest,
-    SouthEast,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MouseButton {
-    Left,
-    Right,
-    Middle,
-    Other(u16),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MouseScrollDelta {
-    LineDelta(f32, f32),
-    PixelDelta(PhysicalPosition),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Modifiers {
-    pub ctrl: bool,
-    pub shift: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Key {
-    Character(String),
-    Space,
-    Backspace,
-    Delete,
-    Enter,
-    Tab,
-    Escape,
-    Left,
-    Right,
-    Up,
-    Down,
-    Home,
-    End,
-    F3,
-    Other,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyEvent {
-    pub key: Key,
-    pub pressed: bool,
-    pub synthetic: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InputSerial(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PopupPlacement {
-    Above,
-    Below,
-}
-
-#[derive(Debug, Clone)]
-pub struct PopupOptions {
-    pub parent: Arc<Window>,
-    pub anchor_x: f32,
-    pub anchor_y: f32,
-    pub anchor_width: f32,
-    pub anchor_height: f32,
-    pub input_serial: Option<InputSerial>,
-    pub placement: PopupPlacement,
-}
-
-#[derive(Debug, Clone)]
-pub struct WindowAttributes {
-    pub title: String,
-    pub size: LogicalSize,
-    pub position: Option<LogicalPosition>,
-    pub resizable: bool,
-    pub decorations: bool,
-    pub transparent: bool,
-}
-
-impl Default for WindowAttributes {
-    fn default() -> Self {
-        Self {
-            title: String::new(),
-            size: LogicalSize::new(800.0, 600.0),
-            position: None,
-            resizable: true,
-            decorations: true,
-            transparent: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum WindowEvent {
-    CloseRequested,
-    Resized(PhysicalSize),
-    ScaleFactorChanged {
-        scale_factor: f64,
-    },
-    CursorMoved {
-        position: PhysicalPosition,
-    },
-    MouseInput {
-        pressed: bool,
-        button: MouseButton,
-        serial: Option<InputSerial>,
-    },
-    CursorLeft,
-    Focused(bool),
-    MouseWheel {
-        delta: MouseScrollDelta,
-    },
-    KeyboardInput(KeyEvent),
-    ModifiersChanged(Modifiers),
-    PopupDone,
-    RedrawRequested,
-    Other,
-}
-
-pub enum ControlFlow {
-    Wait,
-    WaitUntil(Instant),
-}
+type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
 
 pub struct Window {
     inner: winit::window::Window,
+    id: WindowId,
 }
 
 impl fmt::Debug for Window {
@@ -228,7 +39,7 @@ impl fmt::Debug for Window {
 
 impl Window {
     pub fn id(&self) -> WindowId {
-        WindowId(self.inner.id())
+        self.id
     }
     pub fn request_redraw(&self) {
         self.inner.request_redraw();
@@ -313,6 +124,7 @@ impl PlatformWindow for Window {
     fn request_redraw(&self) {
         self.request_redraw();
     }
+    fn close(&self) {}
     fn request_inner_size(&self, size: LogicalSize) {
         self.request_inner_size(size);
     }
@@ -331,14 +143,36 @@ impl PlatformWindow for Window {
     fn inner_size(&self) -> PhysicalSize {
         self.inner_size()
     }
+    fn is_ready(&self) -> bool {
+        true
+    }
     fn set_visible(&self, visible: bool) {
         self.set_visible(visible);
     }
     fn set_minimized(&self, minimized: bool) {
         self.set_minimized(minimized);
     }
+    fn set_maximized(&self, maximized: bool) {
+        self.set_maximized(maximized);
+    }
+    fn set_window_level(&self, level: WindowLevel) {
+        self.set_window_level(level);
+    }
+    fn drag_window(&self) -> Result<(), String> {
+        self.drag_window()
+    }
+    fn drag_resize_window(&self, direction: ResizeDirection) -> Result<(), String> {
+        self.drag_resize_window(direction)
+    }
+    fn set_cursor(&self, icon: CursorIcon) {
+        self.set_cursor(icon);
+    }
     fn focus(&self) {
         self.focus();
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn canvas(&self) -> Option<web_sys::HtmlCanvasElement> {
+        self.canvas()
     }
 }
 
@@ -356,10 +190,14 @@ impl HasDisplayHandle for Window {
 
 pub struct ActiveEventLoop<'a> {
     inner: &'a WinitActiveEventLoop,
+    ids: &'a WindowIds,
 }
 
 impl ActiveEventLoop<'_> {
-    pub fn create_window(&self, attributes: WindowAttributes) -> Result<Arc<Window>, String> {
+    pub fn create_window(
+        &self,
+        attributes: WindowAttributes,
+    ) -> Result<Arc<dyn PlatformWindow>, String> {
         let mut inner = WinitWindowAttributes::default()
             .with_title(attributes.title)
             .with_inner_size(winit::dpi::LogicalSize::new(
@@ -379,14 +217,21 @@ impl ActiveEventLoop<'_> {
         }
         self.inner
             .create_window(inner)
-            .map(|inner| Arc::new(Window { inner }))
+            .map(|inner| {
+                let id = WindowId::next();
+                self.ids
+                    .lock()
+                    .expect("window IDs lock poisoned")
+                    .insert(inner.id(), id);
+                Arc::new(Window { inner, id }) as Arc<dyn PlatformWindow>
+            })
             .map_err(|error| error.to_string())
     }
     pub fn create_popup(
         &self,
         attributes: WindowAttributes,
         popup: PopupOptions,
-    ) -> Result<Arc<Window>, String> {
+    ) -> Result<Arc<dyn PlatformWindow>, String> {
         let _ = popup;
         self.create_window(attributes)
     }
@@ -406,7 +251,10 @@ impl PlatformBackend for ActiveEventLoop<'_> {
         BackendKind::Winit
     }
 
-    fn create_window(&self, attributes: WindowAttributes) -> Result<Arc<Window>, String> {
+    fn create_window(
+        &self,
+        attributes: WindowAttributes,
+    ) -> Result<Arc<dyn PlatformWindow>, String> {
         ActiveEventLoop::create_window(self, attributes)
     }
 
@@ -414,7 +262,7 @@ impl PlatformBackend for ActiveEventLoop<'_> {
         &self,
         attributes: WindowAttributes,
         popup: PopupOptions,
-    ) -> Result<Arc<Window>, String> {
+    ) -> Result<Arc<dyn PlatformWindow>, String> {
         ActiveEventLoop::create_popup(self, attributes, popup)
     }
 }
@@ -433,6 +281,7 @@ pub trait ApplicationHandler<T: 'static> {
 
 pub struct EventLoop<T: 'static> {
     inner: WinitEventLoop<T>,
+    ids: WindowIds,
 }
 pub struct EventLoopBuilder<T: 'static> {
     inner: WinitEventLoopBuilder<T>,
@@ -460,13 +309,19 @@ impl<T: 'static> EventLoop<T> {
     }
     pub fn run_app<H: ApplicationHandler<T>>(self, handler: &mut H) -> Result<(), String> {
         self.inner
-            .run_app(&mut Adapter { handler })
+            .run_app(&mut Adapter {
+                handler,
+                ids: self.ids,
+            })
             .map_err(|error| error.to_string())
     }
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_app<H: ApplicationHandler<T> + 'static>(self, handler: H) {
         use winit::platform::web::EventLoopExtWebSys;
-        self.inner.spawn_app(Adapter { handler });
+        self.inner.spawn_app(Adapter {
+            handler,
+            ids: self.ids,
+        });
     }
 }
 
@@ -480,7 +335,10 @@ impl<T: 'static> EventLoopBuilder<T> {
     pub fn build(mut self) -> Result<EventLoop<T>, String> {
         self.inner
             .build()
-            .map(|inner| EventLoop { inner })
+            .map(|inner| EventLoop {
+                inner,
+                ids: Arc::new(Mutex::new(HashMap::new())),
+            })
             .map_err(|error| error.to_string())
     }
 }
@@ -503,11 +361,15 @@ impl<T: 'static> EventLoopProxy<T> {
 
 struct Adapter<H> {
     handler: H,
+    ids: WindowIds,
 }
 
 impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<&mut H> {
     fn resumed(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler.resumed(&ActiveEventLoop { inner: event_loop });
+        self.handler.resumed(&ActiveEventLoop {
+            inner: event_loop,
+            ids: &self.ids,
+        });
     }
     fn window_event(
         &mut self,
@@ -516,25 +378,38 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
         event: winit::event::WindowEvent,
     ) {
         self.handler.window_event(
-            &ActiveEventLoop { inner: event_loop },
-            WindowId(window_id),
+            &ActiveEventLoop {
+                inner: event_loop,
+                ids: &self.ids,
+            },
+            self.ids.lock().expect("window IDs lock poisoned")[&window_id],
             from_winit_window_event(event),
         );
     }
     fn user_event(&mut self, event_loop: &WinitActiveEventLoop, event: T) {
-        self.handler
-            .user_event(&ActiveEventLoop { inner: event_loop }, event);
+        self.handler.user_event(
+            &ActiveEventLoop {
+                inner: event_loop,
+                ids: &self.ids,
+            },
+            event,
+        );
     }
     fn about_to_wait(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler
-            .about_to_wait(&ActiveEventLoop { inner: event_loop });
+        self.handler.about_to_wait(&ActiveEventLoop {
+            inner: event_loop,
+            ids: &self.ids,
+        });
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<H> {
     fn resumed(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler.resumed(&ActiveEventLoop { inner: event_loop });
+        self.handler.resumed(&ActiveEventLoop {
+            inner: event_loop,
+            ids: &self.ids,
+        });
     }
     fn window_event(
         &mut self,
@@ -543,18 +418,28 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
         event: winit::event::WindowEvent,
     ) {
         self.handler.window_event(
-            &ActiveEventLoop { inner: event_loop },
-            WindowId(window_id),
+            &ActiveEventLoop {
+                inner: event_loop,
+                ids: &self.ids,
+            },
+            self.ids.lock().expect("window IDs lock poisoned")[&window_id],
             from_winit_window_event(event),
         );
     }
     fn user_event(&mut self, event_loop: &WinitActiveEventLoop, event: T) {
-        self.handler
-            .user_event(&ActiveEventLoop { inner: event_loop }, event);
+        self.handler.user_event(
+            &ActiveEventLoop {
+                inner: event_loop,
+                ids: &self.ids,
+            },
+            event,
+        );
     }
     fn about_to_wait(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler
-            .about_to_wait(&ActiveEventLoop { inner: event_loop });
+        self.handler.about_to_wait(&ActiveEventLoop {
+            inner: event_loop,
+            ids: &self.ids,
+        });
     }
 }
 

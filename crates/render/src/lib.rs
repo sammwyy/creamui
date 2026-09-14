@@ -23,7 +23,8 @@ pub use creamui_platform as platform;
 pub use devtools::{install_devtools, Devtools, WindowDevtools};
 #[cfg(not(target_arch = "wasm32"))]
 pub use gpu_scene::{
-    quad_instances_for_fragment, GpuPrimitiveId, GpuSceneState, QuadInstance, QuadStore,
+    quad_instances_for_fragment, AtlasRect, GlyphAtlas, GlyphInstance, GlyphPrimitiveId,
+    GlyphStore, GpuPrimitiveId, GpuSceneState, QuadInstance, QuadStore, ShapeCache, ShapedRun,
 };
 pub use painter::SkiaPainter;
 pub use window::{

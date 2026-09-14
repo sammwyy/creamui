@@ -2,35 +2,79 @@
 //! primitives ([`creamui_core::runtime::PaintFragment`]) directly, instead
 //! of compositing a CPU-rasterized framebuffer (see [`crate::gpu`]).
 //!
-//! Solid quads and borders (with rounded corners) are supported; text,
-//! images, clips, and transforms are not yet consumed here — see
-//! REFACTOR.md 14.8's migration order.
+//! Solid quads and borders (with rounded corners) are supported, as is
+//! text through a cached-shaping, GPU-atlas glyph pipeline (REFACTOR.md
+//! Phase 9). Images, clips, and transforms are not yet consumed here.
 
 mod quad;
+mod text;
 
 pub use quad::{quad_instances_for_fragment, GpuPrimitiveId, QuadInstance, QuadStore};
+pub use text::{
+    AtlasRect, GlyphAtlas, GlyphInstance, GlyphPrimitiveId, GlyphStore, ShapeCache, ShapedRun,
+};
 
-use creamui_core::runtime::{PaintFragment, RuntimeNodeId};
+use creamui_core::runtime::{PaintFragment, RuntimeNodeId, TextPrimitive};
 use creamui_platform::PlatformWindow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-const SHADER_SRC: &str = include_str!("quad.wgsl");
+const QUAD_SHADER_SRC: &str = include_str!("quad.wgsl");
+const GLYPH_SHADER_SRC: &str = include_str!("glyph.wgsl");
 const MIN_INSTANCE_CAPACITY: u32 = 64;
+const GLYPH_ATLAS_SIZE: u32 = 1024;
+
+fn upload_instances<T: bytemuck::Pod>(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    offset_elems: usize,
+    elems: &[T],
+) {
+    queue.write_buffer(
+        buffer,
+        (offset_elems * std::mem::size_of::<T>()) as u64,
+        bytemuck::cast_slice(elems),
+    );
+}
+
+fn grow_instance_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    capacity: u32,
+    element_size: usize,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: (capacity as u64) * element_size as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
 
 pub struct GpuSceneState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    screen_bind_group: wgpu::BindGroup,
     screen_size_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    instance_buffer: wgpu::Buffer,
-    instance_capacity: u32,
     decode_srgb: bool,
-    store: QuadStore,
+
+    quad_pipeline: wgpu::RenderPipeline,
+    quad_instance_buffer: wgpu::Buffer,
+    quad_instance_capacity: u32,
+    quad_store: QuadStore,
     node_quads: HashMap<RuntimeNodeId, Vec<GpuPrimitiveId>>,
+
+    glyph_pipeline: wgpu::RenderPipeline,
+    glyph_instance_buffer: wgpu::Buffer,
+    glyph_instance_capacity: u32,
+    glyph_store: GlyphStore,
+    node_glyphs: HashMap<RuntimeNodeId, Vec<GlyphPrimitiveId>>,
+    glyph_atlas: GlyphAtlas,
+    glyph_atlas_texture: wgpu::Texture,
+    glyph_atlas_bind_group: wgpu::BindGroup,
+    shape_cache: ShapeCache,
 }
 
 impl GpuSceneState {
@@ -104,19 +148,20 @@ impl GpuSceneState {
         };
         surface.configure(&device, &config);
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("creamui-quad-bind-group-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let screen_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("creamui-screen-bind-group-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let screen_size_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("creamui-screen-size"),
@@ -135,27 +180,27 @@ impl GpuSceneState {
             ]),
         );
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("creamui-quad-bind-group"),
-            layout: &bind_group_layout,
+        let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("creamui-screen-bind-group"),
+            layout: &screen_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: screen_size_buffer.as_entire_binding(),
             }],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let quad_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("creamui-quad-shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
+            source: wgpu::ShaderSource::Wgsl(QUAD_SHADER_SRC.into()),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let quad_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("creamui-quad-pipeline-layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&screen_bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let instance_attributes = wgpu::vertex_attr_array![
+        let quad_attributes = wgpu::vertex_attr_array![
             0 => Float32x2,
             1 => Float32x2,
             2 => Float32x4,
@@ -163,21 +208,21 @@ impl GpuSceneState {
             4 => Float32,
             5 => Float32,
         ];
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let quad_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("creamui-quad-pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&quad_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &quad_shader,
                 entry_point: "vs_main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<QuadInstance>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &instance_attributes,
+                    attributes: &quad_attributes,
                 }],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &quad_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
@@ -193,26 +238,153 @@ impl GpuSceneState {
             cache: None,
         });
 
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("creamui-quad-instances"),
-            size: (MIN_INSTANCE_CAPACITY as u64) * std::mem::size_of::<QuadInstance>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let quad_instance_buffer = grow_instance_buffer(
+            &device,
+            "creamui-quad-instances",
+            MIN_INSTANCE_CAPACITY,
+            std::mem::size_of::<QuadInstance>(),
+        );
+
+        let glyph_atlas_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("creamui-glyph-atlas-bind-group-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let glyph_atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("creamui-glyph-atlas"),
+            size: wgpu::Extent3d {
+                width: GLYPH_ATLAS_SIZE,
+                height: GLYPH_ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         });
+        let glyph_atlas_view =
+            glyph_atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let glyph_atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("creamui-glyph-atlas-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let glyph_atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("creamui-glyph-atlas-bind-group"),
+            layout: &glyph_atlas_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&glyph_atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&glyph_atlas_sampler),
+                },
+            ],
+        });
+
+        let glyph_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("creamui-glyph-shader"),
+            source: wgpu::ShaderSource::Wgsl(GLYPH_SHADER_SRC.into()),
+        });
+
+        let glyph_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("creamui-glyph-pipeline-layout"),
+                bind_group_layouts: &[&screen_bind_group_layout, &glyph_atlas_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let glyph_attributes = wgpu::vertex_attr_array![
+            0 => Float32x2,
+            1 => Float32x2,
+            2 => Float32x2,
+            3 => Float32x2,
+            4 => Float32x4,
+        ];
+        let glyph_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("creamui-glyph-pipeline"),
+            layout: Some(&glyph_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &glyph_shader,
+                entry_point: "vs_main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<GlyphInstance>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &glyph_attributes,
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &glyph_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let glyph_instance_buffer = grow_instance_buffer(
+            &device,
+            "creamui-glyph-instances",
+            MIN_INSTANCE_CAPACITY,
+            std::mem::size_of::<GlyphInstance>(),
+        );
 
         GpuSceneState {
             surface,
             device,
             queue,
             config,
-            pipeline,
+            screen_bind_group,
             screen_size_buffer,
-            bind_group,
-            instance_buffer,
-            instance_capacity: MIN_INSTANCE_CAPACITY,
             decode_srgb,
-            store: QuadStore::new(),
+
+            quad_pipeline,
+            quad_instance_buffer,
+            quad_instance_capacity: MIN_INSTANCE_CAPACITY,
+            quad_store: QuadStore::new(),
             node_quads: HashMap::new(),
+
+            glyph_pipeline,
+            glyph_instance_buffer,
+            glyph_instance_capacity: MIN_INSTANCE_CAPACITY,
+            glyph_store: GlyphStore::new(),
+            node_glyphs: HashMap::new(),
+            glyph_atlas: GlyphAtlas::new(GLYPH_ATLAS_SIZE),
+            glyph_atlas_texture,
+            glyph_atlas_bind_group,
+            shape_cache: ShapeCache::new(),
         }
     }
 
@@ -240,29 +412,145 @@ impl GpuSceneState {
         for (i, instance) in new_instances.into_iter().enumerate() {
             match old_ids.get(i) {
                 Some(&id) => {
-                    self.store.update(id, instance);
+                    self.quad_store.update(id, instance);
                     ids.push(id);
                 }
-                None => ids.push(self.store.insert(instance)),
+                None => ids.push(self.quad_store.insert(instance)),
             }
         }
         for &stale in &old_ids[ids.len()..] {
-            self.store.remove(stale);
+            self.quad_store.remove(stale);
         }
 
         self.node_quads.insert(node, ids);
     }
 
+    /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
+    /// sure every glyph it needs is rasterized into the atlas, and replaces
+    /// `node`'s glyph instances the same incremental way
+    /// [`GpuSceneState::sync_node`] does for quads. Glyphs that don't fit
+    /// the atlas are silently dropped rather than growing/rebaking it — see
+    /// `TODO.md`.
+    pub fn sync_text_node(&mut self, node: RuntimeNodeId, primitive: &TextPrimitive) {
+        let family = primitive.family.as_deref();
+        let bold = primitive.bold;
+        let shaped = self.shape_cache.shape(
+            &primitive.text,
+            primitive.font_size,
+            primitive.rect.width.max(1.0),
+            family,
+            bold,
+        );
+
+        let weight = if bold {
+            creamui_fonts::FontWeight::Bold
+        } else {
+            creamui_fonts::FontWeight::Regular
+        };
+        let face = creamui_fonts::resolve(family.unwrap_or(creamui_fonts::DEFAULT_FAMILY), weight);
+
+        let align_x = match primitive.align {
+            creamui_core::TextAlign::Start => 0.0,
+            creamui_core::TextAlign::Center => {
+                ((primitive.rect.width - shaped.width) / 2.0).max(0.0)
+            }
+            creamui_core::TextAlign::End => (primitive.rect.width - shaped.width).max(0.0),
+        };
+        let align_y = ((primitive.rect.height - shaped.height) / 2.0).max(0.0);
+        let color = quad::quad_color(primitive.color, self.decode_srgb);
+
+        let mut new_instances = Vec::with_capacity(shaped.glyphs.len());
+        for glyph in &shaped.glyphs {
+            let rect = match self.glyph_atlas.rect_for(glyph.raster_key) {
+                Some(rect) => rect,
+                None => {
+                    let (metrics, bitmap) = face.rasterize_config(glyph.raster_key);
+                    if metrics.width == 0 || metrics.height == 0 {
+                        continue;
+                    }
+                    let Some(rect) = self.glyph_atlas.place(
+                        glyph.raster_key,
+                        metrics.width as u32,
+                        metrics.height as u32,
+                    ) else {
+                        continue;
+                    };
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &self.glyph_atlas_texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: rect.x,
+                                y: rect.y,
+                                z: 0,
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &bitmap,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(rect.width),
+                            rows_per_image: Some(rect.height),
+                        },
+                        wgpu::Extent3d {
+                            width: rect.width,
+                            height: rect.height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    #[cfg(feature = "perf-metrics")]
+                    creamui_core::metrics::record(|m| m.gpu_upload_bytes += bitmap.len() as u64);
+                    rect
+                }
+            };
+
+            let position = [
+                primitive.rect.x + align_x + glyph.x,
+                primitive.rect.y + align_y + glyph.y,
+            ];
+            let size = [rect.width as f32, rect.height as f32];
+            new_instances.push(GlyphInstance::new(
+                position,
+                size,
+                rect,
+                self.glyph_atlas.size(),
+                color,
+            ));
+        }
+
+        let old_ids = self.node_glyphs.remove(&node).unwrap_or_default();
+        let mut ids = Vec::with_capacity(new_instances.len());
+        for (i, instance) in new_instances.into_iter().enumerate() {
+            match old_ids.get(i) {
+                Some(&id) => {
+                    self.glyph_store.update(id, instance);
+                    ids.push(id);
+                }
+                None => ids.push(self.glyph_store.insert(instance)),
+            }
+        }
+        for &stale in &old_ids[ids.len()..] {
+            self.glyph_store.remove(stale);
+        }
+        self.node_glyphs.insert(node, ids);
+    }
+
     pub fn remove_node(&mut self, node: RuntimeNodeId) {
         if let Some(ids) = self.node_quads.remove(&node) {
             for id in ids {
-                self.store.remove(id);
+                self.quad_store.remove(id);
+            }
+        }
+        if let Some(ids) = self.node_glyphs.remove(&node) {
+            for id in ids {
+                self.glyph_store.remove(id);
             }
         }
     }
 
     pub fn render(&mut self) {
-        self.sync_instance_buffer();
+        self.sync_quad_buffer();
+        self.sync_glyph_buffer();
 
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
@@ -286,7 +574,7 @@ impl GpuSceneState {
             });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("creamui-quad-pass"),
+                label: Some("creamui-scene-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -299,12 +587,24 @@ impl GpuSceneState {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            let count = self.store.instances().len() as u32;
-            if count > 0 {
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                pass.draw(0..6, 0..count);
+
+            let quad_count = self.quad_store.instances().len() as u32;
+            if quad_count > 0 {
+                pass.set_pipeline(&self.quad_pipeline);
+                pass.set_bind_group(0, &self.screen_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.quad_instance_buffer.slice(..));
+                pass.draw(0..6, 0..quad_count);
+                #[cfg(feature = "perf-metrics")]
+                creamui_core::metrics::record(|m| m.draw_calls += 1);
+            }
+
+            let glyph_count = self.glyph_store.instances().len() as u32;
+            if glyph_count > 0 {
+                pass.set_pipeline(&self.glyph_pipeline);
+                pass.set_bind_group(0, &self.screen_bind_group, &[]);
+                pass.set_bind_group(1, &self.glyph_atlas_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.glyph_instance_buffer.slice(..));
+                pass.draw(0..6, 0..glyph_count);
                 #[cfg(feature = "perf-metrics")]
                 creamui_core::metrics::record(|m| m.draw_calls += 1);
             }
@@ -313,42 +613,72 @@ impl GpuSceneState {
         frame.present();
     }
 
-    fn sync_instance_buffer(&mut self) {
-        let needed = self.store.instances().len() as u32;
+    fn sync_quad_buffer(&mut self) {
+        let needed = self.quad_store.instances().len() as u32;
 
-        if needed > self.instance_capacity {
+        if needed > self.quad_instance_capacity {
             let capacity = needed.next_power_of_two().max(MIN_INSTANCE_CAPACITY);
-            self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("creamui-quad-instances"),
-                size: (capacity as u64) * std::mem::size_of::<QuadInstance>() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.instance_capacity = capacity;
+            self.quad_instance_buffer = grow_instance_buffer(
+                &self.device,
+                "creamui-quad-instances",
+                capacity,
+                std::mem::size_of::<QuadInstance>(),
+            );
+            self.quad_instance_capacity = capacity;
             if needed > 0 {
-                let instances = self.store.instances();
-                self.queue
-                    .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+                let instances = self.quad_store.instances();
+                upload_instances(&self.queue, &self.quad_instance_buffer, 0, instances);
                 #[cfg(feature = "perf-metrics")]
                 creamui_core::metrics::record(|m| {
                     m.gpu_upload_bytes += std::mem::size_of_val(instances) as u64
                 });
             }
-            self.store.take_dirty_range();
+            self.quad_store.take_dirty_range();
             return;
         }
 
-        let Some((min, max)) = self.store.take_dirty_range() else {
+        let Some((min, max)) = self.quad_store.take_dirty_range() else {
             return;
         };
         let (start, end) = (min as usize, max as usize + 1);
-        let instances = self.store.instances();
-        let dirty_slice = &instances[start..end];
-        self.queue.write_buffer(
-            &self.instance_buffer,
-            (start * std::mem::size_of::<QuadInstance>()) as u64,
-            bytemuck::cast_slice(dirty_slice),
-        );
+        let dirty_slice = &self.quad_store.instances()[start..end];
+        upload_instances(&self.queue, &self.quad_instance_buffer, start, dirty_slice);
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| {
+            m.gpu_upload_bytes += std::mem::size_of_val(dirty_slice) as u64
+        });
+    }
+
+    fn sync_glyph_buffer(&mut self) {
+        let needed = self.glyph_store.instances().len() as u32;
+
+        if needed > self.glyph_instance_capacity {
+            let capacity = needed.next_power_of_two().max(MIN_INSTANCE_CAPACITY);
+            self.glyph_instance_buffer = grow_instance_buffer(
+                &self.device,
+                "creamui-glyph-instances",
+                capacity,
+                std::mem::size_of::<GlyphInstance>(),
+            );
+            self.glyph_instance_capacity = capacity;
+            if needed > 0 {
+                let instances = self.glyph_store.instances();
+                upload_instances(&self.queue, &self.glyph_instance_buffer, 0, instances);
+                #[cfg(feature = "perf-metrics")]
+                creamui_core::metrics::record(|m| {
+                    m.gpu_upload_bytes += std::mem::size_of_val(instances) as u64
+                });
+            }
+            self.glyph_store.take_dirty_range();
+            return;
+        }
+
+        let Some((min, max)) = self.glyph_store.take_dirty_range() else {
+            return;
+        };
+        let (start, end) = (min as usize, max as usize + 1);
+        let dirty_slice = &self.glyph_store.instances()[start..end];
+        upload_instances(&self.queue, &self.glyph_instance_buffer, start, dirty_slice);
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| {
             m.gpu_upload_bytes += std::mem::size_of_val(dirty_slice) as u64

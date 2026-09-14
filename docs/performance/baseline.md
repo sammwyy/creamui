@@ -546,3 +546,67 @@ is trusted, same caveat as `crates/render/src/gpu.rs`'s counters.
   loses most of its quads.
 - Images/texture manager (14.6) and clip strategy (14.7) are not
   started; Vello is not evaluated as an alternative backend (14.9).
+
+## 2026-09-14 — Phase 9
+
+`crates/render/src/gpu_scene/text.rs` adds `ShapeCache` (REFACTOR.md
+15.2/15.5: an LRU from `(text, font size, wrap width, family, weight)` to
+a `ShapedRun` shaped once at a canonical `(0, 0)`/left-aligned origin,
+shared by measurement-shaped and paint-shaped uses of the same text) and
+`GlyphAtlas` (15.4: a shelf-packed region tracker for rasterized glyph
+bitmaps, `GpuSceneState` owns the matching `R8Unorm` GPU texture and
+uploads a glyph's bitmap once the first time it's placed). `GpuPrimitiveId`
+-> `GlyphPrimitiveId`/`GlyphStore` mirrors Phase 8's `QuadStore` free-list-
+plus-dirty-range shape for glyph instances. `GpuSceneState::sync_text_node`
+ties these together: shape (cache hit on unchanged text), place every
+glyph in the atlas (rasterizing only on a miss), and diff the resulting
+`GlyphInstance`s against the node's previous ones the same incremental
+way `sync_node` already did for quads. `TextPrimitive` (`crates/core`)
+gained `family`/`bold` fields, populated by `generate_fragment` from
+`RuntimeNode::typography_style`, since shaping needs to know which face
+to resolve — Phase 7 hadn't carried that through.
+
+The first version of `ShapeCache`'s LRU used a `VecDeque` reordered on
+every hit (an O(cache size) linear scan + shift per lookup) — caught
+before committing by writing the flatness benchmark below and noticing it
+wouldn't actually be flat. Replaced with a logical clock: a hit is one
+hashmap lookup plus a counter bump (`O(1)`), and only eviction (a miss
+past capacity) scans for the least-recently-used entry.
+
+### Measured
+
+`text_shape/cache_hit` (`crates/bench/benches/text_shape.rs`), re-shaping
+one already-cached string with the given number of other distinct
+strings also warm in the cache:
+
+| Other cached strings | Time |
+|---|---|
+| 10 | 56.7 ns |
+| 1,000 | 56.9 ns |
+| 10,000 | 64.2 ns |
+
+`text_shape/cache_miss`, shaping a new never-seen string each iteration
+(a fresh `fontdue` layout pass): **4.62 µs** — about 80-100x a cache hit,
+confirming the cache is actually doing the expensive part once.
+
+### Not yet measured
+
+Same "no display server" constraint as Phases 0 and 8:
+`GpuSceneState::sync_text_node`'s atlas texture upload and the glyph
+pipeline's draw call have never run against a real `wgpu` surface.
+
+### Not done
+
+- `sync_text_node` is reachable only through the still-unwired
+  `gpu_scene` path — the live legacy renderer (`text_metrics.rs`,
+  `render/font.rs`) is untouched and still reshapes on every measurement
+  and every paint. See `TODO.md`.
+- `GlyphAtlas::grow` exists and is unit-tested but `GpuSceneState` never
+  calls it — the atlas is a fixed 1024x1024 texture, and a glyph that
+  doesn't fit is silently dropped rather than triggering a resize, since
+  a real resize also needs every already-placed `GlyphInstance`'s UV
+  rebaked (see `TODO.md` for why that wasn't attempted here).
+- No selection highlighting, underline/strikethrough, or per-glyph color
+  runs in the GPU text path.
+- Image primitives, clips, and transforms remain unrasterized by
+  `gpu_scene`, same as the Phase 8 baseline entry.

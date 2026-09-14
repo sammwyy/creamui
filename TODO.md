@@ -82,11 +82,11 @@
   needs the runtime tree itself wired in first (`GpuSceneState::sync_node`
   takes a `RuntimeNodeId` and `PaintFragment`, both currently reachable
   only off the unwired `Runtime`).
-- `GpuSceneState` only rasterizes `PaintPrimitive::Quad`/`Border`
-  (REFACTOR.md 14.8's migration order); `Text` and `Image` primitives are
-  silently dropped by `quad::quad_instances_for_fragment`, and
-  `PushClip`/`PushTransform` ops are ignored, so nested clipping/transforms
-  don't composite correctly yet. Shadows (14.8 step 6) aren't started.
+- `GpuSceneState` rasterizes `PaintPrimitive::Quad`/`Border` (via
+  `sync_node`) and `Text` (via `sync_text_node`, REFACTOR.md Phase 9);
+  `Image` primitives are still silently dropped, and `PushClip`/
+  `PushTransform` ops are ignored, so nested clipping/transforms don't
+  composite correctly yet. Shadows (14.8 step 6) aren't started.
 - `GpuSceneState`'s pipeline, shader, and sRGB decode path are unverified
   against a live surface — same "no display server" constraint as the
   `gpu.rs` counters above. Needs a windowed smoke test (a scene with a
@@ -94,4 +94,35 @@
   machine with a GPU and display attached before this is trusted.
 - `GpuSceneState`'s instance buffer only grows, never shrinks — a scene
   that mounts many quads and then unmounts most of them keeps the larger
-  buffer allocated.
+  buffer allocated. Same applies to the glyph instance buffer.
+- `GlyphAtlas::grow` (doubling the atlas and forgetting every placement)
+  is implemented and unit-tested in isolation but `GpuSceneState` never
+  calls it — the atlas is a fixed 1024x1024 `R8Unorm` texture, and
+  `sync_text_node` silently drops any glyph `GlyphAtlas::place` can't fit.
+  Wiring `grow` up for real needs the GPU texture recreated at the new
+  size *and* every already-baked `GlyphInstance` in `glyph_store`
+  re-derived (their `uv_min`/`uv_max` are baked against the old atlas
+  size and go stale the moment `size()` changes) — not attempted here
+  since getting that rebake wrong would silently corrupt already-visible
+  text.
+- `ShapeCache`/`GpuSceneState::sync_text_node` are only reachable from the
+  unwired `gpu_scene` path — the live legacy renderer
+  (`crates/widgets/src/text_metrics.rs`, `crates/render/src/font.rs`)
+  still reshapes text on every measurement and every paint with no cache,
+  exactly the "Bad" pattern REFACTOR.md 15.5 describes. Sharing one
+  shaping cache between the legacy path and `gpu_scene` needs the legacy
+  callers reworked to shape at a canonical origin/alignment and apply
+  align/paint-position offsets afterward, the way `sync_text_node` does —
+  not attempted here to avoid risking the live rendering path with no way
+  to visually verify the change in this environment.
+- `sync_text_node` only emits `PaintPrimitive::Quad`/`Border` fill in a
+  single block per node — text selection highlighting, underline/
+  strikethrough decorations, and per-glyph color runs (the legacy
+  `Painter::fill_text_selected` path) have no `gpu_scene` equivalent.
+- `TextPrimitive::family`/`bold` are populated for native
+  `NodeKind::Text` nodes in `generate_fragment`, but `RecordingPainter`
+  (the legacy-widget paint-recording path) still only implements the
+  base `Painter::fill_text`, not `fill_text_weight`/`fill_text_font`, so
+  a legacy widget's family/bold choice never reaches a recorded
+  `TextPrimitive` — consistent with `NodeKind::Custom` already getting an
+  empty fragment (see the `mount_legacy_widget` entry above).

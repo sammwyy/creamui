@@ -24,6 +24,8 @@ pub struct TextPrimitive {
     pub color: creamui_theme::Color,
     pub font_size: f32,
     pub align: crate::TextAlign,
+    pub family: Option<Rc<str>>,
+    pub bold: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +95,8 @@ pub(super) fn generate_fragment(
                     .unwrap_or(creamui_theme::Color::rgb(0, 0, 0)),
                 font_size: typography.font_size.unwrap_or(14.0),
                 align: typography.align.unwrap_or_default(),
+                family: typography.font_family.as_deref().map(Rc::from),
+                bold: typography.bold.unwrap_or(false),
             })));
         }
         NodeKind::Image(image) => {
@@ -186,6 +190,8 @@ impl crate::Painter for RecordingPainter {
                 color,
                 font_size,
                 align,
+                family: None,
+                bold: false,
             })));
     }
 

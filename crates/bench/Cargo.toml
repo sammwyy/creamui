@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "gpu_scene"
 harness = false
+
+[[bench]]
+name = "text_shape"
+harness = false

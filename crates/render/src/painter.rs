@@ -77,6 +77,12 @@ pub struct SkiaPainter {
     /// Window-space rects touched by a layer composite since the last
     /// [`SkiaPainter::take_damage`].
     damage: Vec<Rect>,
+    /// The window's own physical size, independent of `self.pixmap` (which
+    /// [`SkiaPainter::push_layer`] swaps to a layer-local buffer for the
+    /// duration of a nested layer) — the bound a layer's own buffer must
+    /// never exceed, regardless of how deep in the layer stack it's pushed.
+    root_width: u32,
+    root_height: u32,
 }
 
 impl SkiaPainter {
@@ -101,6 +107,8 @@ impl SkiaPainter {
             backdrop_pool: HashMap::new(),
             layer_stack: Vec::new(),
             damage: Vec::new(),
+            root_width: width.max(1),
+            root_height: height.max(1),
         }
     }
 
@@ -166,6 +174,8 @@ impl SkiaPainter {
     pub fn resize(&mut self, width: u32, height: u32) {
         let width = width.max(1);
         let height = height.max(1);
+        self.root_width = width;
+        self.root_height = height;
         // Reallocating a full window-sized pixel buffer for every reactive
         // frame dominated pointer-drag time. Most frames are not resizes;
         // retain and clear the existing buffer in that overwhelmingly common
@@ -374,12 +384,13 @@ impl Painter for SkiaPainter {
     }
     fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool) {
         let scale = self.scale;
-        // Clamped to the surface being painted into — nothing past its
-        // edges is ever visible, so a widget declaring a rect larger than
-        // that (e.g. an oversized off-screen hit target) must not size its
-        // layer buffer past it either.
-        let phys_w = (((rect.width * scale).round() as u32).max(1)).min(self.pixmap.width());
-        let phys_h = (((rect.height * scale).round() as u32).max(1)).min(self.pixmap.height());
+        // Clamped to the window's own size (not `self.pixmap`, which is
+        // already a layer-local buffer while nested inside another active
+        // layer) — nothing past its edges is ever visible, so a widget
+        // declaring a rect larger than that (e.g. an oversized off-screen
+        // hit target) must not size its layer buffer past it either.
+        let phys_w = (((rect.width * scale).round() as u32).max(1)).min(self.root_width);
+        let phys_h = (((rect.height * scale).round() as u32).max(1)).min(self.root_height);
 
         let cached_backdrop_matches = matches!(
             self.backdrop_pool.get(&id),
@@ -1000,6 +1011,43 @@ mod tests {
             },
             true,
         );
+        painter.pop_layer();
+    }
+
+    #[test]
+    fn a_nested_layer_clamps_to_the_window_not_its_parent_layer() {
+        // A layer pushed while another layer is already active must size
+        // itself against the window, not `self.pixmap` (which is the
+        // parent layer's own, possibly much smaller, buffer for as long as
+        // it stays on the stack) — regression test for a bug where an
+        // animated widget nested inside a small promoted ancestor got a
+        // layer buffer truncated to the ancestor's size, corrupting its
+        // captured backdrop.
+        let mut painter = SkiaPainter::new(100, 100);
+        painter.clear(Color::rgba(0, 0, 0, 255));
+        painter.push_layer(
+            1,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            true,
+        );
+        painter.push_layer(
+            2,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 50.0,
+                height: 50.0,
+            },
+            true,
+        );
+        assert_eq!(painter.pixmap.width(), 50);
+        assert_eq!(painter.pixmap.height(), 50);
+        painter.pop_layer();
         painter.pop_layer();
     }
 

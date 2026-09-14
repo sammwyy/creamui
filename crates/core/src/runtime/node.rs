@@ -95,6 +95,19 @@ pub enum NodeKind {
     Custom(CustomNode),
 }
 
+/// A node's derived `taffy` layout node and its last computed geometry.
+pub struct LayoutState {
+    pub taffy_node: taffy::NodeId,
+    /// Fingerprint behind the last `taffy` measure-context write; see
+    /// [`super::mutation::Mutation::SetMeasure`].
+    pub measure_fingerprint: Option<u64>,
+    /// Window-space rect as of the last [`super::Runtime::compute_layout`].
+    pub rect: crate::Rect,
+    pub previous_rect: crate::Rect,
+    /// Layout epoch as of the last time `rect` actually changed.
+    pub last_layout_epoch: u64,
+}
+
 pub struct RuntimeNode {
     pub id: RuntimeNodeId,
     pub parent: Option<RuntimeNodeId>,
@@ -105,10 +118,11 @@ pub struct RuntimeNode {
     pub typography_style: crate::TypographyStyle,
     pub transform: super::mutation::Transform2D,
     pub dirty: DirtyFlags,
+    pub layout: LayoutState,
 }
 
 impl RuntimeNode {
-    pub(super) fn new(id: RuntimeNodeId, kind: NodeKind) -> Self {
+    pub(super) fn new(id: RuntimeNodeId, kind: NodeKind, taffy_node: taffy::NodeId) -> Self {
         RuntimeNode {
             id,
             parent: None,
@@ -119,6 +133,13 @@ impl RuntimeNode {
             typography_style: crate::TypographyStyle::default(),
             transform: super::mutation::Transform2D::default(),
             dirty: DirtyFlags::STRUCTURE,
+            layout: LayoutState {
+                taffy_node,
+                measure_fingerprint: None,
+                rect: crate::Rect::default(),
+                previous_rect: crate::Rect::default(),
+                last_layout_epoch: 0,
+            },
         }
     }
 }

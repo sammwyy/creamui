@@ -342,3 +342,44 @@ signature to receive `&SharedRuntime` instead of `&mut RuntimeTransaction`,
 so nested mounting manages its own transactions instead of reusing one
 held open by the caller. Regression-tested
 (`branch::tests::a_mount_closure_that_recurses_into_another_mount_does_not_panic`).
+
+## 2026-09-14 — Phase 5
+
+`Runtime` now owns a real `taffy::TaffyTree`. `RuntimeTransaction` mutates
+it precisely: `SetLayoutStyle` diffs and writes `taffy`'s style only on
+change, `SetMeasure` skips the `taffy` context write when the fingerprint
+is unchanged, `SetPaintStyle`/`SetTypographyStyle`/`SetText`/`SetTransform`
+never touch `taffy` at all. `create_node`/`insert_child`/`reorder_children`/
+`remove_subtree` keep a parallel `taffy` node per runtime node in sync,
+checked by `check_invariants` (taffy children must match runtime children
+for every node). `Runtime::compute_layout` skips `taffy::compute_layout`
+entirely unless something marked layout dirty or the viewport itself
+changed, then marks `PAINT | HIT_TEST` on nodes whose window-space rect
+actually moved and returns their old+new rects as damage.
+
+### Measured
+
+`runtime/compute_layout_after_single_leaf_style_change`
+(`crates/bench/benches/runtime.rs`): changing one leaf's layout style in a
+`wide_tree`, then calling `compute_layout`:
+
+| Nodes | Time |
+|---|---|
+| 1,000 | 0.16 ms |
+| 10,000 | 2.2 ms |
+| 50,000 | 23.5 ms |
+
+This scales close to linearly with tree size — **not** flat, unlike the
+paint-mutation benchmarks in the Phase 2/3 sections above. The cost is not
+`taffy::compute_layout` itself (internally cached, so recomputing one
+leaf's size shouldn't touch unrelated subtrees) but
+`Runtime::sync_layout_rects`, the post-layout pass that walks every node
+to detect which rects moved. It's an O(n) scan regardless of how many
+nodes `taffy` actually recomputed, since nothing in `taffy`'s public API
+used here exposes which nodes it touched. REFACTOR.md 11.8's "layout
+metrics scale with affected branches rather than whole-tree mutation
+count" is therefore only partially met — true for `taffy` writes and
+`compute_layout` invocation, not for this rect-sync pass. See `TODO.md`.
+
+Paint-only changes never reaching `taffy` at all is fully met and
+unit-tested (`paint_only_changes_never_mark_layout_dirty`).

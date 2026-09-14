@@ -34,3 +34,18 @@
   long-lived parents with many toggles/reorders under them (see
   `docs/performance/baseline.md`'s Phase 3 section), not a correctness or
   subscription-leak issue. Fixing it needs a `Weak` parent back-pointer.
+- `Runtime::sync_layout_rects` (`crates/core/src/runtime/mod.rs`) walks
+  every node after every `compute_layout` call to find which rects moved —
+  O(whole tree), not O(affected branches), since nothing in the `taffy`
+  API used here reports which nodes it actually recomputed. Measured at
+  ~23.5ms for a 50,000-node tree after a single leaf's style change (see
+  `docs/performance/baseline.md`'s Phase 5 section). `taffy`'s own
+  recompute is cached and cheap; this post-pass is the remaining cost.
+- `RuntimeNode` always gets a `taffy` node at creation
+  (`RuntimeTransaction::create_node`); REFACTOR.md 11.1's "not every
+  logical runtime node necessarily needs a Taffy node forever" (flattening
+  wrapper/component nodes) is not attempted.
+- `LayoutState::measure_fingerprint`-based skip only covers the `taffy`
+  context write; there is no measurement result cache (REFACTOR.md 11.4) —
+  a `taffy` `MeasureFunction` still recomputes from scratch whenever
+  `compute_layout` actually calls it.

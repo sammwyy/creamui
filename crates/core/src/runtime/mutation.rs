@@ -1,8 +1,7 @@
 use super::node::RuntimeNodeId;
 use std::rc::Rc;
 
-/// 2D translation only — compositing (opacity, rotation, scale) is out of
-/// scope until Phase 10.
+/// 2D translation only; no rotation/scale.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Transform2D {
     pub x: f32,
@@ -33,5 +32,14 @@ pub enum Mutation {
     SetTransform {
         node: RuntimeNodeId,
         transform: Transform2D,
+    },
+    /// Registers (or clears) `node`'s intrinsic-size function. `fingerprint`
+    /// is a hash of whatever `measure` captures; a match against the
+    /// node's stored fingerprint skips the `taffy` write. `None` always
+    /// writes.
+    SetMeasure {
+        node: RuntimeNodeId,
+        measure: Option<crate::MeasureFn>,
+        fingerprint: Option<u64>,
     },
 }

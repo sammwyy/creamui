@@ -109,6 +109,59 @@ fn bench_signal_driven_leaf_update(c: &mut Criterion) {
     group.finish();
 }
 
+/// `compute_layout` cost after changing one leaf's layout style, as a
+/// function of unrelated tree size — should stay flat, since `taffy`
+/// caches unaffected subtrees internally and `Runtime` only calls
+/// `compute_layout` when something is actually dirty.
+fn bench_compute_layout_after_single_leaf_style_change(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime/compute_layout_after_single_leaf_style_change");
+    for &count in &[1_000usize, 10_000, 50_000] {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root =
+            creamui_core::runtime::mount_legacy_widget(&mut tx, scenes::wide_tree(count), None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(creamui_core::Size {
+            width: 1920.0,
+            height: 1080.0,
+        });
+        let leaf = *runtime
+            .get(root)
+            .expect("root exists")
+            .children
+            .as_slice()
+            .first()
+            .expect("wide_tree has at least one leaf");
+
+        let mut tick = 0u16;
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                tick = tick.wrapping_add(1);
+                let mut tx = runtime.transaction();
+                tx.apply(Mutation::SetLayoutStyle {
+                    node: leaf,
+                    style: creamui_core::layout::Style {
+                        size: creamui_core::layout::Size {
+                            width: creamui_core::layout::Dimension::Length(
+                                16.0 + (tick % 8) as f32,
+                            ),
+                            height: creamui_core::layout::Dimension::Length(16.0),
+                        },
+                        ..Default::default()
+                    },
+                });
+                drop(tx);
+                runtime.compute_layout(creamui_core::Size {
+                    width: 1920.0,
+                    height: 1080.0,
+                });
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_create_node(c: &mut Criterion) {
     c.bench_function("runtime/create_10000_nodes", |b| {
         b.iter(|| {
@@ -128,6 +181,7 @@ criterion_group!(
     bench_mount_legacy_widget,
     bench_direct_leaf_mutation,
     bench_signal_driven_leaf_update,
+    bench_compute_layout_after_single_leaf_style_change,
     bench_create_node
 );
 criterion_main!(benches);

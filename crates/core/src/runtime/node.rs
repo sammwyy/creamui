@@ -106,6 +106,9 @@ pub struct LayoutState {
     pub previous_rect: crate::Rect,
     /// Layout epoch as of the last time `rect` actually changed.
     pub last_layout_epoch: u64,
+    /// This node's own [`RuntimeNode::transform`] plus every ancestor's, as
+    /// of the last [`super::Runtime::rebuild_composite`].
+    pub effective_transform: super::mutation::Transform2D,
 }
 
 /// Retained event handlers and interaction metadata for one node, set
@@ -171,6 +174,7 @@ impl RuntimeNode {
                 rect: crate::Rect::default(),
                 previous_rect: crate::Rect::default(),
                 last_layout_epoch: 0,
+                effective_transform: super::mutation::Transform2D::default(),
             },
             events: EventState::default(),
             paint: super::paint::PaintState::default(),

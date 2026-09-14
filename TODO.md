@@ -71,10 +71,14 @@
 - No damage-rect merging or full-window collapse above an area/count
   threshold (REFACTOR.md 13.5) — `rebuild_paint`'s damage is a raw list
   of old+new bounds per regenerated fragment.
-- No retained clip/opacity/transform grouping (REFACTOR.md 13.4) —
-  `PaintOp::PushTransform`/`PopTransform` exist in the enum but nothing
-  generates them; `RuntimeNode` has no clip flag, so `PushClip`/`PopClip`
-  aren't emitted for clipping containers either.
+- No retained clip/opacity grouping (REFACTOR.md 13.4) — `RuntimeNode`
+  has no clip or opacity flag, so `PushClip`/`PopClip` aren't emitted for
+  clipping containers and there is no opacity property node at all
+  (transform now has one — `RuntimeNode::transform`/`effective_transform`
+  — see the Phase 10 entries below). `PaintOp::PushTransform`/
+  `PopTransform` still exist in the enum but nothing generates them:
+  Phase 10 deliberately keeps `effective_transform` out of the `PaintOp`
+  stream so a transform-only change never regenerates a paint fragment.
 - `crates/render/src/gpu_scene` (REFACTOR.md Phase 8) is not wired into
   `Renderer`/`window.rs` — same "exists alongside, not selectable yet"
   state as `crates/core/src/runtime`. There is no `RenderBackend::GpuScene`
@@ -126,3 +130,24 @@
   a legacy widget's family/bold choice never reaches a recorded
   `TextPrimitive` — consistent with `NodeKind::Custom` already getting an
   empty fragment (see the `mount_legacy_widget` entry above).
+- `Runtime::rebuild_composite` (REFACTOR.md Phase 10) and
+  `GpuSceneState::sync_transform` exist and are tested/benchmarked in
+  isolation, but nothing calls either from a shared place — same
+  "exists alongside, not wired into a caller" state as the rest of the
+  runtime tree and `gpu_scene`. A real caller would run
+  `rebuild_composite` after every transaction and, for each id it
+  returns, call `sync_transform(id, runtime.get(id).unwrap().layout.effective_transform)`.
+  `Mutation::SetTransform` also has no scroll-view/drag caller yet — it
+  exists as plumbing, not wired to any interaction.
+- Only translation is modeled (`Transform2D { x, y }`) — no scale/rotate,
+  no `OpacityNode`/`ClipNode` (REFACTOR.md 16.1's other two retained
+  property kinds), and no explicit compositor-owned layer-promotion
+  policy or devtools layer-memory view (16.4/16.5's remaining exit
+  criteria). The existing paint-time layer promotion heuristic in
+  `crates/core/src/scene.rs` (the legacy reconcile path) is untouched.
+- `Runtime::rebuild_composite`'s cascade can revisit the same node twice
+  in one pass if a single transaction calls `Mutation::SetTransform` on
+  both a node and one of its ancestors — harmless (recomputes to the
+  same value, `#[cfg(feature = "perf-metrics")]`'s
+  `composite_nodes_updated` counter just double-counts that node), not
+  worth a dedup pass for this edge case yet.

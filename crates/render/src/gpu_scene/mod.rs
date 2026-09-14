@@ -14,7 +14,7 @@ pub use text::{
     AtlasRect, GlyphAtlas, GlyphInstance, GlyphPrimitiveId, GlyphStore, ShapeCache, ShapedRun,
 };
 
-use creamui_core::runtime::{PaintFragment, RuntimeNodeId, TextPrimitive};
+use creamui_core::runtime::{PaintFragment, RuntimeNodeId, TextPrimitive, Transform2D};
 use creamui_platform::PlatformWindow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +75,8 @@ pub struct GpuSceneState {
     glyph_atlas_texture: wgpu::Texture,
     glyph_atlas_bind_group: wgpu::BindGroup,
     shape_cache: ShapeCache,
+
+    node_transforms: HashMap<RuntimeNodeId, Transform2D>,
 }
 
 impl GpuSceneState {
@@ -385,6 +387,8 @@ impl GpuSceneState {
             glyph_atlas_texture,
             glyph_atlas_bind_group,
             shape_cache: ShapeCache::new(),
+
+            node_transforms: HashMap::new(),
         }
     }
 
@@ -401,11 +405,23 @@ impl GpuSceneState {
     }
 
     /// Replaces `node`'s quad instances with the ones derived from its
-    /// current paint fragment, reusing existing [`GpuPrimitiveId`] slots
-    /// where the instance count didn't change so most updates only dirty
-    /// a handful of buffer slots instead of the whole scene.
-    pub fn sync_node(&mut self, node: RuntimeNodeId, fragment: &PaintFragment) {
-        let new_instances = quad::quad_instances_for_fragment(fragment, self.decode_srgb);
+    /// current paint fragment and `transform`, reusing existing
+    /// [`GpuPrimitiveId`] slots where the instance count didn't change so
+    /// most updates only dirty a handful of buffer slots instead of the
+    /// whole scene. A `transform`-only change should go through
+    /// [`GpuSceneState::sync_transform`] instead, which skips re-deriving
+    /// from `fragment` entirely.
+    pub fn sync_node(
+        &mut self,
+        node: RuntimeNodeId,
+        fragment: &PaintFragment,
+        transform: Transform2D,
+    ) {
+        let new_instances: Vec<QuadInstance> =
+            quad::quad_instances_for_fragment(fragment, self.decode_srgb)
+                .into_iter()
+                .map(|instance| instance.translated(transform.x, transform.y))
+                .collect();
         let old_ids = self.node_quads.remove(&node).unwrap_or_default();
 
         let mut ids = Vec::with_capacity(new_instances.len());
@@ -423,6 +439,7 @@ impl GpuSceneState {
         }
 
         self.node_quads.insert(node, ids);
+        self.node_transforms.insert(node, transform);
     }
 
     /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
@@ -431,7 +448,12 @@ impl GpuSceneState {
     /// [`GpuSceneState::sync_node`] does for quads. Glyphs that don't fit
     /// the atlas are silently dropped rather than growing/rebaking it — see
     /// `TODO.md`.
-    pub fn sync_text_node(&mut self, node: RuntimeNodeId, primitive: &TextPrimitive) {
+    pub fn sync_text_node(
+        &mut self,
+        node: RuntimeNodeId,
+        primitive: &TextPrimitive,
+        transform: Transform2D,
+    ) {
         let family = primitive.family.as_deref();
         let bold = primitive.bold;
         let shaped = self.shape_cache.shape(
@@ -505,8 +527,8 @@ impl GpuSceneState {
             };
 
             let position = [
-                primitive.rect.x + align_x + glyph.x,
-                primitive.rect.y + align_y + glyph.y,
+                primitive.rect.x + align_x + glyph.x + transform.x,
+                primitive.rect.y + align_y + glyph.y + transform.y,
             ];
             let size = [rect.width as f32, rect.height as f32];
             new_instances.push(GlyphInstance::new(
@@ -533,6 +555,34 @@ impl GpuSceneState {
             self.glyph_store.remove(stale);
         }
         self.node_glyphs.insert(node, ids);
+        self.node_transforms.insert(node, transform);
+    }
+
+    /// Repositions `node`'s already-retained quad and glyph instances by
+    /// the delta between `transform` and whatever was last applied,
+    /// without touching [`ShapeCache`], the glyph atlas, or re-deriving
+    /// anything from a [`PaintFragment`]/[`TextPrimitive`] — the
+    /// property-only update path (REFACTOR.md Phase 10).
+    pub fn sync_transform(&mut self, node: RuntimeNodeId, transform: Transform2D) {
+        let previous = self.node_transforms.get(&node).copied().unwrap_or_default();
+        if previous == transform {
+            return;
+        }
+        let (dx, dy) = (transform.x - previous.x, transform.y - previous.y);
+
+        if let Some(ids) = self.node_quads.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store.update(id, current.translated(dx, dy));
+            }
+        }
+        if let Some(ids) = self.node_glyphs.get(&node) {
+            for &id in ids {
+                let current = self.glyph_store.get(id);
+                self.glyph_store.update(id, current.translated(dx, dy));
+            }
+        }
+        self.node_transforms.insert(node, transform);
     }
 
     pub fn remove_node(&mut self, node: RuntimeNodeId) {
@@ -546,6 +596,7 @@ impl GpuSceneState {
                 self.glyph_store.remove(id);
             }
         }
+        self.node_transforms.remove(&node);
     }
 
     pub fn render(&mut self) {

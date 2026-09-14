@@ -23,9 +23,14 @@ impl<'a> RuntimeTransaction<'a> {
         if let Some(node) = self.runtime.nodes.get_mut(id) {
             let newly_paint_dirty =
                 flags.contains(DirtyFlags::PAINT) && !node.dirty.contains(DirtyFlags::PAINT);
+            let newly_composite_dirty = flags.contains(DirtyFlags::COMPOSITE)
+                && !node.dirty.contains(DirtyFlags::COMPOSITE);
             node.dirty |= flags;
             if newly_paint_dirty {
                 self.runtime.paint_queue.push(id);
+            }
+            if newly_composite_dirty {
+                self.runtime.composite_queue.push(id);
             }
         }
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {

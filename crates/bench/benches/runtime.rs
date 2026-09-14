@@ -2,7 +2,9 @@
 //! against `tree_update`'s reconcile-based numbers for the same shapes.
 
 use creamui_bench::scenes;
-use creamui_core::runtime::{create_binding, Mutation, NodeKind, Runtime, SharedRuntime};
+use creamui_core::runtime::{
+    create_binding, Mutation, NodeKind, Runtime, SharedRuntime, Transform2D,
+};
 use creamui_core::PaintStyle;
 use creamui_reactive::{Owner, Signal};
 use creamui_theme::Color;
@@ -246,6 +248,41 @@ fn bench_rebuild_paint_after_single_leaf_paint_change(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_rebuild_composite_after_single_leaf_transform_change(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("runtime/rebuild_composite_after_single_leaf_transform_change");
+    for &count in &[1_000usize, 10_000, 50_000] {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root =
+            creamui_core::runtime::mount_legacy_widget(&mut tx, scenes::wide_tree(count), None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        let leaf = *runtime
+            .get(root)
+            .expect("root exists")
+            .children
+            .as_slice()
+            .first()
+            .expect("wide_tree has at least one leaf");
+
+        let mut tick = 0.0f32;
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                tick += 1.0;
+                let mut tx = runtime.transaction();
+                tx.apply(Mutation::SetTransform {
+                    node: leaf,
+                    transform: Transform2D { x: tick, y: 0.0 },
+                });
+                drop(tx);
+                runtime.rebuild_composite();
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_create_node(c: &mut Criterion) {
     c.bench_function("runtime/create_10000_nodes", |b| {
         b.iter(|| {
@@ -268,6 +305,7 @@ criterion_group!(
     bench_compute_layout_after_single_leaf_style_change,
     bench_rebuild_hit_test,
     bench_rebuild_paint_after_single_leaf_paint_change,
+    bench_rebuild_composite_after_single_leaf_transform_change,
     bench_create_node
 );
 criterion_main!(benches);

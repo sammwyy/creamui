@@ -610,3 +610,58 @@ pipeline's draw call have never run against a real `wgpu` surface.
   runs in the GPU text path.
 - Image primitives, clips, and transforms remain unrasterized by
   `gpu_scene`, same as the Phase 8 baseline entry.
+
+## 2026-09-14 — Phase 10
+
+`Runtime::rebuild_composite` (REFACTOR.md 16.1) gives `Transform2D` a
+real property-only update path: `RuntimeNode`/`Mutation::SetTransform`
+already existed but nothing consumed `DirtyFlags::COMPOSITE` or read
+`transform` back — `generate_fragment` never referenced it. A
+`composite_queue` (mirroring `paint_queue`) now drives a pass that
+computes each dirty node's `effective_transform` (its own `transform`
+plus its parent's `effective_transform`) and cascades to children only
+when a node's own value actually changed, since they inherit it — no
+layout, no paint-fragment regeneration, matching the exit criterion
+"Transform-only animations avoid paint-record regeneration" directly
+(a dedicated test asserts a transform change leaves the paint fragment's
+bounds untouched). `crates/render/src/gpu_scene` gained the consumer
+side: `sync_node`/`sync_text_node` now take a `Transform2D` and bake it
+into instance positions, and a new `GpuSceneState::sync_transform`
+repositions a node's already-retained quad/glyph instances by the delta
+from its previously-applied transform — no `ShapeCache`, atlas, or
+`PaintFragment` involved at all.
+
+### Measured
+
+`runtime/rebuild_composite_after_single_leaf_transform_change`
+(`crates/bench/benches/runtime.rs`), changing one leaf's transform in a
+`wide_tree` then calling `rebuild_composite`:
+
+| Nodes | Time |
+|---|---|
+| 1,000 | 59.2 ns |
+| 10,000 | 57.3 ns |
+| 50,000 | 57.4 ns |
+
+Flat, the same shape as Phase 7's `rebuild_paint` and Phase 9's
+`ShapeCache` hit numbers — a leaf has no children to cascade to, so its
+transform change costs exactly one node's worth of work regardless of
+how large the surrounding tree is.
+
+### Not yet measured
+
+`GpuSceneState::sync_transform`'s actual GPU buffer patch — same "no
+display server" constraint as every `gpu_scene` entry above.
+
+### Not done
+
+- `rebuild_composite` and `sync_transform` are tested/benchmarked in
+  isolation but nothing calls either from a shared place yet — see
+  `TODO.md`.
+- Only translation (`Transform2D { x, y }`) — no scale/rotate, and no
+  `OpacityNode`/`ClipNode` (16.1's other two property kinds).
+- No compositor-owned layer-promotion policy or devtools layer-memory
+  view (16.4/16.5) — the legacy `scene.rs` reconcile path's own
+  paint-time layer-promotion heuristic is untouched.
+- Scrolling is not transform-first (16.2) — no scroll view routes its
+  offset through `Mutation::SetTransform` yet.

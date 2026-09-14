@@ -63,6 +63,7 @@ pub struct Runtime {
     /// [`Runtime::rebuild_paint`] skip re-deriving paint order otherwise.
     paint_order_dirty: bool,
     paint_order: Vec<RuntimeNodeId>,
+    composite_queue: Vec<RuntimeNodeId>,
 }
 
 impl Runtime {
@@ -81,6 +82,7 @@ impl Runtime {
             paint_queue: Vec::new(),
             paint_order_dirty: false,
             paint_order: Vec::new(),
+            composite_queue: Vec::new(),
         }
     }
 
@@ -259,6 +261,49 @@ impl Runtime {
     /// [`Runtime::rebuild_paint`].
     pub fn paint_order(&self) -> &[RuntimeNodeId] {
         &self.paint_order
+    }
+
+    /// Recomputes `effective_transform` for every queued (COMPOSITE-dirty)
+    /// node, cascading to a node's children whenever its own
+    /// `effective_transform` actually changed (they inherit it) — no
+    /// layout, no paint-fragment regeneration. Returns every node whose
+    /// `effective_transform` was touched, so a renderer can reposition
+    /// already-retained content for exactly those nodes.
+    pub fn rebuild_composite(&mut self) -> Vec<RuntimeNodeId> {
+        let mut queue = std::mem::take(&mut self.composite_queue);
+        let mut touched = Vec::with_capacity(queue.len());
+        let mut i = 0;
+        while i < queue.len() {
+            let id = queue[i];
+            i += 1;
+
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            let parent_effective = node
+                .parent
+                .and_then(|parent| self.nodes.get(parent))
+                .map(|parent| parent.layout.effective_transform)
+                .unwrap_or_default();
+            let own = node.transform;
+            let new_effective = Transform2D {
+                x: parent_effective.x + own.x,
+                y: parent_effective.y + own.y,
+            };
+
+            let node = self.nodes.get_mut(id).expect("checked above");
+            let changed = node.layout.effective_transform != new_effective;
+            node.layout.effective_transform = new_effective;
+            node.dirty.remove(DirtyFlags::COMPOSITE);
+            #[cfg(feature = "perf-metrics")]
+            crate::metrics::record(|m| m.composite_nodes_updated += 1);
+            touched.push(id);
+
+            if changed {
+                queue.extend(node.children.as_slice().iter().copied());
+            }
+        }
+        touched
     }
 
     /// Panics on the first broken invariant found: a child whose `parent`
@@ -600,6 +645,95 @@ mod tests {
 
         runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
         assert_eq!(runtime.paint_order(), &[root, child]);
+    }
+
+    #[test]
+    fn rebuild_composite_sets_a_leafs_effective_transform_to_its_own() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 5.0, y: 7.0 },
+        });
+        drop(tx);
+
+        runtime.rebuild_composite();
+        assert_eq!(
+            runtime.get(node).unwrap().layout.effective_transform,
+            Transform2D { x: 5.0, y: 7.0 }
+        );
+    }
+
+    #[test]
+    fn rebuild_composite_cascades_a_parents_transform_to_its_children() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetTransform {
+            node: parent,
+            transform: Transform2D { x: 10.0, y: 0.0 },
+        });
+        drop(tx);
+
+        runtime.rebuild_composite();
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_transform,
+            Transform2D { x: 10.0, y: 0.0 }
+        );
+    }
+
+    #[test]
+    fn rebuild_composite_does_not_touch_the_paint_fragment() {
+        let mut runtime = Runtime::new();
+        let node = background_node(&mut runtime, creamui_theme::Color::rgb(1, 2, 3));
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        let fragment_before = runtime
+            .get(node)
+            .unwrap()
+            .paint
+            .fragment
+            .as_ref()
+            .unwrap()
+            .bounds;
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 3.0, y: 4.0 },
+        });
+        drop(tx);
+
+        assert!(runtime
+            .rebuild_paint(&creamui_theme::ColorScheme::default())
+            .is_empty());
+        runtime.rebuild_composite();
+        let fragment_after = runtime
+            .get(node)
+            .unwrap()
+            .paint
+            .fragment
+            .as_ref()
+            .unwrap()
+            .bounds;
+        assert_eq!(fragment_before, fragment_after);
+    }
+
+    #[test]
+    fn rebuild_composite_is_a_noop_when_nothing_is_dirty() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 1.0, y: 1.0 },
+        });
+        drop(tx);
+        runtime.rebuild_composite();
+
+        assert!(runtime.rebuild_composite().is_empty());
     }
 
     /// A tiny xorshift generator, so this test is reproducible without a

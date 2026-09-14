@@ -49,6 +49,13 @@ impl QuadInstance {
             padding: [0.0; 2],
         }
     }
+
+    pub fn translated(self, dx: f32, dy: f32) -> Self {
+        QuadInstance {
+            position: [self.position[0] + dx, self.position[1] + dy],
+            ..self
+        }
+    }
 }
 
 fn srgb_channel_to_linear(c: f32) -> f32 {
@@ -158,6 +165,10 @@ impl QuadStore {
         self.mark_dirty(id.0);
     }
 
+    pub fn get(&self, id: GpuPrimitiveId) -> QuadInstance {
+        self.slots[id.0 as usize]
+    }
+
     pub fn instances(&self) -> &[QuadInstance] {
         &self.slots
     }
@@ -196,6 +207,29 @@ mod tests {
         let b = store.insert(QuadInstance::zeroed());
         assert_ne!(a, b);
         assert_eq!(store.take_dirty_range(), Some((0, 1)));
+    }
+
+    #[test]
+    fn get_returns_the_last_inserted_or_updated_value() {
+        let mut store = QuadStore::new();
+        let instance =
+            QuadInstance::fill(rect(0.0, 0.0, 1.0, 1.0), Color::rgb(1, 1, 1), 0.0, false);
+        let id = store.insert(instance);
+        assert_eq!(store.get(id), instance);
+
+        let updated = instance.translated(5.0, 6.0);
+        store.update(id, updated);
+        assert_eq!(store.get(id), updated);
+    }
+
+    #[test]
+    fn translated_shifts_only_the_position() {
+        let instance =
+            QuadInstance::fill(rect(1.0, 2.0, 10.0, 10.0), Color::rgb(1, 1, 1), 3.0, false);
+        let shifted = instance.translated(5.0, -1.0);
+        assert_eq!(shifted.position, [6.0, 1.0]);
+        assert_eq!(shifted.size, instance.size);
+        assert_eq!(shifted.color, instance.color);
     }
 
     #[test]

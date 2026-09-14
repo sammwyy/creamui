@@ -290,6 +290,13 @@ impl GlyphInstance {
             color,
         }
     }
+
+    pub fn translated(self, dx: f32, dy: f32) -> Self {
+        GlyphInstance {
+            position: [self.position[0] + dx, self.position[1] + dy],
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -339,6 +346,10 @@ impl GlyphStore {
         self.slots[id.0 as usize] = GlyphInstance::zeroed();
         self.free.push(id.0);
         self.mark_dirty(id.0);
+    }
+
+    pub fn get(&self, id: GlyphPrimitiveId) -> GlyphInstance {
+        self.slots[id.0 as usize]
     }
 
     pub fn instances(&self) -> &[GlyphInstance] {
@@ -520,5 +531,38 @@ mod tests {
         let c = store.insert(GlyphInstance::zeroed());
         assert_eq!(c, a);
         assert_eq!(store.instances().len(), 2);
+    }
+
+    #[test]
+    fn glyph_store_get_returns_the_last_inserted_or_updated_value() {
+        let mut store = GlyphStore::new();
+        let rect = AtlasRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        };
+        let instance = GlyphInstance::new([1.0, 2.0], [4.0, 8.0], rect, 32, [1.0; 4]);
+        let id = store.insert(instance);
+        assert_eq!(store.get(id), instance);
+
+        let moved = instance.translated(3.0, -2.0);
+        store.update(id, moved);
+        assert_eq!(store.get(id), moved);
+    }
+
+    #[test]
+    fn glyph_translated_shifts_only_the_position() {
+        let rect = AtlasRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        };
+        let instance = GlyphInstance::new([1.0, 2.0], [4.0, 8.0], rect, 32, [1.0; 4]);
+        let shifted = instance.translated(3.0, -2.0);
+        assert_eq!(shifted.position, [4.0, 0.0]);
+        assert_eq!(shifted.uv_min, instance.uv_min);
+        assert_eq!(shifted.uv_max, instance.uv_max);
     }
 }

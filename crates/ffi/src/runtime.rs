@@ -3,9 +3,9 @@
 //! A [`CNode`] is an opaque packed index+generation handle — see
 //! [`creamui_abi::CNode`].
 
-use creamui_abi::{CColor, CNode, CStyle, CUI_NODE_KIND_TEXT, CUI_NODE_NONE};
-use creamui_core::runtime::{Mutation, NodeKind, Runtime, RuntimeNodeId};
-use creamui_core::PaintStyle;
+use creamui_abi::{CColor, CNode, CRect, CStyle, CUI_NODE_KIND_TEXT, CUI_NODE_NONE};
+use creamui_core::runtime::{Mutation, NodeKind, Runtime, RuntimeNodeId, Transform2D};
+use creamui_core::{PaintStyle, Size};
 use creamui_theme::Color;
 use std::os::raw::{c_char, c_int};
 
@@ -141,6 +141,57 @@ pub unsafe extern "C" fn cui_set_background(
     }
 }
 
+/// # Safety
+/// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
+#[no_mangle]
+pub unsafe extern "C" fn cui_set_transform(rt: *mut CRuntime, node: CNode, x: f32, y: f32) {
+    if let Some(rt) = rt.as_mut() {
+        rt.0.transaction().apply(Mutation::SetTransform {
+            node: decode(node),
+            transform: Transform2D { x, y },
+        });
+    }
+}
+
+/// Recomputes layout for every mutation applied since the last call, using
+/// `width`/`height` as the viewport. No-op if `rt` has no root.
+///
+/// # Safety
+/// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
+#[no_mangle]
+pub unsafe extern "C" fn cui_compute_layout(rt: *mut CRuntime, width: f32, height: f32) {
+    if let Some(rt) = rt.as_mut() {
+        rt.0.compute_layout(Size { width, height });
+    }
+}
+
+/// `node`'s window-space rect as of the last [`cui_compute_layout`] call,
+/// or a zeroed rect for a null/unknown/stale handle.
+///
+/// # Safety
+/// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
+#[no_mangle]
+pub unsafe extern "C" fn cui_get_rect(rt: *const CRuntime, node: CNode) -> CRect {
+    let zero = CRect {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
+    let Some(rt) = rt.as_ref() else {
+        return zero;
+    };
+    let Some(node) = rt.0.get(decode(node)) else {
+        return zero;
+    };
+    CRect {
+        x: node.layout.rect.x,
+        y: node.layout.rect.y,
+        width: node.layout.rect.width,
+        height: node.layout.rect.height,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +267,70 @@ mod tests {
             assert_eq!(cui_runtime_node_count(std::ptr::null()), 0);
             cui_set_root(std::ptr::null_mut(), CUI_NODE_NONE);
             assert_eq!(cui_create_node(std::ptr::null_mut(), 0), CUI_NODE_NONE);
+        }
+    }
+
+    #[test]
+    fn set_transform_reaches_the_node() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let node = cui_create_node(rt, 0);
+            cui_set_transform(rt, node, 5.0, 10.0);
+
+            let transform = (*rt).0.get(decode(node)).unwrap().transform;
+            assert_eq!(transform, Transform2D { x: 5.0, y: 10.0 });
+
+            cui_runtime_free(rt);
+        }
+    }
+
+    #[test]
+    fn compute_layout_and_get_rect_round_trip() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let root = cui_create_node(rt, 0);
+            cui_set_root(rt, root);
+            cui_set_layout_style(
+                rt,
+                root,
+                creamui_abi::CStyle {
+                    width: creamui_abi::CDimension::length(80.0),
+                    height: creamui_abi::CDimension::length(40.0),
+                    ..CStyle::default_style()
+                },
+            );
+
+            cui_compute_layout(rt, 200.0, 200.0);
+            let rect = cui_get_rect(rt, root);
+
+            assert_eq!(
+                rect,
+                CRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 80.0,
+                    height: 40.0,
+                }
+            );
+
+            cui_runtime_free(rt);
+        }
+    }
+
+    #[test]
+    fn get_rect_for_an_unknown_or_null_handle_is_zeroed_not_a_crash() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let zero = CRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            };
+            assert_eq!(cui_get_rect(rt, CUI_NODE_NONE), zero);
+            assert_eq!(cui_get_rect(std::ptr::null(), CUI_NODE_NONE), zero);
+
+            cui_runtime_free(rt);
         }
     }
 }

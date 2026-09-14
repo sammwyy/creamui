@@ -34,6 +34,9 @@ All notable changes to CreamUI will be documented in this file.
   frame, instead of uploading each one separately.
 - Fixed `Owner` (`creamui-reactive`) leaking a disposed child scope's slot
   in its parent's child list until the parent itself was disposed.
+- Added `cui_set_transform`, `cui_compute_layout`, and `cui_get_rect` to
+  ABI-v2, so a C caller can trigger layout and read back a node's
+  computed window-space rect instead of only mutating the tree blind.
 
 ## 0.1.1
 

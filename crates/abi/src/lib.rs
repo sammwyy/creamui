@@ -224,6 +224,17 @@ impl Default for CStyle {
 pub const CUI_RENDER_BACKEND_GPU: c_int = 0;
 pub const CUI_RENDER_BACKEND_CPU: c_int = 1;
 
+/// A node's window-space rect as of the last computed layout: identical
+/// layout to `creamui_core::Rect`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
 /// Opaque node handle: an index+generation pair packed into one `u64`
 /// (index in the high 32 bits, generation in the low 32) rather than a
 /// pointer, so a stale handle is safely detectable instead of aliasing

@@ -210,14 +210,19 @@
   (`ImageData::from_bytes`/`from_path`, used directly by `Image::new`);
   `BackgroundImageLoader` is a separate, opt-in path nothing calls yet.
 - ABI-v2 (`crates/ffi/src/runtime.rs`, `cui_*` functions over
-  `creamui_core::runtime::Runtime`) covers only `create_node`,
-  `insert_child`, `remove_subtree`, `set_text`, `set_layout_style`,
-  `set_background`, and `set_root` — no `set_typography_style`, no
-  `set_transform`, no way to read back a node's computed rect or trigger
-  `compute_layout`/`rebuild_paint`, and no way to attach event handlers
-  (`Mutation::SetEventHandlers` takes an `EventState` of Rust closures,
-  which has no C-safe shape yet — would need `extern "C" fn` + userdata
-  callbacks the way ABI-v1's `creamui_button_new` already does).
+  `creamui_core::runtime::Runtime`) now also covers `set_transform`,
+  `compute_layout`, and `get_rect` (added `CRect` to `creamui-abi`, laid
+  out like `creamui_core::Rect`) — a caller can trigger a real layout
+  pass and read back a node's window-space rect, not just mutate the
+  tree blind. Still no `set_typography_style` (`TypographyStyle` has
+  several `Option<T>` fields, including an `Option<String>` font family —
+  needs its own C-safe "which fields are set" encoding, not attempted
+  here), no `rebuild_paint`/paint-fragment readback (needs a `ColorScheme`
+  representation on the C side, a larger surface than layout/transform),
+  and no way to attach event handlers (`Mutation::SetEventHandlers` takes
+  an `EventState` of Rust closures, which has no C-safe shape yet — would
+  need `extern "C" fn` + userdata callbacks the way ABI-v1's
+  `creamui_button_new` already does).
 - `creamui-dynamic` (the ABI consumer) still only speaks ABI-v1 — it has
   no `cui_*` bindings and doesn't construct a `CRuntime`. REFACTOR.md
   19.2's "keep ABI-v1 working until dynamic runtime migrates" is

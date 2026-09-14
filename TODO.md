@@ -20,10 +20,27 @@
   debug support) is not started. `MountCx`/`View`/`IntoView` exist as the
   target the rewrite should compile into; the rewrite itself needs its own
   pass validated against the full example suite given its blast radius.
-- `mount_legacy_widget` always produces `NodeKind::Custom` — it never
-  classifies a legacy widget as `Text`/`Image`, so nothing downstream can
-  yet tell a runtime-mounted text node from an opaque one without
-  widget-specific knowledge.
+- `mount_legacy_widget` now classifies a widget as `NodeKind::Text` when it
+  overrides the new `Widget::legacy_node_kind` hook (`None` by default,
+  still mounting as opaque `NodeKind::Custom`). Overridden by every raw
+  widget whose entire content is one painted text string — `RawText`,
+  `RawPre`, `RawLink` — and forwarded by their themed wrappers (`Text`,
+  `Heading`, `Pre`, `Link`). Not extended to widgets that only contain
+  text as a child (`RawQuote`/`Quote`, buttons, etc. — their `RawText`
+  child gets classified on its own via the normal recursive mount) or to
+  editable text (`RawTextInput`/`RawTextArea` — `NodeKind::Text` has no
+  cursor/selection/editing concept, so classifying them as one would be a
+  lossy, misleading mapping). `Image` (`crates/image/src/lib.rs`) doesn't
+  override it either: `NodeKind::Image` stores a `source: Rc<str>` (an
+  unresolved reference for an async loader, matching
+  `BackgroundImageLoader`'s `ResourceReady` flow — see the Phase 12
+  entries below), while `Image` the widget already holds fully-decoded
+  `ImageData` pixels with no string identifier at all — classifying it as
+  `NodeKind::Image` would need either a source string `Image` doesn't
+  have or a decoded-pixels field `NodeKind::Image` doesn't have; not
+  attempted here rather than force a lossy mapping. Nothing downstream
+  (`generate_fragment`, devtools) reads `NodeKind` off a legacy-mounted
+  node yet — this only makes the information available.
 - `mount_legacy_widget`'s one-time translation cost (1.22s for 50,000
   nodes, see `docs/performance/baseline.md`) is unoptimized; revisit if a
   later phase ends up calling it more than once per mount instead of only

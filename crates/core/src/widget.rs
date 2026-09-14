@@ -373,6 +373,17 @@ pub trait Widget {
         false
     }
 
+    /// This widget's fundamental content, for [`crate::runtime::mount_legacy_widget`]
+    /// to classify as [`crate::runtime::NodeKind::Text`]/[`crate::runtime::NodeKind::Image`]
+    /// instead of the default opaque [`crate::runtime::NodeKind::Custom`].
+    /// `None` (the default) mounts as `Custom` — correct for any widget,
+    /// just opaque to whatever inspects the runtime tree by `NodeKind`
+    /// (e.g. a future devtools inspector). Layout and paint still come
+    /// entirely from [`Widget::style`]/[`Widget::paint`] either way.
+    fn legacy_node_kind(&self) -> Option<crate::runtime::NodeKind> {
+        None
+    }
+
     /// Takes ownership of this widget's children, in layout order, leaving
     /// it childless. Takes `&mut self` (rather than consuming the widget)
     /// so implementors can `std::mem::take` an owned `Vec<BoxedWidget>`

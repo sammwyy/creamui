@@ -88,6 +88,10 @@ impl Widget for Text {
         self.inner.paints_transparently()
     }
 
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        self.inner.legacy_node_kind()
+    }
+
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
@@ -173,6 +177,10 @@ impl Widget for Heading {
 
     fn paints_transparently(&self) -> bool {
         self.inner.paints_transparently()
+    }
+
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        self.inner.legacy_node_kind()
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {

@@ -45,9 +45,9 @@ use creamui_widgets::raw::{
     RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawText, RawView, TextSelection,
 };
 use creamui_widgets::themed::{
-    tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Link, ListBox, ListView, Overlay,
-    Popover, Pre, ProgressBar, ProgressRing, ScrollView, Select, Slider, TabColors, TabSizing,
-    Table, Tabs, Text, TextArea, TextInput, TreeNode, TreeView,
+    tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Heading, Link, ListBox, ListView,
+    Overlay, Popover, Pre, ProgressBar, ProgressRing, ScrollView, Select, Slider, TabColors,
+    TabSizing, Table, Tabs, Text, TextArea, TextInput, TreeNode, TreeView,
 };
 use creamui_widgets::TableColumn;
 use creamui_widgets::{
@@ -1703,4 +1703,30 @@ fn virtual_list_paints_only_the_visible_range_of_a_100k_item_list() {
     for (rect, _) in &painter.filled_rects {
         assert!(rect.y > -100.0 && rect.y < viewport_height + 100.0);
     }
+}
+
+#[test]
+fn themed_text_widgets_forward_legacy_node_kind_to_their_raw_widget() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+
+        let text_kind = Text::new("a").legacy_node_kind();
+        let heading_kind = Heading::new("b").legacy_node_kind();
+        let pre_kind = Pre::new("c").legacy_node_kind();
+        let link_kind = Link::new("d", || {}).legacy_node_kind();
+
+        for (kind, expected) in [
+            (text_kind, "a"),
+            (heading_kind, "b"),
+            (pre_kind, "c"),
+            (link_kind, "d"),
+        ] {
+            match kind {
+                Some(creamui_core::runtime::NodeKind::Text(node)) => {
+                    assert_eq!(&*node.text, expected)
+                }
+                other => panic!("expected a text node kind, got {other:?}"),
+            }
+        }
+    });
 }

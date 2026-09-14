@@ -92,6 +92,10 @@ impl Widget for Pre {
     fn measure_fingerprint(&self) -> Option<u64> {
         self.inner.measure_fingerprint()
     }
+
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        self.inner.legacy_node_kind()
+    }
 }
 
 /// A themed hyperlink: accent-colored, underlined text that brightens on
@@ -139,6 +143,10 @@ impl Widget for Link {
 
     fn measure_fingerprint(&self) -> Option<u64> {
         self.inner.measure_fingerprint()
+    }
+
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        self.inner.legacy_node_kind()
     }
 
     fn focusable(&self) -> bool {

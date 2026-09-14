@@ -158,6 +158,14 @@ impl Widget for RawPre {
         self.style.typography.font_family.hash(&mut hasher);
         Some(hasher.finish())
     }
+
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        Some(creamui_core::runtime::NodeKind::Text(
+            creamui_core::runtime::TextNode {
+                text: self.text.as_str().into(),
+            },
+        ))
+    }
 }
 
 /// An unstyled clickable line of text — a hyperlink with no color or
@@ -284,6 +292,14 @@ impl Widget for RawLink {
         Some(hasher.finish())
     }
 
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        Some(creamui_core::runtime::NodeKind::Text(
+            creamui_core::runtime::TextNode {
+                text: self.text.as_str().into(),
+            },
+        ))
+    }
+
     fn focusable(&self) -> bool {
         !self.disabled
     }
@@ -309,5 +325,28 @@ impl Widget for RawLink {
         } else {
             CursorIcon::Pointer
         })
+    }
+}
+
+#[cfg(test)]
+mod legacy_node_kind_tests {
+    use super::*;
+
+    #[test]
+    fn raw_pre_reports_its_text_content() {
+        let pre = RawPre::new(Style::default(), "hi", Color::rgb(0, 0, 0), 14.0);
+        match pre.legacy_node_kind() {
+            Some(creamui_core::runtime::NodeKind::Text(node)) => assert_eq!(&*node.text, "hi"),
+            other => panic!("expected a text node kind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_link_reports_its_text_content() {
+        let link = RawLink::new(Style::default(), "hi", Color::rgb(0, 0, 0), 14.0, || {});
+        match link.legacy_node_kind() {
+            Some(creamui_core::runtime::NodeKind::Text(node)) => assert_eq!(&*node.text, "hi"),
+            other => panic!("expected a text node kind, got {other:?}"),
+        }
     }
 }

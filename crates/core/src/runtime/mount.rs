@@ -16,9 +16,12 @@ pub fn mount_legacy_widget(
     crate::metrics::record(|m| m.legacy_widgets_mounted += 1);
 
     let style = widget.style();
+    let kind = widget
+        .legacy_node_kind()
+        .unwrap_or_else(|| NodeKind::Custom(CustomNode::default()));
     let child_widgets = widget.children();
 
-    let id = tx.create_node(NodeKind::Custom(CustomNode::default()));
+    let id = tx.create_node(kind);
     tx.apply(Mutation::SetLayoutStyle {
         node: id,
         style: style.layout,
@@ -46,7 +49,7 @@ pub fn mount_legacy_widget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::Runtime;
+    use crate::runtime::{Runtime, TextNode};
     use crate::{Painter, Rect, Widget};
 
     struct Branch {
@@ -107,6 +110,55 @@ mod tests {
         assert_eq!(widths, vec![20.0, 30.0]);
 
         runtime.check_invariants();
+    }
+
+    #[test]
+    fn a_widget_that_does_not_override_legacy_node_kind_mounts_as_custom() {
+        let widget: BoxedWidget = Box::new(Branch {
+            width: 1.0,
+            children: vec![],
+        });
+
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = mount_legacy_widget(&mut tx, widget, None);
+        drop(tx);
+
+        assert!(matches!(
+            runtime.get(root).unwrap().kind,
+            NodeKind::Custom(_)
+        ));
+    }
+
+    struct TextWidget {
+        text: &'static str,
+    }
+
+    impl Widget for TextWidget {
+        fn style(&self) -> crate::Style {
+            crate::Style::new()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn legacy_node_kind(&self) -> Option<NodeKind> {
+            Some(NodeKind::Text(TextNode {
+                text: self.text.into(),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_widget_overriding_legacy_node_kind_mounts_with_that_kind() {
+        let widget: BoxedWidget = Box::new(TextWidget { text: "hello" });
+
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = mount_legacy_widget(&mut tx, widget, None);
+        drop(tx);
+
+        match &runtime.get(root).unwrap().kind {
+            NodeKind::Text(text) => assert_eq!(&*text.text, "hello"),
+            other => panic!("expected a text node, got {other:?}"),
+        }
     }
 
     #[test]

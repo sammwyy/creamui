@@ -214,6 +214,14 @@ impl Widget for RawText {
         true
     }
 
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        Some(creamui_core::runtime::NodeKind::Text(
+            creamui_core::runtime::TextNode {
+                text: self.text.as_str().into(),
+            },
+        ))
+    }
+
     fn measure_fingerprint(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         // Must cover exactly what `measure`'s closure captures below — its
@@ -306,6 +314,34 @@ mod raw_text_fingerprint_tests {
 
         let d = RawText::new("hi", Color::rgb(1, 2, 3), 20.0);
         assert_ne!(a.measure_fingerprint(), d.measure_fingerprint());
+    }
+
+    #[test]
+    fn legacy_node_kind_reports_its_text_content() {
+        let text = RawText::new("hello", Color::rgb(1, 2, 3), 14.0);
+        match text.legacy_node_kind() {
+            Some(creamui_core::runtime::NodeKind::Text(node)) => {
+                assert_eq!(&*node.text, "hello")
+            }
+            other => panic!("expected a text node kind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mounting_a_raw_text_produces_a_runtime_text_node() {
+        use creamui_core::runtime::{mount_legacy_widget, NodeKind, Runtime};
+
+        let widget: creamui_core::BoxedWidget =
+            Box::new(RawText::new("hello", Color::rgb(1, 2, 3), 14.0));
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = mount_legacy_widget(&mut tx, widget, None);
+        drop(tx);
+
+        match &runtime.get(root).unwrap().kind {
+            NodeKind::Text(node) => assert_eq!(&*node.text, "hello"),
+            other => panic!("expected a text node kind, got {other:?}"),
+        }
     }
 }
 

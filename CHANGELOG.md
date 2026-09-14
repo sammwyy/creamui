@@ -37,6 +37,10 @@ All notable changes to CreamUI will be documented in this file.
 - Added `cui_set_transform`, `cui_compute_layout`, and `cui_get_rect` to
   ABI-v2, so a C caller can trigger layout and read back a node's
   computed window-space rect instead of only mutating the tree blind.
+- Added `Widget::legacy_node_kind`, letting a legacy widget mounted onto
+  the persistent runtime tree report itself as `NodeKind::Text` instead
+  of an opaque `NodeKind::Custom`. Implemented by `RawText`/`RawPre`/
+  `RawLink` and their themed wrappers.
 
 ## 0.1.1
 

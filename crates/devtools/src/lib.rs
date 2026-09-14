@@ -4,6 +4,7 @@
 //! independent FPS, frame-time, CPU and memory overlay. Press F3 to show or
 //! hide it.
 
+use creamui_core::metrics::FrameMetrics;
 use creamui_core::{Painter, Rect, Size, TextAlign};
 use creamui_render::{install_devtools, Devtools, WindowDevtools};
 use creamui_theme::Color;
@@ -70,6 +71,8 @@ impl Devtools for BenchmarkDevtools {
             position: self.options.position,
             frame_stats: FrameStats::new(),
             process_stats: ProcessStats::new(),
+            #[cfg(feature = "perf-metrics")]
+            engine_metrics: FrameMetrics::default(),
         })
     }
 }
@@ -79,12 +82,37 @@ struct BenchmarkWindow {
     position: DebugPosition,
     frame_stats: FrameStats,
     process_stats: ProcessStats,
+    #[cfg(feature = "perf-metrics")]
+    engine_metrics: FrameMetrics,
+}
+
+impl BenchmarkWindow {
+    #[cfg(feature = "perf-metrics")]
+    fn engine_metrics(&self) -> Option<&FrameMetrics> {
+        Some(&self.engine_metrics)
+    }
+    #[cfg(not(feature = "perf-metrics"))]
+    fn engine_metrics(&self) -> Option<&FrameMetrics> {
+        None
+    }
 }
 
 impl WindowDevtools for BenchmarkWindow {
-    fn after_paint(&mut self, painter: &mut dyn Painter, viewport: Size, paint_duration: Duration) {
+    fn after_paint(
+        &mut self,
+        painter: &mut dyn Painter,
+        viewport: Size,
+        paint_duration: Duration,
+        metrics: FrameMetrics,
+    ) {
         self.frame_stats.record_frame(paint_duration);
         self.process_stats.maybe_sample();
+        #[cfg(feature = "perf-metrics")]
+        {
+            self.engine_metrics = metrics;
+        }
+        #[cfg(not(feature = "perf-metrics"))]
+        let _ = metrics;
         if self.visible {
             draw_overlay(
                 painter,
@@ -92,6 +120,7 @@ impl WindowDevtools for BenchmarkWindow {
                 self.position,
                 &self.frame_stats,
                 &self.process_stats,
+                self.engine_metrics(),
             );
         }
     }
@@ -104,6 +133,7 @@ impl WindowDevtools for BenchmarkWindow {
                 self.position,
                 &self.frame_stats,
                 &self.process_stats,
+                self.engine_metrics(),
             );
         }
     }
@@ -334,11 +364,38 @@ fn format_cpu(cpu_percent: Option<f32>) -> String {
     cpu_percent.map_or_else(|| "n/a".to_owned(), |value| format!("{value:.1}%"))
 }
 
-fn overlay_text(frame_stats: &FrameStats, process_stats: &ProcessStats) -> String {
-    format!(
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f32 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f32 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn overlay_text(
+    frame_stats: &FrameStats,
+    process_stats: &ProcessStats,
+    engine_metrics: Option<&FrameMetrics>,
+) -> String {
+    let mut text = format!(
         "FPS {:.0}\nFrame {:.1}/{:.1}/{:.1}/{:.1} ms\n(cur/avg/min/max)\nRepaints {}\nRAM {}\nCPU {}",
         frame_stats.fps(), frame_stats.current_ms(), frame_stats.avg_ms(), frame_stats.min_ms(), frame_stats.max_ms(), frame_stats.repaint_count(), format_ram(process_stats.ram_mb()), format_cpu(process_stats.cpu_percent()),
-    )
+    );
+    if let Some(m) = engine_metrics {
+        text.push_str(&format!(
+            "\n--- engine ---\nReconcile {}\nTaffy s/c/ch {}/{}/{}\nLayout {}  Measure {}\nPaint v/r {}/{}\nHit/Composite {}/{}\nDamage {} rects / {} px\nGPU {}  Draws {}",
+            m.reconcile_visits,
+            m.taffy_style_writes, m.taffy_context_writes, m.taffy_children_writes,
+            m.layout_runs, m.measure_calls,
+            m.paint_nodes_visited, m.paint_nodes_recorded,
+            m.hit_nodes_updated, m.composite_nodes_updated,
+            m.damaged_rect_count, m.damaged_pixel_area,
+            format_bytes(m.gpu_upload_bytes), m.draw_calls,
+        ));
+    }
+    text
 }
 
 fn draw_overlay(
@@ -347,12 +404,17 @@ fn draw_overlay(
     position: DebugPosition,
     frame_stats: &FrameStats,
     process_stats: &ProcessStats,
+    engine_metrics: Option<&FrameMetrics>,
 ) {
-    let text = overlay_text(frame_stats, process_stats);
+    let text = overlay_text(frame_stats, process_stats, engine_metrics);
     let font_size = 12.0;
     let line_height = font_size * 1.5;
     let padding = 10.0;
-    let width = 190.0;
+    let width = if engine_metrics.is_some() {
+        230.0
+    } else {
+        190.0
+    };
     let height = line_height * text.lines().count().max(1) as f32 + padding * 2.0;
     let margin = 12.0;
     let (x, y) = match position {
@@ -402,6 +464,8 @@ mod tests {
             position: DebugPosition::default(),
             frame_stats: FrameStats::new(),
             process_stats: ProcessStats::new(),
+            #[cfg(feature = "perf-metrics")]
+            engine_metrics: FrameMetrics::default(),
         };
         assert!(window.toggle());
         assert!(window.visible);
@@ -423,8 +487,21 @@ mod tests {
 
     #[test]
     fn overlay_text_uses_real_line_breaks() {
-        let text = overlay_text(&FrameStats::new(), &ProcessStats::new());
+        let text = overlay_text(&FrameStats::new(), &ProcessStats::new(), None);
         assert!(text.contains('\n'));
         assert!(!text.contains("\\n"));
+    }
+
+    #[cfg(feature = "perf-metrics")]
+    #[test]
+    fn overlay_text_appends_engine_counters_when_present() {
+        let metrics = FrameMetrics {
+            reconcile_visits: 3,
+            draw_calls: 2,
+            ..Default::default()
+        };
+        let text = overlay_text(&FrameStats::new(), &ProcessStats::new(), Some(&metrics));
+        assert!(text.contains("--- engine ---"));
+        assert!(text.contains("Reconcile 3"));
     }
 }

@@ -205,3 +205,21 @@
   `crates/bench/benches/ffi.rs`: an early draft used one long-lived
   transaction across 10,000 inserts and the resulting number was
   dominated by this, not by anything FFI-related.
+- REFACTOR.md Phase 14 (20.3 only): `creamui-devtools`'s F3 overlay now
+  shows an "engine" panel of `creamui_core::metrics::FrameMetrics`
+  counters (reconcile visits, taffy writes, layout/measure calls, paint
+  visits/records, hit/composite updates, damage, GPU upload bytes, draw
+  calls) behind its own `perf-metrics` feature, and `crates/render/src/window.rs`
+  now resets/reads that thread-local once per full frame instead of
+  never — it was previously only exercised by tests. The rest of Phase
+  14 is not started: 20.1 (runtime tree inspector: `RuntimeNodeId`,
+  `NodeKind`, dirty flags, compositor layer, per-node) and 20.2
+  (`InvalidationReason` tracing, "why did this node repaint") both need
+  the persistent runtime tree wired into `window.rs` first (see the
+  `crates/core/src/runtime` entry above); 20.3's per-stage timings
+  (reactive flush / mutation commit / layout / paint recording / scene
+  upload / GPU as separate durations, not one lump `paint_duration`)
+  aren't instrumented — the legacy `render_focused` path has no stage
+  boundaries to time yet; 20.4 (repaint-damage/layout-invalidation/
+  compositor-layer/hit-region/clip-bounds/virtualized-range visual
+  overlay toggles) isn't started.

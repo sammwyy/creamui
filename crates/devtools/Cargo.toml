@@ -11,6 +11,12 @@ readme = "README.md"
 keywords = ["gui", "ui", "development", "debugging"]
 categories = ["gui", "development-tools::debugging"]
 
+[features]
+# Adds an engine-counters panel (reconcile/layout/paint/GPU work) to the F3
+# overlay, fed by creamui-core's/creamui-render's own perf-metrics counters.
+# Off by default like the crates it forwards.
+perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics"]
+
 [dependencies]
 creamui-core = { workspace = true }
 creamui-render = { workspace = true }

@@ -4,6 +4,7 @@
 //! Feature crates such as `creamui-devtools` register themselves before
 //! [`crate::run`] and are then instantiated once for every CreamUI window.
 
+use creamui_core::metrics::FrameMetrics;
 use creamui_core::{Painter, Size};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,7 +17,15 @@ use std::time::Duration;
 pub trait WindowDevtools {
     /// Called after a full layout and paint pass, while the frame's painter is
     /// still available. `paint_duration` covers the application UI only.
-    fn after_paint(&mut self, painter: &mut dyn Painter, viewport: Size, paint_duration: Duration);
+    /// `metrics` is the engine counter snapshot for this frame — zeroed
+    /// unless `creamui-core`'s `perf-metrics` feature is enabled.
+    fn after_paint(
+        &mut self,
+        painter: &mut dyn Painter,
+        viewport: Size,
+        paint_duration: Duration,
+        metrics: FrameMetrics,
+    );
 
     /// Called after a paint-only pass so tools can restore anything the pass
     /// cleared without doing another layout.

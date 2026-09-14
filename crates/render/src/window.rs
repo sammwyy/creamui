@@ -2087,6 +2087,7 @@ fn build_window_spec(
                 painter.set_color_scheme(theme_provider.get().colors);
                 painter.resize(physical_width, physical_height);
                 painter.clear(clear_color);
+                creamui_core::metrics::reset_frame_metrics();
                 let paint_started = Instant::now();
                 let scene = renderer.render_focused(
                     root,
@@ -2096,12 +2097,13 @@ fn build_window_spec(
                     caret_visible.get(),
                 );
                 let paint_duration = paint_started.elapsed();
+                let metrics = creamui_core::metrics::frame_metrics();
                 frame.scene = Some(scene);
                 let FrameState {
                     painter, devtools, ..
                 } = &mut *frame;
                 if let Some(devtools) = devtools.as_mut() {
-                    devtools.after_paint(painter, logical_size, paint_duration);
+                    devtools.after_paint(painter, logical_size, paint_duration, metrics);
                 }
 
                 // Debug aid: dump each painted frame to a PNG on disk, e.g. for

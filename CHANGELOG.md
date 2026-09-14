@@ -21,6 +21,9 @@ All notable changes to CreamUI will be documented in this file.
   builders without per-component forwarding methods or extra layout nodes.
   Migrated all raw widget style storage and common paint/typography fields to
   the shared declaration; remaining visual fields are component-specific.
+- Added an opt-in `perf-metrics` feature to `creamui-devtools`: the F3
+  overlay grows an "engine" panel of reconcile/layout/paint/GPU counters
+  fed by `creamui-core`'s existing `FrameMetrics`.
 
 ## 0.1.1
 

@@ -25,7 +25,7 @@ tray = ["creamui-render/tray"]
 platform-wayland = ["creamui-platform/wayland", "creamui-render/platform-wayland"]
 platform-x11 = ["creamui-platform/x11", "creamui-render/platform-x11"]
 platform-windows = ["creamui-platform/windows", "creamui-render/platform-windows"]
-perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics"]
+perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics", "creamui-devtools?/perf-metrics"]
 full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray"]
 
 [dependencies]

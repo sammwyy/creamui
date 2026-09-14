@@ -28,12 +28,17 @@
   nodes, see `docs/performance/baseline.md`) is unoptimized; revisit if a
   later phase ends up calling it more than once per mount instead of only
   at initial mount.
-- `Owner` (`creamui-reactive`) has no parent back-pointer, so a disposed
-  child scope stays in its parent's `children` list until the parent
-  itself is disposed — a deferred-reclamation memory-growth concern for
-  long-lived parents with many toggles/reorders under them (see
-  `docs/performance/baseline.md`'s Phase 3 section), not a correctness or
-  subscription-leak issue. Fixing it needs a `Weak` parent back-pointer.
+- Fixed: `Owner` (`creamui-reactive`) used to have no parent back-pointer,
+  so a disposed child scope stayed in its parent's `children` list until
+  the parent itself was disposed — a deferred-reclamation memory-growth
+  concern for long-lived parents with many toggles/reorders under them
+  (see `docs/performance/baseline.md`'s Phase 3 section). `OwnerInner`
+  now carries a `Weak<OwnerInner>` back to its parent (never strong, so no
+  keep-alive cycle), and `dispose` removes itself from the parent's
+  `children` immediately via `Rc::ptr_eq`. `runtime::branch`/`keyed` (the
+  two callers that toggle/reorder `Owner::child()` scopes repeatedly)
+  weren't otherwise touched — they already call `dispose()` on removal,
+  so they get the fix for free.
 - `Runtime::sync_layout_rects` (`crates/core/src/runtime/mod.rs`) walks
   every node after every `compute_layout` call to find which rects moved —
   O(whole tree), not O(affected branches), since nothing in the `taffy`

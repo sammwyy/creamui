@@ -32,6 +32,8 @@ All notable changes to CreamUI will be documented in this file.
 - Merge overlapping animation-tick damage rects (and collapse to a full
   repaint above a size/count threshold) before partial-presenting a
   frame, instead of uploading each one separately.
+- Fixed `Owner` (`creamui-reactive`) leaking a disposed child scope's slot
+  in its parent's child list until the parent itself was disposed.
 
 ## 0.1.1
 

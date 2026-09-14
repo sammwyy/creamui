@@ -266,6 +266,7 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
 }
 
 struct OwnerInner {
+    parent: RefCell<Option<Weak<OwnerInner>>>,
     children: RefCell<Vec<Owner>>,
     effects: RefCell<Vec<Effect>>,
     cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
@@ -275,15 +276,19 @@ struct OwnerInner {
 /// subtree can unsubscribe everything it owns in one call instead of
 /// leaking effects that keep reacting after their node is gone.
 ///
-/// Cheap to clone (an `Rc` underneath). Holds no reference back to its
-/// parent — only parent-to-child, so a disposed owner's `Rc` can actually
-/// reach zero instead of being kept alive by a cycle.
+/// Cheap to clone (an `Rc` underneath). Holds only a `Weak` reference back
+/// to its parent — enough for `dispose` to remove itself from the
+/// parent's child list right away instead of leaking an empty entry until
+/// the parent itself is disposed, but never a strong one, so a disposed
+/// owner's `Rc` can still reach zero instead of being kept alive by a
+/// cycle.
 #[derive(Clone)]
 pub struct Owner(Rc<OwnerInner>);
 
 impl Owner {
     pub fn new() -> Self {
         Owner(Rc::new(OwnerInner {
+            parent: RefCell::new(None),
             children: RefCell::new(Vec::new()),
             effects: RefCell::new(Vec::new()),
             cleanups: RefCell::new(Vec::new()),
@@ -293,6 +298,7 @@ impl Owner {
     /// Creates a child scope disposed whenever `self` is.
     pub fn child(&self) -> Owner {
         let child = Owner::new();
+        *child.0.parent.borrow_mut() = Some(Rc::downgrade(&self.0));
         self.0.children.borrow_mut().push(child.clone());
         child
     }
@@ -310,11 +316,33 @@ impl Owner {
         self.0.cleanups.borrow_mut().push(Box::new(f));
     }
 
-    /// Disposes every child scope, drops (unsubscribing) every owned
-    /// effect, then runs every registered cleanup. Idempotent: disposing
-    /// an already-disposed owner is a no-op.
+    fn detach_from_parent(&self) {
+        let Some(parent) = self.0.parent.borrow_mut().take() else {
+            return;
+        };
+        let Some(parent) = parent.upgrade() else {
+            return;
+        };
+        parent
+            .children
+            .borrow_mut()
+            .retain(|child| !Rc::ptr_eq(&child.0, &self.0));
+    }
+
+    /// Removes `self` from its parent's child list (if any), disposes
+    /// every child scope, drops (unsubscribing) every owned effect, then
+    /// runs every registered cleanup. Idempotent: disposing an
+    /// already-disposed owner is a no-op.
     pub fn dispose(&self) {
-        for child in self.0.children.borrow_mut().drain(..) {
+        self.detach_from_parent();
+        // Collected into an owned `Vec` first rather than iterated
+        // straight off `drain(..)`: a child's own `dispose` also calls
+        // `detach_from_parent`, which — for a child mid-cascade here —
+        // borrows this exact `children` `RefCell` again; keeping the
+        // `drain` iterator (and its borrow) alive across that call would
+        // panic.
+        let children: Vec<Owner> = self.0.children.borrow_mut().drain(..).collect();
+        for child in children {
             child.dispose();
         }
         self.0.effects.borrow_mut().clear();
@@ -598,5 +626,43 @@ mod tests {
         assert_eq!(calls.get(), 1);
         owner.dispose();
         assert_eq!(calls.get(), 1, "disposing twice must not rerun cleanups");
+    }
+
+    #[test]
+    fn disposing_a_child_directly_removes_it_from_the_parents_child_list() {
+        let parent = Owner::new();
+        let child = parent.child();
+        assert_eq!(
+            Rc::strong_count(&child.0),
+            2,
+            "one strong ref held by the caller, one by the parent's child list"
+        );
+
+        child.dispose();
+        assert_eq!(
+            Rc::strong_count(&child.0),
+            1,
+            "the parent must drop its reference instead of leaking a disposed entry"
+        );
+    }
+
+    #[test]
+    fn disposing_the_parent_after_a_child_already_disposed_itself_does_not_panic() {
+        let parent = Owner::new();
+        let a = parent.child();
+        let _b = parent.child();
+        let _c = parent.child();
+        a.dispose();
+
+        parent.dispose();
+    }
+
+    #[test]
+    fn disposing_a_parent_with_several_children_does_not_panic() {
+        let parent = Owner::new();
+        for _ in 0..5 {
+            parent.child();
+        }
+        parent.dispose();
     }
 }

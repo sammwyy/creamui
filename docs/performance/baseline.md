@@ -665,3 +665,37 @@ display server" constraint as every `gpu_scene` entry above.
   paint-time layer-promotion heuristic is untouched.
 - Scrolling is not transform-first (16.2) — no scroll view routes its
   offset through `Mutation::SetTransform` yet.
+
+## 2026-09-14 — Phase 11
+
+`creamui_core::HeightIndex` is a Fenwick tree over per-item heights:
+`set_height`/`push` are `O(log n)` point updates, `offset`/`total_height`
+are `O(log n)` prefix-sum reads, and `index_at_offset` is the `O(log n)`
+binary-search "find by prefix sum" that turns a scroll offset into an
+item index (REFACTOR.md 17.2). `visible_range` layers overscan and
+bounds-clamping on top to get the index range a virtualized list should
+mount. `truncate` rebuilds in `O(n)`; there is no mid-sequence
+insert/remove yet (see `TODO.md`).
+
+### Measured
+
+`virtual_list/set_height` and `virtual_list/index_at_offset`
+(`crates/bench/benches/virtual_list.rs`), on a `HeightIndex` of the
+given size:
+
+| Items | `set_height` | `index_at_offset` | `visible_range` |
+|---|---|---|---|
+| 1,000 | 3.25 ns | 13.2 ns | 16.4 ns |
+| 10,000 | 2.90 ns | 15.4 ns | 20.8 ns |
+| 100,000 | 3.47 ns | 15.3 ns | 27.8 ns |
+
+Logarithmic, not flat: a 100x increase in item count costs roughly a
+constant few nanoseconds more, not a 100x slowdown — the `O(log n)`
+shape 17.2 asks for, distinct from the `O(1)` shape of Phases 7/9/10's
+single-node update benchmarks.
+
+### Not done
+
+- No `VirtualList` widget and no caller anywhere — `HeightIndex`/
+  `visible_range` are unused outside their own tests and benchmark.
+- No recycling pool (17.3), virtual table (17.4), or virtual tree (17.5).

@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "text_shape"
 harness = false
+
+[[bench]]
+name = "virtual_list"
+harness = false

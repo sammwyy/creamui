@@ -151,3 +151,16 @@
   same value, `#[cfg(feature = "perf-metrics")]`'s
   `composite_nodes_updated` counter just double-counts that node), not
   worth a dedup pass for this edge case yet.
+- `creamui_core::HeightIndex`/`visible_range` (REFACTOR.md 17.1/17.2)
+  are a standalone, tested data structure with no caller — no
+  `VirtualList` widget, no wiring to `create_keyed_list`, no scroll-event
+  integration. `HeightIndex` only supports append (`push`) and shrink
+  (`truncate`); there is no `O(log n)` mid-sequence insert/remove, so a
+  list that removes an arbitrary item (not just the last one) needs a
+  full rebuild via `HeightIndex::new` today.
+- No recycling pool for virtualized rows (REFACTOR.md 17.3) — not
+  attempted, per 17.3's own guidance to add one only once allocations
+  are measurably a problem, and there is no `VirtualList` yet to measure.
+- Virtual table (column virtualization, sticky headers, selection state,
+  REFACTOR.md 17.4) and virtual tree (flattening expanded nodes, keying
+  by stable tree ID, REFACTOR.md 17.5) are not started.

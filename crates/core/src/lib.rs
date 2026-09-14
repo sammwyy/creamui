@@ -10,6 +10,7 @@ pub mod metrics;
 pub mod runtime;
 mod scene;
 mod style;
+mod virtualize;
 mod widget;
 
 pub use geometry::{Point, Rect, Size};
@@ -18,6 +19,7 @@ pub use style::{
     Border, ColorToken, ColorValue, InteractionState, InteractionStyles, LengthValue, PaintStyle,
     ResolvedStyle, StateStyle, Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
+pub use virtualize::{visible_range, HeightIndex};
 pub use widget::{
     BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled, TextAlign,
     Widget, WidgetKey, WindowDragHandle,

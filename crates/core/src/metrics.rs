@@ -30,6 +30,12 @@ pub struct FrameMetrics {
 
     pub damaged_rect_count: u64,
     pub damaged_pixel_area: u64,
+
+    /// How many legacy `Widget` subtrees were translated into the
+    /// persistent runtime tree via `runtime::mount_legacy_widget` — the
+    /// old full-rebuild path, still in use until a caller migrates to
+    /// mutating the runtime tree directly.
+    pub legacy_widgets_mounted: u64,
 }
 
 thread_local! {

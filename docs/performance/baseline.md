@@ -212,3 +212,45 @@ field at all.
 - **`Signal::set_if_changed`**: applied to `TextController::set_cursor`/
   `set_selection`, called on every pointer-move while dragging a text
   selection.
+
+## 2026-09-14 — after Phase 2
+
+`crates/core/src/runtime` adds a persistent runtime tree beside the
+existing `Widget`/`Instance` reconcile path (not wired into `Renderer`
+yet — see REFACTOR.md Phase 3). `mount_legacy_widget` translates a
+`Widget` subtree into it once; after that, a single node can be mutated
+directly through a `RuntimeTransaction`, with no tree walk at all.
+
+### `runtime` timings (`crates/bench/benches/runtime.rs`)
+
+| Scene | Time |
+|---|---|
+| `mount_legacy_widget`, 1,000 nodes | 0.70 ms |
+| `mount_legacy_widget`, 10,000 nodes | 55.1 ms |
+| `mount_legacy_widget`, 50,000 nodes | 1.22 s |
+| Direct single-leaf `SetPaintStyle`, 1,000-node tree | 19.2 ns |
+| Direct single-leaf `SetPaintStyle`, 10,000-node tree | 19.2 ns |
+| Direct single-leaf `SetPaintStyle`, 50,000-node tree | 19.2 ns |
+
+The direct-mutation cost is flat across tree size — a real O(1), not just
+a smaller constant — versus `tree_update/unchanged_rerender`'s 0.36 ms
+(1,000 nodes) to 79 ms (50,000 nodes) for the reconcile path doing
+equivalent work. That gap is the entire point of Phase 2: once something
+holds a `RuntimeNodeId`, updating it no longer costs anything proportional
+to the rest of the tree.
+
+`mount_legacy_widget` itself is markedly slower than the old engine's
+initial mount (1.22s vs. 133ms at 50,000 nodes) — expected for a one-time,
+not-yet-optimized translation pass (arena allocation plus per-field
+mutation dispatch for every node), and irrelevant to the O(1) result
+above as long as mounting stays a one-time cost. Revisit if Phase 3 ends
+up calling it more than once per mount.
+
+### Correctness
+
+`runtime::tests::random_create_insert_remove_sequences_never_break_invariants`
+(500 pseudo-random create/insert/remove operations against
+`Runtime::check_invariants`) caught a real bug during development: reusing
+`insert_child` to move an already-attached child produced a duplicate
+entry in its parent's `Children` list. Fixed by making `Children::insert`
+idempotent (remove-then-reinsert) rather than append-only.

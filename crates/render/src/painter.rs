@@ -22,6 +22,7 @@ struct LayerFrame {
     pixmap: Pixmap,
     clip_stack: Vec<Mask>,
     origin: Point,
+    opaque: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -66,12 +67,13 @@ pub struct SkiaPainter {
     /// know about layers.
     origin: Point,
     layer_pool: HashMap<u64, Pixmap>,
-    /// A snapshot of whatever sat behind a layer's `rect` at the last
-    /// `fresh` `push_layer`, reused on every animation-only tick in between.
-    /// Without this, seeding the layer's own surface from itself would
-    /// re-blend each tick's content onto the *previous* tick's result
+    /// A snapshot of whatever sat behind an *opaque* layer's `rect` at the
+    /// last `fresh` `push_layer`, reused on every animation-only tick in
+    /// between. Without this, seeding the layer's own surface from itself
+    /// would re-blend each tick's content onto the *previous* tick's result
     /// instead of the true backdrop, leaking stale pixels wherever the new
-    /// content doesn't happen to cover them (e.g. scrolling text).
+    /// content doesn't happen to cover them (e.g. scrolling text). A
+    /// non-opaque layer has no entry here — see `push_layer`.
     backdrop_pool: HashMap<u64, Pixmap>,
     layer_stack: Vec<LayerFrame>,
     /// Window-space rects touched by a layer composite since the last
@@ -382,7 +384,7 @@ impl Painter for SkiaPainter {
     fn begin_animated_frame(&mut self) {
         self.animated = false;
     }
-    fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool) {
+    fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool, opaque: bool) {
         let scale = self.scale;
         // Clamped to the window's own size (not `self.pixmap`, which is
         // already a layer-local buffer while nested inside another active
@@ -392,22 +394,26 @@ impl Painter for SkiaPainter {
         let phys_w = (((rect.width * scale).round() as u32).max(1)).min(self.root_width);
         let phys_h = (((rect.height * scale).round() as u32).max(1)).min(self.root_height);
 
-        let cached_backdrop_matches = matches!(
-            self.backdrop_pool.get(&id),
-            Some(p) if p.width() == phys_w && p.height() == phys_h
-        );
-        let backdrop = if fresh || !cached_backdrop_matches {
-            self.capture_backdrop(rect, phys_w, phys_h)
-        } else {
-            self.backdrop_pool.remove(&id).expect("checked above")
-        };
-
         let mut layer_pixmap = match self.layer_pool.remove(&id) {
             Some(pixmap) if pixmap.width() == phys_w && pixmap.height() == phys_h => pixmap,
             _ => Pixmap::new(phys_w, phys_h).expect("non-zero pixmap size"),
         };
-        layer_pixmap.data_mut().copy_from_slice(backdrop.data());
-        self.backdrop_pool.insert(id, backdrop);
+        if opaque {
+            let cached_backdrop_matches = matches!(
+                self.backdrop_pool.get(&id),
+                Some(p) if p.width() == phys_w && p.height() == phys_h
+            );
+            let backdrop = if fresh || !cached_backdrop_matches {
+                self.capture_backdrop(rect, phys_w, phys_h)
+            } else {
+                self.backdrop_pool.remove(&id).expect("checked above")
+            };
+            layer_pixmap.data_mut().copy_from_slice(backdrop.data());
+            self.backdrop_pool.insert(id, backdrop);
+        } else {
+            self.backdrop_pool.remove(&id);
+            layer_pixmap.data_mut().fill(0);
+        }
 
         let mut layer_clip_stack = Vec::new();
         if let Some(parent_mask) = self.clip_stack.last() {
@@ -445,6 +451,7 @@ impl Painter for SkiaPainter {
             pixmap: saved_pixmap,
             clip_stack: saved_clip_stack,
             origin: saved_origin,
+            opaque,
         });
     }
     fn pop_layer(&mut self) {
@@ -456,14 +463,19 @@ impl Painter for SkiaPainter {
         self.origin = frame.origin;
         let x = ((frame.rect.x - self.origin.x) * self.scale).round() as i32;
         let y = ((frame.rect.y - self.origin.y) * self.scale).round() as i32;
-        // `Source`, not the default `SourceOver`: the layer was seeded from
-        // its own backdrop before painting, so it's a complete snapshot of
-        // this rect — a transparent layer pixel means "the backdrop was
-        // transparent here", not "leave whatever's already composited".
-        // Blending would leave stale content wherever this tick's paint
-        // doesn't happen to re-cover what the last tick drew.
+        // An opaque layer was seeded from its own backdrop before painting,
+        // so it's a complete snapshot of this rect and `Source` (a plain
+        // replace) is correct and cheap. A non-opaque layer was seeded
+        // transparent — its blank pixels mean "this widget paints nothing
+        // here", not "the backdrop was transparent here", so those must
+        // blend (`SourceOver`) to leave whatever's currently underneath
+        // instead of stamping a stale snapshot over it.
         let composite = PixmapPaint {
-            blend_mode: tiny_skia::BlendMode::Source,
+            blend_mode: if frame.opaque {
+                tiny_skia::BlendMode::Source
+            } else {
+                tiny_skia::BlendMode::SourceOver
+            },
             ..PixmapPaint::default()
         };
         self.pixmap.draw_pixmap(
@@ -492,8 +504,14 @@ impl Painter for SkiaPainter {
         }
         let x = ((rect.x - self.origin.x) * scale).round() as i32;
         let y = ((rect.y - self.origin.y) * scale).round() as i32;
+        // Mirrors `pop_layer`'s choice: a backdrop entry for `id` means the
+        // layer that produced this cached pixmap was opaque.
         let composite = PixmapPaint {
-            blend_mode: tiny_skia::BlendMode::Source,
+            blend_mode: if self.backdrop_pool.contains_key(&id) {
+                tiny_skia::BlendMode::Source
+            } else {
+                tiny_skia::BlendMode::SourceOver
+            },
             ..PixmapPaint::default()
         };
         self.pixmap.draw_pixmap(
@@ -972,6 +990,7 @@ mod tests {
                 height: 4.0,
             },
             false,
+            true,
         );
         painter.fill_rect(
             Rect {
@@ -1010,6 +1029,7 @@ mod tests {
                 height: 2_000_000.0,
             },
             true,
+            true,
         );
         painter.pop_layer();
     }
@@ -1034,6 +1054,7 @@ mod tests {
                 height: 20.0,
             },
             true,
+            true,
         );
         painter.push_layer(
             2,
@@ -1043,6 +1064,7 @@ mod tests {
                 width: 50.0,
                 height: 50.0,
             },
+            true,
             true,
         );
         assert_eq!(painter.pixmap.width(), 50);
@@ -1187,6 +1209,71 @@ mod tests {
             painter.pixmap.pixel(10, 5).unwrap().red(),
             255,
             "a hover-driven background change must invalidate the cache despite a matching fingerprint"
+        );
+    }
+
+    #[test]
+    fn a_childs_cached_layer_does_not_paste_a_stale_backdrop_over_a_parents_new_hover_tint() {
+        use creamui_core::{PaintStyle, Renderer, StateStyle, Style, Styled};
+        use creamui_widgets::{RawButton, RawText};
+
+        let style = Style::new()
+            .layout(creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(10.0),
+                },
+                align_items: Some(creamui_core::layout::AlignItems::Center),
+                justify_content: Some(creamui_core::layout::JustifyContent::Center),
+                ..Default::default()
+            })
+            .background(Color::rgb(0, 0, 255))
+            .hover(StateStyle {
+                paint: PaintStyle {
+                    background: Some(Color::rgb(255, 0, 0).into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+        let label_layout = creamui_core::layout::Style {
+            size: creamui_core::layout::Size {
+                width: creamui_core::layout::Dimension::Length(4.0),
+                height: creamui_core::layout::Dimension::Length(4.0),
+            },
+            ..Default::default()
+        };
+
+        let build = || -> creamui_core::BoxedWidget {
+            Box::new(RawButton::new(style.clone(), || {}).child(Box::new(
+                RawText::new("", Color::rgb(0, 0, 0), 12.0).layout(label_layout.clone()),
+            )))
+        };
+
+        let viewport = creamui_core::Size {
+            width: 20.0,
+            height: 10.0,
+        };
+        let mut renderer = Renderer::new();
+        let mut painter = SkiaPainter::new(20, 10);
+
+        // Unhovered: the label sits on the button's normal blue background.
+        painter.pointer = None;
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(), viewport, &mut painter);
+        assert_eq!(painter.pixmap.pixel(10, 5).unwrap().blue(), 255);
+
+        // The pointer moves into the button but lands outside the label's
+        // own (smaller, centered) rect — the button hovers and turns red,
+        // but the label's own hover flag, fingerprint, and colors are all
+        // unchanged, so its cache reports a hit.
+        painter.pointer = Some(Point { x: 1.0, y: 5.0 });
+        painter.clear(Color::rgba(0, 0, 0, 0));
+        renderer.render(build(), viewport, &mut painter);
+        assert_eq!(
+            painter.pixmap.pixel(10, 5).unwrap().red(),
+            255,
+            "the label's cached layer must not paste its stale pre-hover backdrop back \
+             over the button's freshly repainted hover background"
         );
     }
 

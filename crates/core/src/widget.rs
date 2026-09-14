@@ -150,7 +150,10 @@ pub trait Painter {
     /// re-deriving it on every animation tick) must keep reusing the one
     /// captured the last time `fresh` was true, since the destination isn't
     /// repainted from scratch in between.
-    fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool) {}
+    ///
+    /// `opaque` is `false` only for a widget declaring
+    /// [`Widget::paints_transparently`] — see there for what that changes.
+    fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool, _opaque: bool) {}
 
     /// Ends the redirect started by [`Painter::push_layer`], compositing the
     /// offscreen surface onto the surface that was active before the
@@ -349,6 +352,22 @@ pub trait Widget {
     /// anything, and there's no reason to bother.
     fn paint_fingerprint(&self) -> Option<u64> {
         None
+    }
+
+    /// Whether this widget's own paint always leaves every pixel it doesn't
+    /// itself cover truly untouched — never a background fill, never a
+    /// shape that can shrink between paints (text and icons qualify; a
+    /// custom widget painting partial/animated shapes via raw fill/stroke
+    /// calls does not). Only meaningful together with
+    /// [`Widget::paint_fingerprint`]: a cached layer for a widget like this
+    /// can safely start transparent and blend back onto whatever is
+    /// currently there, rather than snapshotting a backdrop — a snapshot
+    /// can go stale relative to a sibling's hover/press-driven repaint,
+    /// which nothing in this widget's own fingerprint or interaction state
+    /// would ever notice, and get composited back over the fresh paint.
+    /// Default `false`.
+    fn paints_transparently(&self) -> bool {
+        false
     }
 
     /// Takes ownership of this widget's children, in layout order, leaving

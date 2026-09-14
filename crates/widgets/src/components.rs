@@ -202,6 +202,10 @@ impl Widget for Icon {
         self.size.to_bits().hash(&mut hasher);
         Some(hasher.finish())
     }
+
+    fn paints_transparently(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

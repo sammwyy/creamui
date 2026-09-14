@@ -84,6 +84,10 @@ impl Widget for Text {
         self.inner.paint_fingerprint()
     }
 
+    fn paints_transparently(&self) -> bool {
+        self.inner.paints_transparently()
+    }
+
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
@@ -165,6 +169,10 @@ impl Widget for Heading {
 
     fn paint_fingerprint(&self) -> Option<u64> {
         self.inner.paint_fingerprint()
+    }
+
+    fn paints_transparently(&self) -> bool {
+        self.inner.paints_transparently()
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {

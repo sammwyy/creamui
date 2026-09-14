@@ -500,7 +500,12 @@ fn paint_instance(
                 || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK
                 || fingerprint.is_some();
             if layer_active {
-                painter.push_layer(instance.layer_id, layer_rect, !animated_only);
+                painter.push_layer(
+                    instance.layer_id,
+                    layer_rect,
+                    !animated_only,
+                    !instance.widget.paints_transparently(),
+                );
             }
             if let Some(background) = resolved.paint.background {
                 painter.fill_rect(rect, background.resolve(&colors), radius);
@@ -1311,7 +1316,7 @@ mod tests {
         fn take_animated(&mut self) -> bool {
             std::mem::take(&mut self.node_animated)
         }
-        fn push_layer(&mut self, id: u64, rect: Rect, _fresh: bool) {
+        fn push_layer(&mut self, id: u64, rect: Rect, _fresh: bool, _opaque: bool) {
             self.push_layer_calls += 1;
             self.cached_layers.insert(id);
             self.last_push_layer_rect = Some(rect);

@@ -206,6 +206,10 @@ impl Widget for RawText {
         Some(hasher.finish())
     }
 
+    fn paints_transparently(&self) -> bool {
+        true
+    }
+
     fn measure_fingerprint(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         // Must cover exactly what `measure`'s closure captures below — its

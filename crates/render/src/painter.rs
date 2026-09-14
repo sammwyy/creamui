@@ -256,6 +256,10 @@ impl SkiaPainter {
         // shipping and layout-matching a second font file.
         const ITALIC_SHEAR: f32 = 0.22;
         for glyph in glyphs {
+            #[cfg(feature = "perf-metrics")]
+            creamui_core::metrics::record(|m| {
+                m.cpu_pixels_rasterized += (glyph.width * glyph.height) as u64
+            });
             let glyph_color = selected
                 .as_ref()
                 .filter(|(range, _)| range.contains(&glyph.byte_offset))
@@ -549,9 +553,12 @@ impl Painter for SkiaPainter {
 
     fn fill_rect(&mut self, rect: Rect, color: Color, corner_radius: f32) {
         let rect = self.local(rect);
-        let Some(path) =
-            Self::rounded_rect_path(scale_rect(rect, self.scale), corner_radius * self.scale)
-        else {
+        let scaled = scale_rect(rect, self.scale);
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| {
+            m.cpu_pixels_rasterized += (scaled.width.max(0.0) * scaled.height.max(0.0)) as u64
+        });
+        let Some(path) = Self::rounded_rect_path(scaled, corner_radius * self.scale) else {
             return;
         };
         let [r, g, b, a] = color.to_f32();
@@ -580,6 +587,10 @@ impl Painter for SkiaPainter {
             return;
         };
         let rect = scale_rect(self.local(rect), self.scale);
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| {
+            m.cpu_pixels_rasterized += (rect.width.max(0.0) * rect.height.max(0.0)) as u64
+        });
         let transform = Transform::from_row(
             rect.width / width as f32,
             0.0,
@@ -598,9 +609,12 @@ impl Painter for SkiaPainter {
 
     fn stroke_rect(&mut self, rect: Rect, color: Color, width: f32, corner_radius: f32) {
         let rect = self.local(rect);
-        let Some(path) =
-            Self::rounded_rect_path(scale_rect(rect, self.scale), corner_radius * self.scale)
-        else {
+        let scaled = scale_rect(rect, self.scale);
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| {
+            m.cpu_pixels_rasterized += (scaled.width.max(0.0) * scaled.height.max(0.0)) as u64
+        });
+        let Some(path) = Self::rounded_rect_path(scaled, corner_radius * self.scale) else {
             return;
         };
         let [r, g, b, a] = color.to_f32();

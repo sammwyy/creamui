@@ -6,7 +6,6 @@ use taffy::style::Position;
 
 type Tree = TaffyTree<MeasureFn>;
 
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PaintMode {
     /// Paint ordinary flow nodes, deferring every absolutely positioned node.
@@ -87,6 +86,12 @@ fn reconcile(
     next_layer_id: &mut u64,
     painter: &mut dyn Painter,
 ) -> Instance {
+    #[cfg(feature = "perf-metrics")]
+    crate::metrics::record(|m| {
+        m.reconcile_visits += 1;
+        m.widget_objects_built += 1;
+    });
+
     let new_child_widgets = widget.children();
     let new_style = widget.style();
     let new_measure = widget.measure();
@@ -105,6 +110,12 @@ fn reconcile(
             .expect("taffy node creation is infallible for well-formed styles");
         tree.set_node_context(node_id, new_measure)
             .expect("setting the context of a freshly created node should not fail");
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| {
+            m.taffy_style_writes += 1;
+            m.taffy_children_writes += 1;
+            m.taffy_context_writes += 1;
+        });
         let layer_id = *next_layer_id;
         *next_layer_id += 1;
         return Instance {
@@ -127,6 +138,11 @@ fn reconcile(
         .expect("updating the style of an existing node should not fail");
     tree.set_node_context(old.node_id, new_measure)
         .expect("updating the context of an existing node should not fail");
+    #[cfg(feature = "perf-metrics")]
+    crate::metrics::record(|m| {
+        m.taffy_style_writes += 1;
+        m.taffy_context_writes += 1;
+    });
 
     let mut new_children = Vec::with_capacity(new_child_widgets.len());
     let mut old_children = old.children.drain(..);
@@ -146,6 +162,8 @@ fn reconcile(
     let child_ids: Vec<_> = new_children.iter().map(|c| c.node_id).collect();
     tree.set_children(old.node_id, &child_ids)
         .expect("setting children of an existing node should not fail");
+    #[cfg(feature = "perf-metrics")]
+    crate::metrics::record(|m| m.taffy_children_writes += 1);
 
     Instance {
         widget,
@@ -240,6 +258,8 @@ fn paint_instance(
 ) {
     #[cfg(test)]
     PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
+    #[cfg(feature = "perf-metrics")]
+    crate::metrics::record(|m| m.paint_nodes_visited += 1);
 
     // Nothing here or below is promoted, so an animated-only tick has no
     // work in this subtree — skip it before even computing layout.
@@ -336,6 +356,8 @@ fn paint_instance(
                 painter.fill_rect(rect, background.resolve(&colors), radius);
             }
             instance.widget.paint(painter, rect);
+            #[cfg(feature = "perf-metrics")]
+            crate::metrics::record(|m| m.paint_nodes_recorded += 1);
             if painter.take_animated() {
                 instance.animating_streak = instance.animating_streak.saturating_add(1);
                 if instance.animating_streak >= LAYER_PROMOTE_STREAK {
@@ -386,6 +408,8 @@ fn paint_instance(
 
     if paint_self && !animated_only {
         if let Some(visible) = rect.intersect(effective_clip) {
+            #[cfg(feature = "perf-metrics")]
+            crate::metrics::record(|m| m.hit_nodes_updated += 1);
             if let Some(handler) = instance.widget.on_click() {
                 out.hits.push((visible, handler));
             }
@@ -693,15 +717,26 @@ impl Renderer {
         focused_index: Option<usize>,
         caret_visible: bool,
     ) -> Scene {
-        let previous = self.root.take();
-        let mut instance = reconcile(
-            &mut self.tree,
-            previous,
-            root,
-            &mut self.next_layer_id,
-            painter,
-        );
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.root_builds += 1);
 
+        let previous = self.root.take();
+        let mut instance = {
+            #[cfg(feature = "perf-metrics")]
+            let _span = tracing::info_span!("reconcile").entered();
+            reconcile(
+                &mut self.tree,
+                previous,
+                root,
+                &mut self.next_layer_id,
+                painter,
+            )
+        };
+
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.layout_runs += 1);
+        #[cfg(feature = "perf-metrics")]
+        let _layout_span = tracing::info_span!("taffy_compute_layout").entered();
         self.tree
             .compute_layout_with_measure(
                 instance.node_id,
@@ -710,7 +745,11 @@ impl Renderer {
                     height: AvailableSpace::Definite(viewport.height),
                 },
                 |known_dimensions, available_space, _node_id, measure, _style| match measure {
-                    Some(measure) => measure(known_dimensions, available_space),
+                    Some(measure) => {
+                        #[cfg(feature = "perf-metrics")]
+                        crate::metrics::record(|m| m.measure_calls += 1);
+                        measure(known_dimensions, available_space)
+                    }
                     None => taffy::geometry::Size::ZERO,
                 },
             )
@@ -725,30 +764,34 @@ impl Renderer {
             caret_visible,
             counter: 0,
         };
-        paint_instance(
-            &self.tree,
-            &mut instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Flow,
-            false,
-        );
-        paint_instance(
-            &self.tree,
-            &mut instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Absolute,
-            false,
-        );
+        {
+            #[cfg(feature = "perf-metrics")]
+            let _span = tracing::info_span!("paint_traversal").entered();
+            paint_instance(
+                &self.tree,
+                &mut instance,
+                painter,
+                Point::default(),
+                clip,
+                clip,
+                &mut focus,
+                &mut out,
+                PaintMode::Flow,
+                false,
+            );
+            paint_instance(
+                &self.tree,
+                &mut instance,
+                painter,
+                Point::default(),
+                clip,
+                clip,
+                &mut focus,
+                &mut out,
+                PaintMode::Absolute,
+                false,
+            );
+        }
         painter.pop_clip();
         self.root = Some(instance);
         Scene {
@@ -1169,7 +1212,10 @@ mod tests {
         let count = Rc::new(std::cell::Cell::new(0usize));
         let with_child = |count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
             Box::new(Root {
-                children: vec![Box::new(FingerprintWidget { count, fingerprint: 1 })],
+                children: vec![Box::new(FingerprintWidget {
+                    count,
+                    fingerprint: 1,
+                })],
             })
         };
 

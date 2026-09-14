@@ -298,6 +298,8 @@ impl GpuState {
                 pixels[destination..destination + row_bytes]
                     .copy_from_slice(&rgba[source..source + row_bytes]);
             }
+            #[cfg(feature = "perf-metrics")]
+            creamui_core::metrics::record(|m| m.gpu_upload_bytes += pixels.len() as u64);
             self.queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &self.texture,
@@ -322,6 +324,8 @@ impl GpuState {
     }
 
     fn write_full(&mut self, rgba: &[u8], width: u32, height: u32) {
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| m.gpu_upload_bytes += rgba.len() as u64);
         self.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.texture,
@@ -344,6 +348,8 @@ impl GpuState {
     }
 
     fn draw_and_present(&mut self) {
+        #[cfg(feature = "perf-metrics")]
+        let _span = tracing::info_span!("gpu_render_encode").entered();
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -382,8 +388,12 @@ impl GpuState {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.draw(0..3, 0..1);
+            #[cfg(feature = "perf-metrics")]
+            creamui_core::metrics::record(|m| m.draw_calls += 1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
+        #[cfg(feature = "perf-metrics")]
+        let _present_span = tracing::info_span!("present").entered();
         frame.present();
     }
 }

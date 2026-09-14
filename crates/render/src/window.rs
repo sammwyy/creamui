@@ -1412,6 +1412,14 @@ impl WindowState {
                 {
                     return;
                 }
+                #[cfg(feature = "perf-metrics")]
+                creamui_core::metrics::record(|m| {
+                    m.damaged_rect_count += damage.len() as u64;
+                    m.damaged_pixel_area += damage
+                        .iter()
+                        .map(|r| (r.width.max(0.0) * r.height.max(0.0)) as u64)
+                        .sum::<u64>();
+                });
                 let frame = self.frame.borrow();
                 let pixmap = &frame.painter.pixmap;
                 if let Some(presenter) = self.presenter.as_mut() {
@@ -2063,10 +2071,11 @@ fn build_window_spec(
                 let scale = scale_factor.peek();
                 // `repaint` usually already built this; fall back for
                 // non-signal-driven redraws (animation ticks, caret blink).
-                let root = pending_root
-                    .borrow_mut()
-                    .take()
-                    .unwrap_or_else(|| build_ui_with_recovery(&build_ui, logical_size));
+                let root = pending_root.borrow_mut().take().unwrap_or_else(|| {
+                    #[cfg(feature = "perf-metrics")]
+                    let _span = tracing::info_span!("ui_build").entered();
+                    build_ui_with_recovery(&build_ui, logical_size)
+                });
 
                 let mut frame = frame.borrow_mut();
                 let FrameState {
@@ -2521,7 +2530,11 @@ mod tests {
             button: MouseButton::Left,
             serial: None,
         });
-        assert_eq!(calls.borrow().len(), 1, "the initial press dispatches immediately");
+        assert_eq!(
+            calls.borrow().len(),
+            1,
+            "the initial press dispatches immediately"
+        );
 
         harness.send(WindowEvent::CursorMoved {
             position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },

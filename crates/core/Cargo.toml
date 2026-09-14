@@ -11,6 +11,13 @@ readme = "README.md"
 keywords = ["gui", "ui", "layout", "widgets"]
 categories = ["gui"]
 
+[features]
+# Cheap, opt-in engine counters and tracing spans for measuring
+# reconcile/layout/paint work (see docs/performance/baseline.md). Off by
+# default so ordinary builds pay nothing for them.
+perf-metrics = ["dep:tracing"]
+
 [dependencies]
 creamui-theme = { workspace = true }
 taffy = { workspace = true }
+tracing = { version = "0.1", optional = true }

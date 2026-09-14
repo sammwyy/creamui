@@ -1,0 +1,44 @@
+[package]
+name = "creamui-bench"
+description = "Performance laboratory: reproducible benchmark scenes and engine counters for measuring CreamUI before/after the incremental-runtime refactor"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+bench = false
+
+[dependencies]
+creamui-core = { workspace = true, features = ["perf-metrics"] }
+creamui-reactive = { workspace = true }
+creamui-widgets = { workspace = true }
+creamui-theme = { workspace = true }
+creamui-render = { workspace = true, features = ["perf-metrics"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "tree_update"
+harness = false
+
+[[bench]]
+name = "text_update"
+harness = false
+
+[[bench]]
+name = "hover"
+harness = false
+
+[[bench]]
+name = "scroll"
+harness = false
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "paint"
+harness = false

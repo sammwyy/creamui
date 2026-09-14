@@ -6,6 +6,7 @@
 //! CSS-like flex/grid layout.
 
 mod geometry;
+pub mod metrics;
 mod scene;
 mod style;
 mod widget;

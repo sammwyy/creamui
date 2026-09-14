@@ -20,6 +20,10 @@ platform-windows = ["creamui-platform/windows"]
 # Native Linux system-tray integration through the freedesktop
 # StatusNotifierItem D-Bus protocol. It is opt-in and does not use GTK.
 tray = ["dep:creamui-tray", "creamui-tray/linux-status-notifier"]
+# See `creamui-core`'s `perf-metrics` feature; this forwards it and adds
+# counters/spans for the render-specific stages (CPU raster, GPU upload,
+# draw calls, damage).
+perf-metrics = ["creamui-core/perf-metrics", "dep:tracing"]
 
 [dependencies]
 creamui-core = { workspace = true }
@@ -33,6 +37,7 @@ fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
+tracing = { version = "0.1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true }

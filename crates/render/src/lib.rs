@@ -11,6 +11,8 @@ mod devtools;
 mod font;
 #[cfg(not(target_arch = "wasm32"))]
 mod gpu;
+#[cfg(not(target_arch = "wasm32"))]
+mod gpu_scene;
 mod painter;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -19,6 +21,10 @@ mod window;
 pub use backend::RenderBackend;
 pub use creamui_platform as platform;
 pub use devtools::{install_devtools, Devtools, WindowDevtools};
+#[cfg(not(target_arch = "wasm32"))]
+pub use gpu_scene::{
+    quad_instances_for_fragment, GpuPrimitiveId, GpuSceneState, QuadInstance, QuadStore,
+};
 pub use painter::SkiaPainter;
 pub use window::{
     run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, PopupOptions, WindowHandle,

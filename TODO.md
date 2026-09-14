@@ -75,3 +75,23 @@
   `PaintOp::PushTransform`/`PopTransform` exist in the enum but nothing
   generates them; `RuntimeNode` has no clip flag, so `PushClip`/`PopClip`
   aren't emitted for clipping containers either.
+- `crates/render/src/gpu_scene` (REFACTOR.md Phase 8) is not wired into
+  `Renderer`/`window.rs` — same "exists alongside, not selectable yet"
+  state as `crates/core/src/runtime`. There is no `RenderBackend::GpuScene`
+  variant and no caller ever constructs a `GpuSceneState`. Wiring it in
+  needs the runtime tree itself wired in first (`GpuSceneState::sync_node`
+  takes a `RuntimeNodeId` and `PaintFragment`, both currently reachable
+  only off the unwired `Runtime`).
+- `GpuSceneState` only rasterizes `PaintPrimitive::Quad`/`Border`
+  (REFACTOR.md 14.8's migration order); `Text` and `Image` primitives are
+  silently dropped by `quad::quad_instances_for_fragment`, and
+  `PushClip`/`PushTransform` ops are ignored, so nested clipping/transforms
+  don't composite correctly yet. Shadows (14.8 step 6) aren't started.
+- `GpuSceneState`'s pipeline, shader, and sRGB decode path are unverified
+  against a live surface — same "no display server" constraint as the
+  `gpu.rs` counters above. Needs a windowed smoke test (a scene with a
+  handful of quads, compared visually or via `GpuState`'s CPU path) on a
+  machine with a GPU and display attached before this is trusted.
+- `GpuSceneState`'s instance buffer only grows, never shrinks — a scene
+  that mounts many quads and then unmounts most of them keeps the larger
+  buffer allocated.

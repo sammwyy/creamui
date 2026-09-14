@@ -477,3 +477,72 @@ mutation never touches structure.
   `PushTransform`/`PopTransform` op variants existing in the enum;
   nothing generates them yet. `RuntimeNode` has no clip/opacity-group
   flag, so clipping containers don't emit `PushClip`/`PopClip` either.
+
+## 2026-09-14 — Phase 8
+
+`crates/render/src/gpu_scene/` adds an instanced-quad `wgpu` pipeline
+(REFACTOR.md 14.2-14.5) alongside the existing CPU-raster-then-blit path
+in `crates/render/src/gpu.rs`, which is untouched. `QuadStore` is a
+free-list-backed store of `QuadInstance`s addressed by stable
+`GpuPrimitiveId`s, tracking the smallest contiguous index range touched
+since the last flush; `GpuSceneState::sync_node` diffs a `RuntimeNodeId`'s
+new `PaintFragment` against its previously-allocated ids, reusing slots
+in place rather than reallocating, so `render()` uploads only that dirty
+range instead of the whole instance buffer (14.5). One instanced
+`draw_call` covers every live quad (14.4) — draw calls scale with
+batches, not with widget count. `quad_instances_for_fragment` translates
+`PaintPrimitive::Quad`/`Border` into instances; `Text`/`Image` and
+`PushClip`/`PushTransform` are not yet consumed, matching REFACTOR.md
+14.8's migration order (solid quad and border land before images, text,
+and shadows).
+
+### Measured
+
+`gpu_scene/single_update` (`crates/bench/benches/gpu_scene.rs`), updating
+one already-inserted quad in a `QuadStore` of the given size and reading
+back the dirty range:
+
+| Quads in store | Time |
+|---|---|
+| 1,000 | 23.1 ns |
+| 10,000 | 22.6 ns |
+| 50,000 | 22.6 ns |
+
+Flat, same shape as Phase 7's `rebuild_paint` result — a single quad
+update costs the same regardless of how many other quads share the
+store, because the dirty range is one slot wide either way.
+
+`gpu_scene/insert_many`, populating an empty store from scratch:
+
+| Quads | Time |
+|---|---|
+| 1,000 | 23.7 µs |
+| 10,000 | 235.2 µs |
+| 50,000 | 1.166 ms |
+
+Linear in quad count, as expected for populating every slot once — the
+benchmark this phase's O(1) claim applies to is the single-quad update
+above, not a from-scratch mount.
+
+### Not yet measured
+
+This machine has no display server (see "Environment" above), so nothing
+past `QuadStore` and the pure `PaintFragment` -> `QuadInstance`
+translation could be exercised — `GpuSceneState` itself (pipeline
+creation, shader compilation, buffer upload/growth, the actual draw call)
+has never run against a real `wgpu` surface. Needs a windowed smoke test
+on a machine with a GPU and display attached before the pipeline itself
+is trusted, same caveat as `crates/render/src/gpu.rs`'s counters.
+
+### Not done
+
+- Not wired into `Renderer`/`window.rs` — no `RenderBackend::GpuScene`
+  variant exists yet, and wiring it in needs `crates/core/src/runtime`
+  wired in first, since `sync_node` consumes that module's
+  `RuntimeNodeId`/`PaintFragment` types.
+- Text, images, clips, and transforms are not rasterized by this
+  pipeline (REFACTOR.md 14.8's later migration steps).
+- The instance buffer only grows, never shrinks back down after a scene
+  loses most of its quads.
+- Images/texture manager (14.6) and clip strategy (14.7) are not
+  started; Vello is not evaluated as an alternative backend (14.9).

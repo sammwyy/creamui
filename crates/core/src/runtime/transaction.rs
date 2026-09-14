@@ -62,6 +62,25 @@ impl<'a> RuntimeTransaction<'a> {
         self.touch(parent, DirtyFlags::STRUCTURE);
     }
 
+    /// Replaces `parent`'s entire child list with `ordered` in one pass —
+    /// an O(n) alternative to calling [`RuntimeTransaction::insert_child`]
+    /// once per item (O(n) each, since it scans and rebuilds the child
+    /// list) when every item's final position is already known, as after
+    /// diffing a keyed list. Every id in `ordered` must already belong to
+    /// this runtime; each has its `parent` set to `parent` unconditionally,
+    /// with no detach-from-previous-parent step.
+    pub fn reorder_children(&mut self, parent: RuntimeNodeId, ordered: &[RuntimeNodeId]) {
+        for &child in ordered {
+            if let Some(child_node) = self.runtime.nodes.get_mut(child) {
+                child_node.parent = Some(parent);
+            }
+        }
+        if let Some(parent_node) = self.runtime.nodes.get_mut(parent) {
+            parent_node.children = super::node::Children::from(ordered.to_vec());
+        }
+        self.touch(parent, DirtyFlags::STRUCTURE);
+    }
+
     pub fn remove_subtree(&mut self, root: RuntimeNodeId) {
         let Some((parent, children)) = self
             .runtime

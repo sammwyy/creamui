@@ -19,6 +19,7 @@ perf-metrics = ["dep:tracing"]
 
 [dependencies]
 creamui-theme = { workspace = true }
+creamui-reactive = { workspace = true }
 taffy = { workspace = true }
 tracing = { version = "0.1", optional = true }
 bitflags = "2"

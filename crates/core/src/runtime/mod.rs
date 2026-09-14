@@ -5,13 +5,19 @@
 //! bridge between the two.
 
 mod arena;
+mod binding;
+mod branch;
 mod dirty;
+mod keyed;
 mod mount;
 mod mutation;
 mod node;
 mod transaction;
 
+pub use binding::{create_binding, SharedRuntime};
+pub use branch::create_branch;
 pub use dirty::DirtyFlags;
+pub use keyed::create_keyed_list;
 pub use mount::mount_legacy_widget;
 pub use mutation::{Mutation, Transform2D};
 pub use node::{Children, CustomNode, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode};

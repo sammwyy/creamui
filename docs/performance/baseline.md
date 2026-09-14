@@ -254,3 +254,55 @@ up calling it more than once per mount.
 `insert_child` to move an already-attached child produced a duplicate
 entry in its parent's `Children` list. Fixed by making `Children::insert`
 idempotent (remove-then-reinsert) rather than append-only.
+
+## 2026-09-14 — after Phase 3
+
+`creamui-reactive` adds `Owner` (a disposable scope for effects and child
+scopes). `crates/core/src/runtime` adds `create_binding` (ties a
+`Signal::get()` read directly to a `RuntimeTransaction` mutation, no
+widget rebuild involved), `create_branch` (conditional mount/unmount
+anchored at a stable parent, the runtime analogue of
+`if condition.get() { <Panel/> }`), and `create_keyed_list` (an
+order-preserving keyed list: a surviving key keeps its runtime node,
+only new/removed keys mount or dispose).
+
+### `runtime` timings (`crates/bench/benches/runtime.rs`)
+
+| Update path | 1,000 nodes | 10,000 nodes | 50,000 nodes |
+|---|---|---|---|
+| Reconcile (`tree_update/unchanged_rerender`, Phase 1) | 0.36 ms | 6.6 ms | 79.0 ms |
+| Direct `RuntimeTransaction` mutation (Phase 2) | 19.2 ns | 19.2 ns | 19.2 ns |
+| `Signal::set` through `create_binding` (Phase 3) | 74.2 ns | 77.0 ns | 74.9 ns |
+
+The reactive-driven path is ~75ns flat regardless of tree size — a few
+nanoseconds more than a raw transaction (the effect dispatch overhead),
+still completely independent of how many other nodes exist. That's Phase
+3's exit criterion ("benchmarks show update cost no longer scales with
+unrelated tree size") holding for the actual signal-to-mutation path, not
+just the lower-level transaction API underneath it.
+
+### Correctness
+
+- `create_branch`: toggling a `Signal<bool>` mounts/unmounts a subtree;
+  hiding disposes bindings created inside it; disposing the enclosing
+  `Owner` stops the branch from reacting to further toggles.
+- `create_keyed_list`: reordering a `Signal<Vec<T>>` preserves each
+  surviving key's `RuntimeNodeId` (not just its data); a removed key
+  disposes its own subtree and any bindings created for it.
+- `Owner::dispose` is idempotent, cascades to child scopes, and (via
+  `RefCell`-free `Rc` ownership with no parent back-pointer) cannot leak
+  through a reference cycle.
+
+### Known limitations (see `TODO.md`)
+
+- `Owner` has no parent back-pointer, so a disposed child scope is not
+  removed from its parent's `children` list — only reclaimed once the
+  parent itself is disposed. For a value toggled/reordered many times
+  under one long-lived parent (e.g. a checkbox flipped thousands of
+  times), this accumulates small dead `Owner` entries until the parent
+  goes away. Not a subscription leak (effects/cleanups are correctly
+  disposed), just deferred memory reclamation.
+- Nothing in `window.rs`/`Renderer` calls `create_binding`/`create_branch`/
+  `create_keyed_list` yet — REFACTOR.md's Phase 4 (JSX/component
+  compilation) is what should start generating these calls from
+  application code instead of a widget-rebuilding closure.

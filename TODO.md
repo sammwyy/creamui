@@ -11,8 +11,10 @@
   headless benchmark exercises them yet.
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old
-  reconcile path, reachable via `mount_legacy_widget`. Phase 3 (reactive
-  ownership/bindings) is what should start driving it for real.
+  reconcile path, reachable via `mount_legacy_widget`, `create_binding`,
+  `create_branch`, and `create_keyed_list`. REFACTOR.md Phase 4 (JSX/
+  component compilation) is what should start generating calls into these
+  from application code instead of a widget-rebuilding closure.
 - `mount_legacy_widget` always produces `NodeKind::Custom` — it never
   classifies a legacy widget as `Text`/`Image`, so nothing downstream can
   yet tell a runtime-mounted text node from an opaque one without
@@ -21,3 +23,9 @@
   nodes, see `docs/performance/baseline.md`) is unoptimized; revisit if a
   later phase ends up calling it more than once per mount instead of only
   at initial mount.
+- `Owner` (`creamui-reactive`) has no parent back-pointer, so a disposed
+  child scope stays in its parent's `children` list until the parent
+  itself is disposed — a deferred-reclamation memory-growth concern for
+  long-lived parents with many toggles/reorders under them (see
+  `docs/performance/baseline.md`'s Phase 3 section), not a correctness or
+  subscription-leak issue. Fixing it needs a `Weak` parent back-pointer.

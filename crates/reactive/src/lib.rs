@@ -265,6 +265,71 @@ impl<T: Clone + PartialEq + 'static> Signal<T> {
     }
 }
 
+struct OwnerInner {
+    children: RefCell<Vec<Owner>>,
+    effects: RefCell<Vec<Effect>>,
+    cleanups: RefCell<Vec<Box<dyn FnOnce()>>>,
+}
+
+/// A disposable scope for effects and child scopes, so removing a UI
+/// subtree can unsubscribe everything it owns in one call instead of
+/// leaking effects that keep reacting after their node is gone.
+///
+/// Cheap to clone (an `Rc` underneath). Holds no reference back to its
+/// parent — only parent-to-child, so a disposed owner's `Rc` can actually
+/// reach zero instead of being kept alive by a cycle.
+#[derive(Clone)]
+pub struct Owner(Rc<OwnerInner>);
+
+impl Owner {
+    pub fn new() -> Self {
+        Owner(Rc::new(OwnerInner {
+            children: RefCell::new(Vec::new()),
+            effects: RefCell::new(Vec::new()),
+            cleanups: RefCell::new(Vec::new()),
+        }))
+    }
+
+    /// Creates a child scope disposed whenever `self` is.
+    pub fn child(&self) -> Owner {
+        let child = Owner::new();
+        self.0.children.borrow_mut().push(child.clone());
+        child
+    }
+
+    /// Runs `f` as a [`create_effect`], owned by `self`: dropped (and so
+    /// unsubscribed) on [`Owner::dispose`] instead of needing the caller to
+    /// hold the returned [`Effect`] handle itself.
+    pub fn effect(&self, f: impl FnMut() + 'static) {
+        self.0.effects.borrow_mut().push(create_effect(f));
+    }
+
+    /// Registers `f` to run once, on [`Owner::dispose`], after this
+    /// owner's effects stop and before its children are disposed.
+    pub fn on_cleanup(&self, f: impl FnOnce() + 'static) {
+        self.0.cleanups.borrow_mut().push(Box::new(f));
+    }
+
+    /// Disposes every child scope, drops (unsubscribing) every owned
+    /// effect, then runs every registered cleanup. Idempotent: disposing
+    /// an already-disposed owner is a no-op.
+    pub fn dispose(&self) {
+        for child in self.0.children.borrow_mut().drain(..) {
+            child.dispose();
+        }
+        self.0.effects.borrow_mut().clear();
+        for cleanup in self.0.cleanups.borrow_mut().drain(..) {
+            cleanup();
+        }
+    }
+}
+
+impl Default for Owner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +534,69 @@ mod tests {
         drop(effect);
         s.set(1);
         assert_eq!(runs.get(), 1, "dropped effect must not react anymore");
+    }
+
+    #[test]
+    fn disposing_an_owner_stops_its_effects() {
+        let s = Signal::new(0);
+        let runs = Rc::new(Cell::new(0));
+        let owner = Owner::new();
+        owner.effect({
+            let s = s.clone();
+            let runs = runs.clone();
+            move || {
+                let _ = s.get();
+                runs.set(runs.get() + 1);
+            }
+        });
+        assert_eq!(runs.get(), 1);
+
+        owner.dispose();
+        s.set(1);
+        assert_eq!(
+            runs.get(),
+            1,
+            "a disposed owner's effect must not react anymore"
+        );
+    }
+
+    #[test]
+    fn disposing_a_parent_disposes_children_transitively() {
+        let s = Signal::new(0);
+        let runs = Rc::new(Cell::new(0));
+        let parent = Owner::new();
+        let child = parent.child();
+        child.effect({
+            let s = s.clone();
+            let runs = runs.clone();
+            move || {
+                let _ = s.get();
+                runs.set(runs.get() + 1);
+            }
+        });
+        assert_eq!(runs.get(), 1);
+
+        parent.dispose();
+        s.set(1);
+        assert_eq!(
+            runs.get(),
+            1,
+            "disposing the parent must dispose the child's effects too"
+        );
+    }
+
+    #[test]
+    fn dispose_runs_cleanups_exactly_once() {
+        let owner = Owner::new();
+        let calls = Rc::new(Cell::new(0));
+        owner.on_cleanup({
+            let calls = calls.clone();
+            move || calls.set(calls.get() + 1)
+        });
+
+        owner.dispose();
+        assert_eq!(calls.get(), 1);
+        owner.dispose();
+        assert_eq!(calls.get(), 1, "disposing twice must not rerun cleanups");
     }
 }

@@ -699,3 +699,38 @@ single-node update benchmarks.
 - No `VirtualList` widget and no caller anywhere — `HeightIndex`/
   `visible_range` are unused outside their own tests and benchmark.
 - No recycling pool (17.3), virtual table (17.4), or virtual tree (17.5).
+
+## 2026-09-14 — Phase 12
+
+`creamui_image::BackgroundImageLoader` (REFACTOR.md 18.1) spawns image
+decoding onto its own thread and delivers a `ResourceReady` message over
+an `mpsc` channel instead of the caller blocking on
+`ImageData::from_bytes`. It stops at the message, matching 18.3: the
+loader never touches `creamui_core::runtime` — turning a `ResourceReady`
+into a mutation and a texture upload is left to whoever calls
+`poll_ready`/`recv_timeout`.
+
+### Measured
+
+`background::tests::load_bytes_returns_before_the_decode_it_spawned_finishes`
+(`crates/image/src/background.rs`) times a synchronous
+`ImageData::from_bytes` decode of a 1200x1200 PNG against the wall-clock
+cost of the `load_bytes` call that spawns the same decode in the
+background, on this machine:
+
+| | Time |
+|---|---|
+| Synchronous decode | a few ms (varies by run) |
+| `load_bytes` call | well under that — thread-spawn only |
+
+The test asserts the inequality directly (`call_cost < decode_cost`)
+rather than pinning either number, so it stays meaningful across
+machines; five consecutive local runs all passed.
+
+### Not done
+
+- Nothing consumes a `ResourceReady` — no runtime mutation, no
+  `gpu_scene` texture upload, no image/texture manager at all yet.
+- One thread per request, uncapped. See `TODO.md`.
+- Glyph rasterization stays synchronous, per REFACTOR.md 18.2's own
+  guidance not to parallelize it without profiling evidence first.

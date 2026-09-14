@@ -3,11 +3,15 @@
 //! Enable only the decoders an application uses: `png` (default), `jpeg`,
 //! and/or `webp`.
 
+mod background;
+
 use creamui_core::layout::Dimension;
 use creamui_core::{Painter, Rect, Style, Styled, Widget};
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
+
+pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
 
 /// How an [`Image`] fits its source pixels inside its layout box.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

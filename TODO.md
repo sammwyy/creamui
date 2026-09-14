@@ -164,3 +164,16 @@
 - Virtual table (column virtualization, sticky headers, selection state,
   REFACTOR.md 17.4) and virtual tree (flattening expanded nodes, keying
   by stable tree ID, REFACTOR.md 17.5) are not started.
+- `creamui_image::BackgroundImageLoader` (REFACTOR.md 18.1) decodes off
+  the UI thread and delivers a `ResourceReady` message, but stops there —
+  nothing turns a `ResourceReady` into a runtime mutation or a
+  `gpu_scene` texture upload. `NodeKind::Image` only stores a `source:
+  Rc<str>`; there is no decoded-pixels field or side-table for a
+  `RuntimeNodeId` to receive one, and `gpu_scene` still has no image/
+  texture manager at all (the Phase 8 TODO entry above).
+- `BackgroundImageLoader` spawns one OS thread per request with no pool
+  and no cap — fine for a handful of images, but N simultaneous large
+  requests spawn N threads. Revisit if that's ever a real workload.
+- Widgets still construct `ImageData` synchronously
+  (`ImageData::from_bytes`/`from_path`, used directly by `Image::new`);
+  `BackgroundImageLoader` is a separate, opt-in path nothing calls yet.

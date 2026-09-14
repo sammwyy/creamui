@@ -73,6 +73,13 @@ struct Instance {
     /// includes its original backdrop, so it must be repainted when a
     /// scrolling ancestor translates it to a different position.
     cached_rect: Option<Rect>,
+    /// The [`Painter::color_scheme`] in effect when this layer was last
+    /// freshly painted. A background/border/outline resolved from a
+    /// [`crate::ColorToken`] renders differently under a different scheme
+    /// even when nothing else about the widget changed, so a scheme change
+    /// must invalidate the cache the same way a hover/press/focus change
+    /// already does.
+    cached_colors: Option<creamui_theme::ColorScheme>,
 }
 
 fn remove_instance(tree: &mut Tree, instance: Instance, painter: &mut dyn Painter) {
@@ -154,6 +161,7 @@ fn reconcile(
             cached_states: None,
             cached_clip: None,
             cached_rect: None,
+            cached_colors: None,
         };
     };
 
@@ -211,6 +219,7 @@ fn reconcile(
         cached_states: old.cached_states,
         cached_clip: old.cached_clip,
         cached_rect: old.cached_rect,
+        cached_colors: old.cached_colors,
     }
 }
 
@@ -405,10 +414,12 @@ fn paint_instance(
             .with_focused(focusable && focus.focused_index == Some(focus.counter));
 
         let fingerprint = instance.widget.paint_fingerprint();
+        let colors = painter.color_scheme();
         // A fingerprint match alone doesn't prove the cached pixels are
         // still correct — the widget's *resolved* appearance can also
         // depend on live hover/press/focus state that has nothing to do
-        // with its own fingerprint (see `cached_states`'s doc comment).
+        // with its own fingerprint (see `cached_states`'s doc comment), or
+        // on the active color scheme (see `cached_colors`'s doc comment).
         // A clipping ancestor restricts what actually gets rasterized into
         // the cached layer, not just what's visible when compositing it —
         // pixels outside that clip were never painted at all. A fingerprint
@@ -424,13 +435,13 @@ fn paint_instance(
         let cache_hit = fingerprint.is_some()
             && fingerprint == instance.content_fingerprint
             && instance.cached_states == Some(states)
+            && instance.cached_colors == Some(colors)
             && cached_clip_covers
             && instance.cached_rect == Some(rect)
             && painter.composite_cached_layer(instance.layer_id, rect);
 
         if !cache_hit {
             let resolved = instance.style.resolve(states);
-            let colors = painter.color_scheme();
             let radius = resolved.paint.corner_radius.unwrap_or(0.0);
             // A not-yet-promoted node is only ever visited on a full (non-
             // `animated_only`) pass — see the pruning check above — so one call
@@ -495,6 +506,7 @@ fn paint_instance(
             instance.cached_states = fingerprint.map(|_| states);
             instance.cached_clip = fingerprint.map(|_| effective_clip);
             instance.cached_rect = fingerprint.map(|_| rect);
+            instance.cached_colors = fingerprint.map(|_| colors);
             if layer_active && fingerprint.is_some() {
                 painter.pop_layer();
                 layer_active = false;
@@ -1201,6 +1213,7 @@ mod tests {
         node_animated: bool,
         push_layer_calls: usize,
         cached_layers: std::collections::HashSet<u64>,
+        color_scheme: creamui_theme::ColorScheme,
     }
     impl AnimPainter {
         fn new() -> Self {
@@ -1208,10 +1221,14 @@ mod tests {
                 node_animated: false,
                 push_layer_calls: 0,
                 cached_layers: std::collections::HashSet::new(),
+                color_scheme: creamui_theme::ColorScheme::default(),
             }
         }
     }
     impl Painter for AnimPainter {
+        fn color_scheme(&self) -> creamui_theme::ColorScheme {
+            self.color_scheme
+        }
         fn fill_rect(&mut self, _rect: Rect, _color: Color, _corner_radius: f32) {}
         fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32, _corner_radius: f32) {}
         fn fill_text(
@@ -1330,6 +1347,33 @@ mod tests {
             count.get(),
             1,
             "an unrelated rebuild with an unchanged fingerprint should not repaint"
+        );
+    }
+
+    #[test]
+    fn fingerprint_cache_repaints_when_the_color_scheme_changes() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+        painter.color_scheme = creamui_theme::ColorScheme::dark();
+
+        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
+        assert_eq!(count.get(), 1);
+
+        // Same fingerprint, same hover/press/focus state — only the active
+        // scheme changed, e.g. a theme toggle elsewhere in the tree.
+        painter.color_scheme = creamui_theme::ColorScheme::light();
+        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
+        assert_eq!(
+            count.get(),
+            2,
+            "a color scheme change must repaint even with an unchanged fingerprint"
         );
     }
 

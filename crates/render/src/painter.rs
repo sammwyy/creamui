@@ -374,8 +374,12 @@ impl Painter for SkiaPainter {
     }
     fn push_layer(&mut self, id: u64, rect: Rect, fresh: bool) {
         let scale = self.scale;
-        let phys_w = ((rect.width * scale).round() as u32).max(1);
-        let phys_h = ((rect.height * scale).round() as u32).max(1);
+        // Clamped to the surface being painted into — nothing past its
+        // edges is ever visible, so a widget declaring a rect larger than
+        // that (e.g. an oversized off-screen hit target) must not size its
+        // layer buffer past it either.
+        let phys_w = (((rect.width * scale).round() as u32).max(1)).min(self.pixmap.width());
+        let phys_h = (((rect.height * scale).round() as u32).max(1)).min(self.pixmap.height());
 
         let cached_backdrop_matches = matches!(
             self.backdrop_pool.get(&id),
@@ -977,6 +981,26 @@ mod tests {
             (untouched.red(), untouched.green(), untouched.blue()),
             (10, 20, 30)
         );
+    }
+
+    #[test]
+    fn push_layer_clamps_a_rect_far_larger_than_the_surface() {
+        let mut painter = SkiaPainter::new(8, 8);
+        painter.clear(Color::rgba(0, 0, 0, 255));
+        // Matches `portal_dismiss_layer`'s deliberately oversized,
+        // off-screen hit target: without clamping, this tries to allocate
+        // a multi-terabyte pixmap.
+        painter.push_layer(
+            1,
+            Rect {
+                x: -1_000_000.0,
+                y: -1_000_000.0,
+                width: 2_000_000.0,
+                height: 2_000_000.0,
+            },
+            true,
+        );
+        painter.pop_layer();
     }
 
     struct HoverAware {

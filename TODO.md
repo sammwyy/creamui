@@ -63,3 +63,15 @@
   `hovered`/`pressed`/`focused`/`pointer_capture`) is not wired into
   `window.rs`'s pointer/keyboard event handling, same as the rest of the
   runtime tree.
+- `Runtime::generate_fragment` only produces primitives for native
+  `Container`/`Text`/`Image` nodes; `NodeKind::Custom` (legacy-mounted
+  widgets) gets an empty fragment, since `mount_legacy_widget` drops the
+  widget after translating it. `RecordingPainter` exists but nothing
+  currently calls it post-layout with a still-alive widget.
+- No damage-rect merging or full-window collapse above an area/count
+  threshold (REFACTOR.md 13.5) — `rebuild_paint`'s damage is a raw list
+  of old+new bounds per regenerated fragment.
+- No retained clip/opacity/transform grouping (REFACTOR.md 13.4) —
+  `PaintOp::PushTransform`/`PopTransform` exist in the enum but nothing
+  generates them; `RuntimeNode` has no clip flag, so `PushClip`/`PopClip`
+  aren't emitted for clipping containers either.

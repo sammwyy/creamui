@@ -150,6 +150,7 @@ pub struct RuntimeNode {
     pub dirty: DirtyFlags,
     pub layout: LayoutState,
     pub events: EventState,
+    pub paint: super::paint::PaintState,
 }
 
 impl RuntimeNode {
@@ -172,6 +173,7 @@ impl RuntimeNode {
                 last_layout_epoch: 0,
             },
             events: EventState::default(),
+            paint: super::paint::PaintState::default(),
         }
     }
 }

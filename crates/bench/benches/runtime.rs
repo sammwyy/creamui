@@ -200,6 +200,52 @@ fn bench_rebuild_hit_test(c: &mut Criterion) {
     group.finish();
 }
 
+/// `rebuild_paint` cost after changing one leaf's background, as a
+/// function of unrelated tree size — the paint queue is targeted (not a
+/// tree walk), so this should stay flat.
+fn bench_rebuild_paint_after_single_leaf_paint_change(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime/rebuild_paint_after_single_leaf_paint_change");
+    let colors = creamui_theme::ColorScheme::default();
+    for &count in &[1_000usize, 10_000, 50_000] {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root =
+            creamui_core::runtime::mount_legacy_widget(&mut tx, scenes::wide_tree(count), None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(creamui_core::Size {
+            width: 1920.0,
+            height: 1080.0,
+        });
+        runtime.rebuild_paint(&colors);
+        let leaf = *runtime
+            .get(root)
+            .expect("root exists")
+            .children
+            .as_slice()
+            .first()
+            .expect("wide_tree has at least one leaf");
+
+        let mut tick = 0u8;
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                tick = tick.wrapping_add(1);
+                let mut tx = runtime.transaction();
+                tx.apply(Mutation::SetPaintStyle {
+                    node: leaf,
+                    style: PaintStyle {
+                        background: Some(Color::rgb(200, 40, tick).into()),
+                        ..Default::default()
+                    },
+                });
+                drop(tx);
+                runtime.rebuild_paint(&colors);
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_create_node(c: &mut Criterion) {
     c.bench_function("runtime/create_10000_nodes", |b| {
         b.iter(|| {
@@ -221,6 +267,7 @@ criterion_group!(
     bench_signal_driven_leaf_update,
     bench_compute_layout_after_single_leaf_style_change,
     bench_rebuild_hit_test,
+    bench_rebuild_paint_after_single_leaf_paint_change,
     bench_create_node
 );
 criterion_main!(benches);

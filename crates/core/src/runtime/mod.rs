@@ -14,6 +14,7 @@ mod mount;
 mod mount_cx;
 mod mutation;
 mod node;
+mod paint;
 mod transaction;
 mod view;
 
@@ -27,6 +28,10 @@ pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};
 pub use node::{
     Children, CustomNode, EventState, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode,
+};
+pub use paint::{
+    BorderPrimitive, ImagePrimitive, PaintFragment, PaintOp, PaintPrimitive, PaintState,
+    QuadPrimitive, RecordingPainter, TextPrimitive,
 };
 pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
@@ -50,6 +55,14 @@ pub struct Runtime {
     hit_entries: Vec<HitEntry>,
     focus_order: Vec<RuntimeNodeId>,
     pointer: PointerState,
+    /// Nodes with a pending fragment regeneration — appended to whenever a
+    /// mutation marks PAINT dirty, so [`Runtime::rebuild_paint`] only
+    /// visits nodes that actually changed instead of walking the tree.
+    paint_queue: Vec<RuntimeNodeId>,
+    /// Set when a mutation marks any node's STRUCTURE dirty; lets
+    /// [`Runtime::rebuild_paint`] skip re-deriving paint order otherwise.
+    paint_order_dirty: bool,
+    paint_order: Vec<RuntimeNodeId>,
 }
 
 impl Runtime {
@@ -65,6 +78,9 @@ impl Runtime {
             hit_entries: Vec::new(),
             focus_order: Vec::new(),
             pointer: PointerState::default(),
+            paint_queue: Vec::new(),
+            paint_order_dirty: false,
+            paint_order: Vec::new(),
         }
     }
 
@@ -183,11 +199,66 @@ impl Runtime {
                 node.layout.last_layout_epoch = self.layout_epoch;
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
                 self.hit_test_dirty = true;
+                self.paint_queue.push(id);
             }
 
             stack.extend(children.into_iter().map(|child| (child, child_origin)));
         }
         damage
+    }
+
+    /// Rebuilds paint order if structure changed, then regenerates the
+    /// fragment for every queued (PAINT-dirty) node — not a tree walk, so
+    /// this scales with how much actually changed, not tree size. Returns
+    /// each regenerated node's old and new bounds as damage.
+    pub fn rebuild_paint(&mut self, colors: &creamui_theme::ColorScheme) -> Vec<crate::Rect> {
+        if self.paint_order_dirty {
+            self.rebuild_paint_order();
+        }
+
+        let queue = std::mem::take(&mut self.paint_queue);
+        let mut damage = Vec::with_capacity(queue.len() * 2);
+        for id in queue {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            if !node.dirty.contains(DirtyFlags::PAINT) {
+                continue;
+            }
+            #[cfg(feature = "perf-metrics")]
+            crate::metrics::record(|m| m.paint_nodes_recorded += 1);
+            let old_bounds = node.paint.fragment.as_ref().map(|f| f.bounds);
+            let fragment = paint::generate_fragment(node, colors);
+            damage.extend(old_bounds);
+            damage.push(fragment.bounds);
+            let node = self.nodes.get_mut(id).expect("checked above");
+            node.paint.fragment = Some(fragment);
+            node.dirty.remove(DirtyFlags::PAINT);
+        }
+        damage
+    }
+
+    fn rebuild_paint_order(&mut self) {
+        self.paint_order.clear();
+        let Some(root) = self.root else {
+            self.paint_order_dirty = false;
+            return;
+        };
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            self.paint_order.push(id);
+            stack.extend(node.children.as_slice().iter().rev());
+        }
+        self.paint_order_dirty = false;
+    }
+
+    /// Every node in depth-first paint order, as of the last
+    /// [`Runtime::rebuild_paint`].
+    pub fn paint_order(&self) -> &[RuntimeNodeId] {
+        &self.paint_order
     }
 
     /// Panics on the first broken invariant found: a child whose `parent`
@@ -441,6 +512,94 @@ mod tests {
             tx.touched().is_empty(),
             "an unchanged measure fingerprint must not touch the node"
         );
+    }
+
+    fn background_node(runtime: &mut Runtime, color: creamui_theme::Color) -> RuntimeNodeId {
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetPaintStyle {
+            node,
+            style: crate::PaintStyle {
+                background: Some(color.into()),
+                ..Default::default()
+            },
+        });
+        node
+    }
+
+    #[test]
+    fn rebuild_paint_generates_a_quad_for_a_background() {
+        let mut runtime = Runtime::new();
+        let node = background_node(&mut runtime, creamui_theme::Color::rgb(1, 2, 3));
+
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        assert_eq!(
+            fragment.ops,
+            vec![paint::PaintOp::Primitive(paint::PaintPrimitive::Quad(
+                paint::QuadPrimitive {
+                    rect: crate::Rect::default(),
+                    color: creamui_theme::Color::rgb(1, 2, 3),
+                    corner_radius: 0.0,
+                }
+            ))]
+        );
+    }
+
+    #[test]
+    fn rebuild_paint_only_regenerates_the_node_that_actually_changed() {
+        let mut runtime = Runtime::new();
+        let a = background_node(&mut runtime, creamui_theme::Color::rgb(1, 1, 1));
+        let _b = background_node(&mut runtime, creamui_theme::Color::rgb(2, 2, 2));
+        let colors = creamui_theme::ColorScheme::default();
+        runtime.rebuild_paint(&colors);
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetPaintStyle {
+            node: a,
+            style: crate::PaintStyle {
+                background: Some(creamui_theme::Color::rgb(9, 9, 9).into()),
+                ..Default::default()
+            },
+        });
+        drop(tx);
+
+        let damage = runtime.rebuild_paint(&colors);
+        assert_eq!(
+            damage.len(),
+            2,
+            "one regenerated fragment: old + new bounds"
+        );
+    }
+
+    #[test]
+    fn rebuild_paint_is_a_noop_when_nothing_is_dirty() {
+        let mut runtime = Runtime::new();
+        background_node(&mut runtime, creamui_theme::Color::rgb(1, 1, 1));
+        let colors = creamui_theme::ColorScheme::default();
+        runtime.rebuild_paint(&colors);
+
+        assert!(runtime.rebuild_paint(&colors).is_empty());
+    }
+
+    #[test]
+    fn paint_order_lists_nodes_depth_first() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let child = {
+            let mut tx = runtime.transaction();
+            let child = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, child, None);
+            child
+        };
+
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        assert_eq!(runtime.paint_order(), &[root, child]);
     }
 
     /// A tiny xorshift generator, so this test is reproducible without a

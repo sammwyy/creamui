@@ -21,13 +21,21 @@ impl<'a> RuntimeTransaction<'a> {
 
     fn touch(&mut self, id: RuntimeNodeId, flags: DirtyFlags) {
         if let Some(node) = self.runtime.nodes.get_mut(id) {
+            let newly_paint_dirty =
+                flags.contains(DirtyFlags::PAINT) && !node.dirty.contains(DirtyFlags::PAINT);
             node.dirty |= flags;
+            if newly_paint_dirty {
+                self.runtime.paint_queue.push(id);
+            }
         }
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {
             self.runtime.layout_dirty = true;
         }
         if flags.intersects(DirtyFlags::HIT_TEST | DirtyFlags::STRUCTURE) {
             self.runtime.hit_test_dirty = true;
+        }
+        if flags.contains(DirtyFlags::STRUCTURE) {
+            self.runtime.paint_order_dirty = true;
         }
         if !self.touched.contains(&id) {
             self.touched.push(id);
@@ -66,6 +74,7 @@ impl<'a> RuntimeTransaction<'a> {
             .nodes
             .insert_with(|id| RuntimeNode::new(id, kind, taffy_node));
         self.runtime.layout_dirty = true;
+        self.runtime.paint_order_dirty = true;
         self.touched.push(id);
         id
     }

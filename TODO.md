@@ -67,10 +67,19 @@
   (`RuntimeTransaction::create_node`); REFACTOR.md 11.1's "not every
   logical runtime node necessarily needs a Taffy node forever" (flattening
   wrapper/component nodes) is not attempted.
-- `LayoutState::measure_fingerprint`-based skip only covers the `taffy`
-  context write; there is no measurement result cache (REFACTOR.md 11.4) —
-  a `taffy` `MeasureFunction` still recomputes from scratch whenever
-  `compute_layout` actually calls it.
+- REFACTOR.md 11.4: `Mutation::SetMeasure` (`crates/core/src/runtime/transaction.rs`)
+  now wraps an incoming measure closure with `memoize_measure` before
+  storing it as the `taffy` node context — a repeat call with the exact
+  same `(known_dimensions, available_space)` pair (common within one
+  `compute_layout` pass, e.g. `taffy` resolving flex-basis before its
+  final pass) returns the cached `Size` instead of recomputing. Only the
+  single most recent call is remembered, not a general result cache
+  keyed by every distinct input seen — a leaf is not meaningfully queried
+  with more than a couple of distinct inputs within one pass, so a bigger
+  cache wasn't worth the eviction-policy complexity. `LayoutState::measure_fingerprint`
+  still only gates the `taffy` context *write* (unchanged — see the
+  `setting_the_same_measure_fingerprint_twice_skips_the_second_write`
+  test), a separate, already-existing optimization from this one.
 - `Runtime::rebuild_hit_test` walks every node to find interactive ones —
   O(whole tree), not O(interactive nodes). ~787µs for a 50,000-node tree
   with one interactive leaf (see `docs/performance/baseline.md`'s Phase 6

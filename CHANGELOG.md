@@ -41,6 +41,9 @@ All notable changes to CreamUI will be documented in this file.
   the persistent runtime tree report itself as `NodeKind::Text` instead
   of an opaque `NodeKind::Custom`. Implemented by `RawText`/`RawPre`/
   `RawLink` and their themed wrappers.
+- Cache a leaf's measurement result within one layout pass instead of
+  recomputing it every time `taffy`'s flex/grid algorithm re-queries the
+  same node with identical inputs.
 
 ## 0.1.1
 

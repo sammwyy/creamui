@@ -2,6 +2,33 @@ use super::dirty::DirtyFlags;
 use super::mutation::Mutation;
 use super::node::{NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
 use super::Runtime;
+use std::cell::RefCell;
+use std::rc::Rc;
+use taffy::geometry::Size;
+use taffy::style::AvailableSpace;
+
+/// Wraps `measure` so a repeat call with the exact `(known_dimensions,
+/// available_space)` pair it was last called with returns the cached
+/// result instead of recomputing — `taffy`'s flex/grid algorithms often
+/// query the same leaf more than once per `compute_layout` pass (e.g. to
+/// resolve flex-basis before the final pass) with identical inputs.
+/// Remembers only the single most recent call, since a leaf is not
+/// meaningfully queried with more than a couple of distinct inputs within
+/// one pass.
+fn memoize_measure(measure: crate::MeasureFn) -> crate::MeasureFn {
+    let cache: Rc<RefCell<Option<(Size<Option<f32>>, Size<AvailableSpace>, Size<f32>)>>> =
+        Rc::new(RefCell::new(None));
+    Box::new(move |known_dimensions, available_space| {
+        if let Some((cached_known, cached_space, cached_size)) = *cache.borrow() {
+            if cached_known == known_dimensions && cached_space == available_space {
+                return cached_size;
+            }
+        }
+        let size = measure(known_dimensions, available_space);
+        *cache.borrow_mut() = Some((known_dimensions, available_space, size));
+        size
+    })
+}
 
 /// Batches mutations against one [`Runtime`] so a compound change (e.g. a
 /// drag updating a slider's value, a label, and a thumb position) becomes
@@ -255,6 +282,7 @@ impl<'a> RuntimeTransaction<'a> {
                 if skip {
                     return;
                 }
+                let measure = measure.map(memoize_measure);
                 let _ = self.runtime.taffy.set_node_context(taffy_node, measure);
                 #[cfg(feature = "perf-metrics")]
                 crate::metrics::record(|m| m.taffy_context_writes += 1);
@@ -274,5 +302,67 @@ impl<'a> RuntimeTransaction<'a> {
 
     pub fn touched(&self) -> &[RuntimeNodeId] {
         &self.touched
+    }
+}
+
+#[cfg(test)]
+mod memoize_measure_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn dims(width: Option<f32>, height: Option<f32>) -> Size<Option<f32>> {
+        Size { width, height }
+    }
+
+    fn space(width: f32, height: f32) -> Size<AvailableSpace> {
+        Size {
+            width: AvailableSpace::Definite(width),
+            height: AvailableSpace::Definite(height),
+        }
+    }
+
+    #[test]
+    fn an_identical_repeat_query_hits_the_cache() {
+        let calls = Rc::new(Cell::new(0));
+        let counted = calls.clone();
+        let measure = memoize_measure(Box::new(move |_, _| {
+            counted.set(counted.get() + 1);
+            Size {
+                width: 10.0,
+                height: 20.0,
+            }
+        }));
+
+        let first = measure(dims(None, None), space(100.0, 100.0));
+        let second = measure(dims(None, None), space(100.0, 100.0));
+
+        assert_eq!(first, second);
+        assert_eq!(
+            calls.get(),
+            1,
+            "the second identical query must not recompute"
+        );
+    }
+
+    #[test]
+    fn a_query_with_different_inputs_recomputes() {
+        let calls = Rc::new(Cell::new(0));
+        let counted = calls.clone();
+        let measure = memoize_measure(Box::new(move |_, available_space| {
+            counted.set(counted.get() + 1);
+            Size {
+                width: match available_space.width {
+                    AvailableSpace::Definite(w) => w,
+                    _ => 0.0,
+                },
+                height: 20.0,
+            }
+        }));
+
+        let first = measure(dims(None, None), space(100.0, 100.0));
+        let second = measure(dims(None, None), space(200.0, 100.0));
+
+        assert_ne!(first, second);
+        assert_eq!(calls.get(), 2);
     }
 }

@@ -123,6 +123,10 @@ impl Widget for RawButton {
         Some(hasher.finish())
     }
 
+    fn paints_transparently(&self) -> bool {
+        true
+    }
+
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
     }

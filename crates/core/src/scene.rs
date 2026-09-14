@@ -504,7 +504,7 @@ fn paint_instance(
                     instance.layer_id,
                     layer_rect,
                     !animated_only,
-                    !instance.widget.paints_transparently(),
+                    resolved.paint.background.is_some() || !instance.widget.paints_transparently(),
                 );
             }
             if let Some(background) = resolved.paint.background {

@@ -188,6 +188,10 @@ impl Widget for Card {
         self.inner.paint_fingerprint()
     }
 
+    fn paints_transparently(&self) -> bool {
+        self.inner.paints_transparently()
+    }
+
     fn children(&mut self) -> Vec<BoxedWidget> {
         Widget::children(&mut self.inner)
     }

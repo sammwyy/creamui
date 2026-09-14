@@ -354,18 +354,21 @@ pub trait Widget {
         None
     }
 
-    /// Whether this widget's own paint always leaves every pixel it doesn't
-    /// itself cover truly untouched — never a background fill, never a
-    /// shape that can shrink between paints (text and icons qualify; a
-    /// custom widget painting partial/animated shapes via raw fill/stroke
-    /// calls does not). Only meaningful together with
+    /// Whether this widget's own paint leaves every pixel it doesn't itself
+    /// cover truly untouched, on any frame where it resolves no background
+    /// of its own — no partial/animated shape that can shrink between
+    /// paints (text, icons, and images qualify; a custom widget painting
+    /// such a shape via raw fill/stroke calls in its own
+    /// [`Widget::paint`] does not). Only meaningful together with
     /// [`Widget::paint_fingerprint`]: a cached layer for a widget like this
     /// can safely start transparent and blend back onto whatever is
     /// currently there, rather than snapshotting a backdrop — a snapshot
     /// can go stale relative to a sibling's hover/press-driven repaint,
     /// which nothing in this widget's own fingerprint or interaction state
-    /// would ever notice, and get composited back over the fresh paint.
-    /// Default `false`.
+    /// would ever notice, and get composited back over the fresh paint. A
+    /// frame where this widget *does* resolve a background always uses the
+    /// snapshot path regardless, so this only needs to be accurate about
+    /// the gaps. Default `false`.
     fn paints_transparently(&self) -> bool {
         false
     }

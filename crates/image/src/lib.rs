@@ -195,6 +195,13 @@ impl Widget for Image {
         Some(hasher.finish())
     }
 
+    // `ImageFit::Contain` letterboxes rather than covering `rect`, and draws
+    // no background of its own, so it can leave real gaps the same way text
+    // does.
+    fn paints_transparently(&self) -> bool {
+        true
+    }
+
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let corner_radius = self.style.paint.corner_radius.unwrap_or(0.0);
         if matches!(self.fit, ImageFit::Cover) || corner_radius > 0.0 {

@@ -48,6 +48,20 @@ impl Rect {
             None
         }
     }
+
+    /// The smallest rect containing both `self` and `other`.
+    pub fn union(&self, other: Rect) -> Rect {
+        let x1 = self.x.min(other.x);
+        let y1 = self.y.min(other.y);
+        let x2 = (self.x + self.width).max(other.x + other.width);
+        let y2 = (self.y + self.height).max(other.y + other.height);
+        Rect {
+            x: x1,
+            y: y1,
+            width: x2 - x1,
+            height: y2 - y1,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +142,41 @@ mod tests {
             height: 10.0,
         };
         assert_eq!(a.intersect(b), None);
+    }
+
+    #[test]
+    fn union_bounds_two_disjoint_rects() {
+        let a = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let b = Rect {
+            x: 50.0,
+            y: 20.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(
+            a.union(b),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 60.0,
+                height: 30.0,
+            }
+        );
+    }
+
+    #[test]
+    fn union_of_a_rect_with_itself_is_unchanged() {
+        let a = Rect {
+            x: 5.0,
+            y: 5.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        assert_eq!(a.union(a), a);
     }
 }

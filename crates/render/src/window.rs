@@ -1403,7 +1403,7 @@ impl WindowState {
                 } else {
                     full_repaint = false;
                 }
-                let damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
+                let raw_damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
                 if !self
                     .window
                     .borrow()
@@ -1412,6 +1412,15 @@ impl WindowState {
                 {
                     return;
                 }
+                let viewport = self.viewport.peek();
+                let damage = creamui_core::merge_damage_default(&raw_damage, viewport);
+                let full_viewport_rect = Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: viewport.width,
+                    height: viewport.height,
+                };
+                let damage_covers_everything = damage.len() == 1 && damage[0] == full_viewport_rect;
                 #[cfg(feature = "perf-metrics")]
                 creamui_core::metrics::record(|m| {
                     m.damaged_rect_count += damage.len() as u64;
@@ -1423,7 +1432,7 @@ impl WindowState {
                 let frame = self.frame.borrow();
                 let pixmap = &frame.painter.pixmap;
                 if let Some(presenter) = self.presenter.as_mut() {
-                    if full_repaint || damage.is_empty() {
+                    if full_repaint || damage.is_empty() || damage_covers_everything {
                         presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
                     } else {
                         presenter.present_partial(

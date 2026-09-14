@@ -29,6 +29,9 @@ All notable changes to CreamUI will be documented in this file.
   row, built on `creamui-core`'s existing `HeightIndex`.
 - Fixed a quadratic cost in `RuntimeTransaction` for a long-lived
   transaction touching many distinct nodes.
+- Merge overlapping animation-tick damage rects (and collapse to a full
+  repaint above a size/count threshold) before partial-presenting a
+  frame, instead of uploading each one separately.
 
 ## 0.1.1
 

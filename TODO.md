@@ -68,9 +68,23 @@
   widgets) gets an empty fragment, since `mount_legacy_widget` drops the
   widget after translating it. `RecordingPainter` exists but nothing
   currently calls it post-layout with a still-alive widget.
-- No damage-rect merging or full-window collapse above an area/count
-  threshold (REFACTOR.md 13.5) — `rebuild_paint`'s damage is a raw list
-  of old+new bounds per regenerated fragment.
+- REFACTOR.md 13.5: added `creamui_core::merge_damage`/`merge_damage_default`
+  (`crates/core/src/damage.rs`) — merges overlapping rects into their
+  union and collapses to one full-viewport rect above a rect-count or
+  damaged-area threshold. Wired into the one live consumer of raw damage
+  rects, `crates/render/src/window.rs`'s animation-tick partial-present
+  path (`animated_damage` → `present_partial`); a viewport-covering
+  collapse now routes through the existing full `present()` call instead
+  of a single full-size `present_partial` region. Not wired into
+  `Runtime::compute_layout`/`rebuild_paint`'s own raw per-node damage
+  output (`crates/core/src/runtime/mod.rs`), since neither is reachable
+  from `window.rs` yet (see the runtime-tree entry above) and their
+  existing tests assert exact `damage.len()` counts against the raw,
+  unmerged list. No headless test exercises the `window.rs` wiring
+  itself — `WindowEventHarness` constructs `presenter: None`, and
+  `animated_damage` is populated only via `repaint_animated`'s
+  cached-layer animation-tick path, which no existing test drives;
+  `merge_damage` itself has full unit coverage in isolation.
 - No retained clip/opacity grouping (REFACTOR.md 13.4) — `RuntimeNode`
   has no clip or opacity flag, so `PushClip`/`PopClip` aren't emitted for
   clipping containers and there is no opacity property node at all

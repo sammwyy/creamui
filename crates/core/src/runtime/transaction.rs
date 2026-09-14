@@ -9,28 +9,41 @@ use super::Runtime;
 pub struct RuntimeTransaction<'a> {
     runtime: &'a mut Runtime,
     touched: Vec<RuntimeNodeId>,
+    stamp: u64,
 }
 
 impl<'a> RuntimeTransaction<'a> {
-    pub(super) fn new(runtime: &'a mut Runtime) -> Self {
+    pub(super) fn new(runtime: &'a mut Runtime, stamp: u64) -> Self {
         RuntimeTransaction {
             runtime,
             touched: Vec::new(),
+            stamp,
         }
     }
 
     fn touch(&mut self, id: RuntimeNodeId, flags: DirtyFlags) {
-        if let Some(node) = self.runtime.nodes.get_mut(id) {
-            let newly_paint_dirty =
-                flags.contains(DirtyFlags::PAINT) && !node.dirty.contains(DirtyFlags::PAINT);
-            let newly_composite_dirty = flags.contains(DirtyFlags::COMPOSITE)
-                && !node.dirty.contains(DirtyFlags::COMPOSITE);
-            node.dirty |= flags;
-            if newly_paint_dirty {
-                self.runtime.paint_queue.push(id);
+        match self.runtime.nodes.get_mut(id) {
+            Some(node) => {
+                let newly_paint_dirty =
+                    flags.contains(DirtyFlags::PAINT) && !node.dirty.contains(DirtyFlags::PAINT);
+                let newly_composite_dirty = flags.contains(DirtyFlags::COMPOSITE)
+                    && !node.dirty.contains(DirtyFlags::COMPOSITE);
+                node.dirty |= flags;
+                if newly_paint_dirty {
+                    self.runtime.paint_queue.push(id);
+                }
+                if newly_composite_dirty {
+                    self.runtime.composite_queue.push(id);
+                }
+                if node.touched_stamp != self.stamp {
+                    node.touched_stamp = self.stamp;
+                    self.touched.push(id);
+                }
             }
-            if newly_composite_dirty {
-                self.runtime.composite_queue.push(id);
+            None => {
+                if !self.touched.contains(&id) {
+                    self.touched.push(id);
+                }
             }
         }
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {
@@ -41,9 +54,6 @@ impl<'a> RuntimeTransaction<'a> {
         }
         if flags.contains(DirtyFlags::STRUCTURE) {
             self.runtime.paint_order_dirty = true;
-        }
-        if !self.touched.contains(&id) {
-            self.touched.push(id);
         }
     }
 
@@ -78,6 +88,11 @@ impl<'a> RuntimeTransaction<'a> {
             .runtime
             .nodes
             .insert_with(|id| RuntimeNode::new(id, kind, taffy_node));
+        self.runtime
+            .nodes
+            .get_mut(id)
+            .expect("just inserted")
+            .touched_stamp = self.stamp;
         self.runtime.layout_dirty = true;
         self.runtime.paint_order_dirty = true;
         self.touched.push(id);

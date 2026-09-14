@@ -27,6 +27,8 @@ All notable changes to CreamUI will be documented in this file.
 - Added `RawVirtualList`/`VirtualListState`: a scrollable list that mounts
   only the rows visible in its viewport (plus overscan) instead of every
   row, built on `creamui-core`'s existing `HeightIndex`.
+- Fixed a quadratic cost in `RuntimeTransaction` for a long-lived
+  transaction touching many distinct nodes.
 
 ## 0.1.1
 

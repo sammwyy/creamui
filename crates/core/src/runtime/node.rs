@@ -154,6 +154,13 @@ pub struct RuntimeNode {
     pub layout: LayoutState,
     pub events: EventState,
     pub paint: super::paint::PaintState,
+    /// The [`super::Runtime`]-wide transaction stamp as of the last time
+    /// this node was added to that transaction's touched list — lets
+    /// [`super::transaction::RuntimeTransaction::touch`] dedup in `O(1)`
+    /// instead of scanning the touched list. `0` never matches a real
+    /// stamp (stamps start at `1`), so a freshly created node is correctly
+    /// "not yet touched".
+    pub(super) touched_stamp: u64,
 }
 
 impl RuntimeNode {
@@ -178,6 +185,7 @@ impl RuntimeNode {
             },
             events: EventState::default(),
             paint: super::paint::PaintState::default(),
+            touched_stamp: 0,
         }
     }
 }

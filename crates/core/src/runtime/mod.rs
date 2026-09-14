@@ -64,6 +64,9 @@ pub struct Runtime {
     paint_order_dirty: bool,
     paint_order: Vec<RuntimeNodeId>,
     composite_queue: Vec<RuntimeNodeId>,
+    /// Bumped once per [`Runtime::transaction`] call; see
+    /// [`RuntimeNode::touched_stamp`](super::node::RuntimeNode::touched_stamp).
+    transaction_stamp: u64,
 }
 
 impl Runtime {
@@ -83,11 +86,13 @@ impl Runtime {
             paint_order_dirty: false,
             paint_order: Vec::new(),
             composite_queue: Vec::new(),
+            transaction_stamp: 0,
         }
     }
 
     pub fn transaction(&mut self) -> RuntimeTransaction<'_> {
-        RuntimeTransaction::new(self)
+        self.transaction_stamp += 1;
+        RuntimeTransaction::new(self, self.transaction_stamp)
     }
 
     pub fn get(&self, id: RuntimeNodeId) -> Option<&RuntimeNode> {
@@ -408,6 +413,40 @@ mod tests {
         // `touched` from its own `create_node` — deduplicated, not counted
         // twice.
         assert_eq!(tx.touched().len(), 2);
+    }
+
+    #[test]
+    fn touching_the_same_existing_node_many_times_in_one_transaction_is_reported_once() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        drop(tx);
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 1.0, y: 0.0 },
+        });
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 2.0, y: 0.0 },
+        });
+        assert_eq!(tx.touched(), &[node]);
+    }
+
+    #[test]
+    fn a_node_touched_in_an_earlier_transaction_is_still_reported_in_a_later_one() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        drop(tx);
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetTransform {
+            node,
+            transform: Transform2D { x: 1.0, y: 0.0 },
+        });
+        assert_eq!(tx.touched(), &[node]);
     }
 
     #[test]

@@ -208,16 +208,16 @@
   `Runtime` in memory. Turning that into pixels on screen still means
   going through ABI-v1's `creamui_run`, which builds a `BoxedWidget`
   tree, not the persistent runtime tree ABI-v2 mutates.
-- `RuntimeTransaction::touch` dedups its `touched` list with
+- Fixed: `RuntimeTransaction::touch` used to dedup its `touched` list with
   `Vec::contains` — `O(n)` per call against however many distinct nodes
-  that transaction has already touched. Fine for the short-lived,
-  single-mutation transactions every current caller (including ABI-v2)
-  actually uses, but a caller that keeps one `RuntimeTransaction` alive
-  across many mutations touching many distinct nodes would see this
-  scale quadratically with mutation count. Found while writing
-  `crates/bench/benches/ffi.rs`: an early draft used one long-lived
-  transaction across 10,000 inserts and the resulting number was
-  dominated by this, not by anything FFI-related.
+  that transaction had already touched, found to dominate a long-lived
+  transaction across many mutations while writing `crates/bench/benches/ffi.rs`.
+  It now stamps each `RuntimeNode` with the owning transaction's
+  monotonically increasing `Runtime::transaction_stamp` on first touch
+  (`RuntimeNode::touched_stamp`), so a repeat touch is an `O(1)` field
+  compare instead of a scan. The `Vec::contains` fallback stays only for
+  the rare case where `touch` is called with an id that no longer
+  resolves to a live node (nothing to stamp).
 - REFACTOR.md Phase 14 (20.3 only): `creamui-devtools`'s F3 overlay now
   shows an "engine" panel of `creamui_core::metrics::FrameMetrics`
   counters (reconcile visits, taffy writes, layout/measure calls, paint

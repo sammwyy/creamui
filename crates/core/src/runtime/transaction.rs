@@ -26,6 +26,9 @@ impl<'a> RuntimeTransaction<'a> {
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {
             self.runtime.layout_dirty = true;
         }
+        if flags.intersects(DirtyFlags::HIT_TEST | DirtyFlags::STRUCTURE) {
+            self.runtime.hit_test_dirty = true;
+        }
         if !self.touched.contains(&id) {
             self.touched.push(id);
         }
@@ -230,6 +233,12 @@ impl<'a> RuntimeTransaction<'a> {
                     n.layout.measure_fingerprint = fingerprint;
                 }
                 self.touch(node, DirtyFlags::MEASURE | DirtyFlags::LAYOUT);
+            }
+            Mutation::SetEventHandlers { node, handlers } => {
+                if let Some(n) = self.runtime.nodes.get_mut(node) {
+                    n.events = handlers;
+                    self.touch(node, DirtyFlags::HIT_TEST);
+                }
             }
         }
     }

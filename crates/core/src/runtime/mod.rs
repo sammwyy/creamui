@@ -8,6 +8,7 @@ mod arena;
 mod binding;
 mod branch;
 mod dirty;
+mod events;
 mod keyed;
 mod mount;
 mod mount_cx;
@@ -19,11 +20,14 @@ mod view;
 pub use binding::{create_binding, SharedRuntime};
 pub use branch::create_branch;
 pub use dirty::DirtyFlags;
+pub use events::{HitEntry, PointerState};
 pub use keyed::create_keyed_list;
 pub use mount::mount_legacy_widget;
 pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};
-pub use node::{Children, CustomNode, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
+pub use node::{
+    Children, CustomNode, EventState, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode,
+};
 pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
 
@@ -40,6 +44,12 @@ pub struct Runtime {
     /// Bumped once per [`Runtime::compute_layout`] call.
     layout_epoch: u64,
     last_viewport: Option<crate::Size>,
+    /// Set when a mutation marks any node's HIT_TEST/STRUCTURE dirty; lets
+    /// [`Runtime::rebuild_hit_test`] skip the tree walk otherwise.
+    hit_test_dirty: bool,
+    hit_entries: Vec<HitEntry>,
+    focus_order: Vec<RuntimeNodeId>,
+    pointer: PointerState,
 }
 
 impl Runtime {
@@ -51,6 +61,10 @@ impl Runtime {
             layout_dirty: false,
             layout_epoch: 0,
             last_viewport: None,
+            hit_test_dirty: false,
+            hit_entries: Vec::new(),
+            focus_order: Vec::new(),
+            pointer: PointerState::default(),
         }
     }
 
@@ -168,6 +182,7 @@ impl Runtime {
                 node.layout.rect = rect;
                 node.layout.last_layout_epoch = self.layout_epoch;
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
+                self.hit_test_dirty = true;
             }
 
             stack.extend(children.into_iter().map(|child| (child, child_origin)));

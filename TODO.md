@@ -49,3 +49,17 @@
   context write; there is no measurement result cache (REFACTOR.md 11.4) —
   a `taffy` `MeasureFunction` still recomputes from scratch whenever
   `compute_layout` actually calls it.
+- `Runtime::rebuild_hit_test` walks every node to find interactive ones —
+  O(whole tree), not O(interactive nodes). ~787µs for a 50,000-node tree
+  with one interactive leaf (see `docs/performance/baseline.md`'s Phase 6
+  section).
+- Hit-test entries are collected in plain depth-first child order with no
+  z-order/stacking-context handling (REFACTOR.md 12.2) — an absolutely
+  positioned node isn't given priority the way the legacy `Scene`'s
+  Flow/Absolute two-pass paint does.
+- No spatial index (REFACTOR.md 12.4) for hit-testing; `hit_test` is a
+  linear scan over `hit_entries`.
+- `crates/core/src/runtime`'s event/hit-test state (`EventState`,
+  `hovered`/`pressed`/`focused`/`pointer_capture`) is not wired into
+  `window.rs`'s pointer/keyboard event handling, same as the rest of the
+  runtime tree.

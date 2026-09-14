@@ -383,3 +383,45 @@ count" is therefore only partially met — true for `taffy` writes and
 
 Paint-only changes never reaching `taffy` at all is fully met and
 unit-tested (`paint_only_changes_never_mark_layout_dirty`).
+
+## 2026-09-14 — Phase 6
+
+`Runtime` gains node-ID-based interaction state: `EventState` (retained
+per node, replacing on-click/hover/drag/scroll/focus/cursor handlers set
+wholesale via `Mutation::SetEventHandlers` rather than extracted from a
+widget during paint), a retained `hit_entries`/`focus_order` list rebuilt
+by `rebuild_hit_test` only when `HIT_TEST`/`STRUCTURE` dirty, and
+node-ID `hovered`/`pressed`/`focused`/`pointer_capture` state.
+`set_hovered`/`set_pressed`/`set_focused` return `false` (marking nothing)
+when the target is unchanged. `scroll_target` walks the parent chain from
+a hit point to the nearest node with `on_scroll`. `next_focus` cycles the
+retained focus order by node ID, not index.
+
+### Measured
+
+`runtime/rebuild_hit_test` (`crates/bench/benches/runtime.rs`), one
+interactive leaf in an otherwise plain `wide_tree`:
+
+| Nodes | Time |
+|---|---|
+| 1,000 | 4.4 µs |
+| 10,000 | 53.1 µs |
+| 50,000 | 787 µs |
+
+Scales with total tree size, not interactive-node count — the same
+whole-tree-walk limitation as Phase 5's `sync_layout_rects`, and for the
+same reason: finding which nodes are interactive requires visiting every
+node once. "Mouse movement with no hover transition performs zero
+painting" (12.9) is unaffected by this — `set_hovered` on an unchanged
+target is a plain field comparison, independent of tree size, and doesn't
+call `rebuild_hit_test` at all.
+
+### Not done
+
+Z-order/stacking-context handling (12.2): hit entries are collected in
+plain depth-first child order, with no equivalent of the legacy
+`Scene`'s Flow/Absolute two-pass distinction for absolutely positioned
+nodes. A spatial index (12.4, tile buckets or similar) is also not
+attempted — REFACTOR.md 12.4 itself says to benchmark before adding one,
+and nothing here has shown `rebuild_hit_test`'s linear scan to be the
+actual bottleneck yet.

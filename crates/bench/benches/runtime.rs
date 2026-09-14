@@ -162,6 +162,44 @@ fn bench_compute_layout_after_single_leaf_style_change(c: &mut Criterion) {
     group.finish();
 }
 
+/// `rebuild_hit_test` cost as a function of total tree size, with a single
+/// interactive leaf — walks every node to find interactive ones, so this
+/// is expected to scale with tree size rather than interactive-node count.
+fn bench_rebuild_hit_test(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime/rebuild_hit_test");
+    for &count in &[1_000usize, 10_000, 50_000] {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root =
+            creamui_core::runtime::mount_legacy_widget(&mut tx, scenes::wide_tree(count), None);
+        let leaf = *tx
+            .touched()
+            .last()
+            .expect("mount_legacy_widget touches every node it creates");
+        drop(tx);
+        runtime.set_root(Some(root));
+
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                // `SetEventHandlers` always marks HIT_TEST dirty (handlers
+                // aren't diffable), so this re-dirties the list each
+                // iteration instead of measuring an already-fresh no-op.
+                let mut tx = runtime.transaction();
+                tx.apply(Mutation::SetEventHandlers {
+                    node: leaf,
+                    handlers: creamui_core::runtime::EventState {
+                        on_click: Some(std::rc::Rc::new(|| {})),
+                        ..Default::default()
+                    },
+                });
+                drop(tx);
+                runtime.rebuild_hit_test();
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_create_node(c: &mut Criterion) {
     c.bench_function("runtime/create_10000_nodes", |b| {
         b.iter(|| {
@@ -182,6 +220,7 @@ criterion_group!(
     bench_direct_leaf_mutation,
     bench_signal_driven_leaf_update,
     bench_compute_layout_after_single_leaf_style_change,
+    bench_rebuild_hit_test,
     bench_create_node
 );
 criterion_main!(benches);

@@ -20,6 +20,10 @@ impl SharedRuntime {
         f(&self.0.borrow())
     }
 
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
+        f(&mut self.0.borrow_mut())
+    }
+
     pub fn transaction<R>(&self, f: impl FnOnce(&mut RuntimeTransaction) -> R) -> R {
         let mut runtime = self.0.borrow_mut();
         let mut tx = runtime.transaction();

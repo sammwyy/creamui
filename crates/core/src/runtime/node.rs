@@ -108,6 +108,36 @@ pub struct LayoutState {
     pub last_layout_epoch: u64,
 }
 
+/// Retained event handlers and interaction metadata for one node, set
+/// wholesale via `Mutation::SetEventHandlers` rather than extracted from a
+/// widget during paint.
+#[derive(Default, Clone)]
+pub struct EventState {
+    pub on_click: Option<Rc<dyn Fn()>>,
+    pub on_click_at: Option<Rc<dyn Fn(crate::Point)>>,
+    pub on_hover: Option<Rc<dyn Fn(bool)>>,
+    pub on_key: Option<Rc<dyn Fn(crate::KeyInput)>>,
+    pub on_drag: Option<Rc<dyn Fn(crate::Point, crate::Rect)>>,
+    pub on_drag_start: Option<Rc<dyn Fn(crate::Point, crate::Rect)>>,
+    pub on_drag_end: Option<Rc<dyn Fn()>>,
+    pub on_scroll: Option<Rc<dyn Fn(f32)>>,
+    pub cursor: Option<crate::CursorIcon>,
+    pub focusable: bool,
+}
+
+impl EventState {
+    pub fn is_interactive(&self) -> bool {
+        self.on_click.is_some()
+            || self.on_click_at.is_some()
+            || self.on_hover.is_some()
+            || self.on_drag.is_some()
+            || self.on_drag_start.is_some()
+            || self.on_scroll.is_some()
+            || self.cursor.is_some()
+            || self.focusable
+    }
+}
+
 pub struct RuntimeNode {
     pub id: RuntimeNodeId,
     pub parent: Option<RuntimeNodeId>,
@@ -119,6 +149,7 @@ pub struct RuntimeNode {
     pub transform: super::mutation::Transform2D,
     pub dirty: DirtyFlags,
     pub layout: LayoutState,
+    pub events: EventState,
 }
 
 impl RuntimeNode {
@@ -140,6 +171,7 @@ impl RuntimeNode {
                 previous_rect: crate::Rect::default(),
                 last_layout_epoch: 0,
             },
+            events: EventState::default(),
         }
     }
 }

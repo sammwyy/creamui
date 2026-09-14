@@ -4,7 +4,8 @@ use std::rc::Rc;
 use super::binding::{create_binding, SharedRuntime};
 use super::branch::create_branch;
 use super::keyed::create_keyed_list;
-use super::node::{ImageNode, NodeKind, RuntimeNodeId, TextNode};
+use super::mutation::Mutation;
+use super::node::{EventState, ImageNode, NodeKind, RuntimeNodeId, TextNode};
 use super::transaction::RuntimeTransaction;
 
 /// Compiles a JSX-like mount call sequence against a [`super::Runtime`]:
@@ -85,6 +86,12 @@ impl MountCx {
         self.create_and_append(NodeKind::Image(ImageNode {
             source: source.into(),
         }))
+    }
+
+    pub fn set_events(&self, node: RuntimeNodeId, handlers: EventState) {
+        self.runtime.transaction(|tx| {
+            tx.apply(Mutation::SetEventHandlers { node, handlers });
+        });
     }
 
     /// Ties a reactive read to a mutation of the tree, owned by this cx's
@@ -185,6 +192,48 @@ mod tests {
             runtime.with(|r| r.get(text).unwrap().kind.clone()),
             NodeKind::Text(t) if &*t.text == "hello"
         ));
+    }
+
+    #[test]
+    fn set_events_registers_handlers_the_hit_test_picks_up() {
+        let (runtime, root, cx) = root_cx();
+        let node = cx.container();
+        runtime.transaction(|tx| {
+            tx.apply(crate::runtime::Mutation::SetLayoutStyle {
+                node,
+                style: fixed_size_style(10.0, 10.0),
+            });
+        });
+        cx.set_events(
+            node,
+            EventState {
+                on_click: Some(std::rc::Rc::new(|| {})),
+                ..Default::default()
+            },
+        );
+        runtime.with_mut(|r| {
+            r.set_root(Some(root));
+            r.compute_layout(crate::Size {
+                width: 100.0,
+                height: 100.0,
+            });
+            r.rebuild_hit_test();
+        });
+
+        assert_eq!(
+            runtime.with(|r| r.hit_test(crate::Point { x: 1.0, y: 1.0 })),
+            Some(node)
+        );
+    }
+
+    fn fixed_size_style(width: f32, height: f32) -> taffy::style::Style {
+        taffy::style::Style {
+            size: taffy::geometry::Size {
+                width: taffy::style::Dimension::Length(width),
+                height: taffy::style::Dimension::Length(height),
+            },
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::node::RuntimeNodeId;
+use super::node::{EventState, RuntimeNodeId};
 use std::rc::Rc;
 
 /// 2D translation only; no rotation/scale.
@@ -41,5 +41,10 @@ pub enum Mutation {
         node: RuntimeNodeId,
         measure: Option<crate::MeasureFn>,
         fingerprint: Option<u64>,
+    },
+    /// Replaces `node`'s event handlers wholesale.
+    SetEventHandlers {
+        node: RuntimeNodeId,
+        handlers: EventState,
     },
 }

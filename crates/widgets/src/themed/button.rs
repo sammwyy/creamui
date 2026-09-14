@@ -78,7 +78,7 @@ impl Button {
     ) -> Self {
         let theme = use_theme();
         let (background, border, foreground) = match variant {
-            ButtonVariant::Primary => (theme.accent, theme.accent_hover, theme.selection_text),
+            ButtonVariant::Primary => (theme.accent, theme.accent, theme.selection_text),
             ButtonVariant::Secondary => (
                 theme.surface_elevated,
                 theme.border_strong,

@@ -10,7 +10,9 @@ publish = false
 bench = false
 
 [dependencies]
+creamui-abi = { workspace = true }
 creamui-core = { workspace = true, features = ["perf-metrics"] }
+creamui_ffi = { package = "creamui-ffi", version = "0.1.1", path = "../ffi" }
 creamui-reactive = { workspace = true }
 creamui-widgets = { workspace = true }
 creamui-theme = { workspace = true }
@@ -57,4 +59,8 @@ harness = false
 
 [[bench]]
 name = "virtual_list"
+harness = false
+
+[[bench]]
+name = "ffi"
 harness = false

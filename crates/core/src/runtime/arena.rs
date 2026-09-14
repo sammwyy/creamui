@@ -18,6 +18,18 @@ impl<T> Id<T> {
             _marker: PhantomData,
         }
     }
+
+    pub fn to_bits(self) -> u64 {
+        ((self.index as u64) << 32) | self.generation as u64
+    }
+
+    pub fn from_bits(bits: u64) -> Self {
+        Id {
+            index: (bits >> 32) as u32,
+            generation: bits as u32,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<T> Clone for Id<T> {
@@ -223,5 +235,17 @@ mod tests {
         let arena: Arena<u32> = Arena::new();
         let bogus = Id::from_raw(7, 0);
         assert_eq!(arena.get(bogus), None);
+    }
+
+    #[test]
+    fn to_bits_from_bits_roundtrips() {
+        let id: Id<u32> = Id::from_raw(0x1234_5678, 0x9abc_def0);
+        assert_eq!(Id::from_bits(id.to_bits()), id);
+    }
+
+    #[test]
+    fn to_bits_packs_index_and_generation_into_separate_halves() {
+        let id: Id<u32> = Id::from_raw(1, 2);
+        assert_eq!(id.to_bits(), (1u64 << 32) | 2);
     }
 }

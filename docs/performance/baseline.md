@@ -734,3 +734,44 @@ machines; five consecutive local runs all passed.
 - One thread per request, uncapped. See `TODO.md`.
 - Glyph rasterization stays synchronous, per REFACTOR.md 18.2's own
   guidance not to parallelize it without profiling evidence first.
+
+## 2026-09-14 — Phase 13
+
+ABI-v2 (`crates/ffi/src/runtime.rs`) adds handle+mutation `cui_*`
+functions over `creamui_core::runtime::Runtime` — `create_node`,
+`insert_child`, `remove_subtree`, `set_text`, `set_layout_style`,
+`set_background`, `set_root` — alongside ABI-v1's existing `CWidget`
+(build a whole subtree, mount it wholesale). A `CNode` handle is an
+index+generation pair packed into one `u64` (new `Id::to_bits`/
+`from_bits` on the arena type behind `RuntimeNodeId`); a stale or
+out-of-range handle is a safe no-op through the same generation check
+the native arena already relies on, not a new safety mechanism.
+
+### Measured
+
+`ffi/native_set_text` vs `ffi/abi_v2_set_text`
+(`crates/bench/benches/ffi.rs`), repeatedly setting one already-mounted
+node's text natively (`RuntimeTransaction::apply`) vs through
+`cui_set_text`:
+
+| | Time |
+|---|---|
+| Native | ~74 ns |
+| ABI-v2 | ~107 ns |
+
+Both numbers moved together by a similar percentage between runs on
+this machine (background load, not a regression) — the ratio (roughly
+1.4-1.8x native) is the meaningful number: `cui_set_text`'s extra cost
+is `CStr::from_ptr` + a lossy UTF-8 copy (`cstr_to_string`) plus a
+pointer-null check, not tree-sized work. The two benchmarks mutate one
+already-mounted node repeatedly rather than building a tree — an
+earlier draft built a 10,000-node tree per iteration instead, and its
+number was dominated by `insert_child`'s own per-call taffy
+child-list rebuild (see `TODO.md`), not anything FFI-related.
+
+### Not done
+
+- ABI-v2 covers a handful of mutations, no layout/paint triggering, no
+  event handlers, no way to read a node's computed rect back.
+- `creamui-dynamic` doesn't consume ABI-v2 yet — still ABI-v1 only.
+- No window/present path reachable from ABI-v2.

@@ -15,6 +15,8 @@
 //! [`creamui_run`] (which takes ownership of the root), or else freed with
 //! [`creamui_widget_free`].
 
+pub mod runtime;
+
 use creamui_abi::{DIMENSION_LENGTH, DIMENSION_PERCENT};
 use creamui_core::layout::{
     AlignItems, Dimension, FlexDirection, JustifyContent, LengthPercentage, LengthPercentageAuto,
@@ -370,7 +372,7 @@ pub extern "C" fn creamui_style_default() -> CStyle {
     CStyle::default_style()
 }
 
-fn style_from_c(s: CStyle) -> Style {
+pub(crate) fn style_from_c(s: CStyle) -> Style {
     Style {
         display: creamui_core::layout::Display::Flex,
         flex_direction: decode_flex_direction(s.flex_direction),
@@ -442,7 +444,7 @@ impl WidgetKind {
 /// Opaque handle to a not-yet-attached widget subtree.
 pub struct CWidget(WidgetKind);
 
-unsafe fn cstr_to_string(s: *const c_char) -> String {
+pub(crate) unsafe fn cstr_to_string(s: *const c_char) -> String {
     if s.is_null() {
         return String::new();
     }

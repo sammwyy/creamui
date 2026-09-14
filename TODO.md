@@ -177,3 +177,31 @@
 - Widgets still construct `ImageData` synchronously
   (`ImageData::from_bytes`/`from_path`, used directly by `Image::new`);
   `BackgroundImageLoader` is a separate, opt-in path nothing calls yet.
+- ABI-v2 (`crates/ffi/src/runtime.rs`, `cui_*` functions over
+  `creamui_core::runtime::Runtime`) covers only `create_node`,
+  `insert_child`, `remove_subtree`, `set_text`, `set_layout_style`,
+  `set_background`, and `set_root` — no `set_typography_style`, no
+  `set_transform`, no way to read back a node's computed rect or trigger
+  `compute_layout`/`rebuild_paint`, and no way to attach event handlers
+  (`Mutation::SetEventHandlers` takes an `EventState` of Rust closures,
+  which has no C-safe shape yet — would need `extern "C" fn` + userdata
+  callbacks the way ABI-v1's `creamui_button_new` already does).
+- `creamui-dynamic` (the ABI consumer) still only speaks ABI-v1 — it has
+  no `cui_*` bindings and doesn't construct a `CRuntime`. REFACTOR.md
+  19.2's "keep ABI-v1 working until dynamic runtime migrates" is
+  satisfied by construction (ABI-v2 is new and additive), but the
+  migration itself hasn't started.
+- No window/present loop reachable from ABI-v2 — it only mutates a bare
+  `Runtime` in memory. Turning that into pixels on screen still means
+  going through ABI-v1's `creamui_run`, which builds a `BoxedWidget`
+  tree, not the persistent runtime tree ABI-v2 mutates.
+- `RuntimeTransaction::touch` dedups its `touched` list with
+  `Vec::contains` — `O(n)` per call against however many distinct nodes
+  that transaction has already touched. Fine for the short-lived,
+  single-mutation transactions every current caller (including ABI-v2)
+  actually uses, but a caller that keeps one `RuntimeTransaction` alive
+  across many mutations touching many distinct nodes would see this
+  scale quadratically with mutation count. Found while writing
+  `crates/bench/benches/ffi.rs`: an early draft used one long-lived
+  transaction across 10,000 inserts and the resulting number was
+  dominated by this, not by anything FFI-related.

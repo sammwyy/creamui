@@ -224,6 +224,18 @@ impl Default for CStyle {
 pub const CUI_RENDER_BACKEND_GPU: c_int = 0;
 pub const CUI_RENDER_BACKEND_CPU: c_int = 1;
 
+/// Opaque node handle: an index+generation pair packed into one `u64`
+/// (index in the high 32 bits, generation in the low 32) rather than a
+/// pointer, so a stale handle is safely detectable instead of aliasing
+/// whatever now occupies that slot.
+pub type CNode = u64;
+
+/// Sentinel [`CNode`] meaning "no node" (e.g. no `before` sibling, no root).
+pub const CUI_NODE_NONE: CNode = u64::MAX;
+
+pub const CUI_NODE_KIND_CONTAINER: c_int = 0;
+pub const CUI_NODE_KIND_TEXT: c_int = 1;
+
 /// Window creation options. `title` must be a valid NUL-terminated UTF-8
 /// string for the duration of the call it's passed to.
 #[repr(C)]

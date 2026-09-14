@@ -69,9 +69,11 @@ struct Instance {
     /// *wider* clip must not composite a buffer that was never painted that
     /// far in the first place.
     cached_clip: Option<Rect>,
-    /// Window-space bounds used to capture the cached layer. A cached layer
-    /// includes its original backdrop, so it must be repainted when a
-    /// scrolling ancestor translates it to a different position.
+    /// Window-space bounds used to capture the cached layer — `rect`
+    /// expanded for any border/outline overflow, not `rect` itself. A
+    /// cached layer includes its original backdrop, so it must be
+    /// repainted when a scrolling ancestor translates it to a different
+    /// position.
     cached_rect: Option<Rect>,
     /// The [`Painter::color_scheme`] in effect when this layer was last
     /// freshly painted. A background/border/outline resolved from a
@@ -415,6 +417,28 @@ fn paint_instance(
 
         let fingerprint = instance.widget.paint_fingerprint();
         let colors = painter.color_scheme();
+        // Resolved up front (not just on a cache miss) because a border or
+        // focus outline paints centered on / outside `rect` — the layer
+        // buffer and damage rect this node's cache is tracked against must
+        // cover that overflow too, on both the miss path (about to paint
+        // it) and the hit path (about to composite a layer sized for it).
+        let resolved = instance.style.resolve(states);
+        let overflow = resolved
+            .paint
+            .border
+            .map(|b| b.width / 2.0)
+            .unwrap_or(0.0)
+            .max(resolved.paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0));
+        let layer_rect = if overflow > 0.0 {
+            Rect {
+                x: rect.x - overflow,
+                y: rect.y - overflow,
+                width: rect.width + overflow * 2.0,
+                height: rect.height + overflow * 2.0,
+            }
+        } else {
+            rect
+        };
         // A fingerprint match alone doesn't prove the cached pixels are
         // still correct — the widget's *resolved* appearance can also
         // depend on live hover/press/focus state that has nothing to do
@@ -437,11 +461,10 @@ fn paint_instance(
             && instance.cached_states == Some(states)
             && instance.cached_colors == Some(colors)
             && cached_clip_covers
-            && instance.cached_rect == Some(rect)
-            && painter.composite_cached_layer(instance.layer_id, rect);
+            && instance.cached_rect == Some(layer_rect)
+            && painter.composite_cached_layer(instance.layer_id, layer_rect);
 
         if !cache_hit {
-            let resolved = instance.style.resolve(states);
             let radius = resolved.paint.corner_radius.unwrap_or(0.0);
             // A not-yet-promoted node is only ever visited on a full (non-
             // `animated_only`) pass — see the pruning check above — so one call
@@ -457,7 +480,7 @@ fn paint_instance(
                 || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK
                 || fingerprint.is_some();
             if layer_active {
-                painter.push_layer(instance.layer_id, rect, !animated_only);
+                painter.push_layer(instance.layer_id, layer_rect, !animated_only);
             }
             if let Some(background) = resolved.paint.background {
                 painter.fill_rect(rect, background.resolve(&colors), radius);
@@ -505,7 +528,7 @@ fn paint_instance(
             instance.content_fingerprint = fingerprint;
             instance.cached_states = fingerprint.map(|_| states);
             instance.cached_clip = fingerprint.map(|_| effective_clip);
-            instance.cached_rect = fingerprint.map(|_| rect);
+            instance.cached_rect = fingerprint.map(|_| layer_rect);
             instance.cached_colors = fingerprint.map(|_| colors);
             if layer_active && fingerprint.is_some() {
                 painter.pop_layer();
@@ -1214,6 +1237,7 @@ mod tests {
         push_layer_calls: usize,
         cached_layers: std::collections::HashSet<u64>,
         color_scheme: creamui_theme::ColorScheme,
+        last_push_layer_rect: Option<Rect>,
     }
     impl AnimPainter {
         fn new() -> Self {
@@ -1222,6 +1246,7 @@ mod tests {
                 push_layer_calls: 0,
                 cached_layers: std::collections::HashSet::new(),
                 color_scheme: creamui_theme::ColorScheme::default(),
+                last_push_layer_rect: None,
             }
         }
     }
@@ -1247,9 +1272,10 @@ mod tests {
         fn take_animated(&mut self) -> bool {
             std::mem::take(&mut self.node_animated)
         }
-        fn push_layer(&mut self, id: u64, _rect: Rect, _fresh: bool) {
+        fn push_layer(&mut self, id: u64, rect: Rect, _fresh: bool) {
             self.push_layer_calls += 1;
             self.cached_layers.insert(id);
+            self.last_push_layer_rect = Some(rect);
         }
         fn composite_cached_layer(&mut self, id: u64, _rect: Rect) -> bool {
             self.cached_layers.contains(&id)
@@ -1374,6 +1400,58 @@ mod tests {
             count.get(),
             2,
             "a color scheme change must repaint even with an unchanged fingerprint"
+        );
+    }
+
+    struct BorderedFingerprintWidget {
+        fingerprint: u64,
+        border_width: f32,
+    }
+    impl crate::widget::Widget for BorderedFingerprintWidget {
+        fn style(&self) -> crate::Style {
+            crate::Style {
+                layout: taffy::style::Style {
+                    size: taffy::geometry::Size {
+                        width: Dimension::Length(10.0),
+                        height: Dimension::Length(10.0),
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+            .border(Color::rgb(0, 0, 0), self.border_width)
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn paint_fingerprint(&self) -> Option<u64> {
+            Some(self.fingerprint)
+        }
+    }
+
+    #[test]
+    fn a_promoted_layer_covers_its_own_border_overflow() {
+        let build = |fingerprint: u64| -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(BorderedFingerprintWidget {
+                    fingerprint,
+                    border_width: 8.0,
+                })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+        renderer.render(build(1), VIEWPORT, &mut painter);
+
+        // A `stroke_rect` border is centered on the widget's edge, so a
+        // width-8 border overflows 4px past a 10x10 widget on every side —
+        // the pushed layer must be big enough to hold that, not just the
+        // widget's own 10x10 box.
+        let layer_rect = painter
+            .last_push_layer_rect
+            .expect("a fingerprinted widget always pushes a layer");
+        assert!(
+            layer_rect.width > 10.0 && layer_rect.height > 10.0,
+            "layer rect {layer_rect:?} must be expanded past the widget's 10x10 box for its border"
         );
     }
 

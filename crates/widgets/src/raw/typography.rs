@@ -143,6 +143,21 @@ impl Widget for RawPre {
             }
         }))
     }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        self.style
+            .typography
+            .font_size
+            .unwrap_or(14.0)
+            .to_bits()
+            .hash(&mut hasher);
+        self.padding.to_bits().hash(&mut hasher);
+        self.style.typography.font_family.hash(&mut hasher);
+        Some(hasher.finish())
+    }
 }
 
 /// An unstyled clickable line of text — a hyperlink with no color or
@@ -253,6 +268,20 @@ impl Widget for RawLink {
                 height: known_dimensions.height.unwrap_or(natural_height),
             }
         }))
+    }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        self.style
+            .typography
+            .font_size
+            .unwrap_or(14.0)
+            .to_bits()
+            .hash(&mut hasher);
+        self.style.typography.font_family.hash(&mut hasher);
+        Some(hasher.finish())
     }
 
     fn focusable(&self) -> bool {

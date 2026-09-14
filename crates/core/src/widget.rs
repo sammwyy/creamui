@@ -70,6 +70,33 @@ pub enum CursorIcon {
     ResizeNesw,
 }
 
+/// An explicit structural identity a widget can opt into, so reconciliation
+/// matches it against last frame's widget by identity instead of by
+/// position among its siblings. See [`Widget::key`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum WidgetKey {
+    U64(u64),
+    String(Rc<str>),
+}
+
+impl From<u64> for WidgetKey {
+    fn from(value: u64) -> Self {
+        WidgetKey::U64(value)
+    }
+}
+
+impl From<&str> for WidgetKey {
+    fn from(value: &str) -> Self {
+        WidgetKey::String(Rc::from(value))
+    }
+}
+
+impl From<String> for WidgetKey {
+    fn from(value: String) -> Self {
+        WidgetKey::String(Rc::from(value))
+    }
+}
+
 #[derive(Clone)]
 pub struct WindowDragHandle(Rc<dyn Fn()>);
 
@@ -349,6 +376,30 @@ pub trait Widget {
     /// text). Default: `None`, meaning this widget's size is fully
     /// determined by its `Style` (the common case for containers).
     fn measure(&self) -> Option<MeasureFn> {
+        None
+    }
+
+    /// A cheap, stable hash of everything [`Widget::measure`]'s closure
+    /// would capture — e.g. text + font face + font size + wrap width for a
+    /// text widget. `None` (the default) opts out: reconciliation always
+    /// re-registers the measure closure with the layout engine, which is
+    /// always correct, just forgoes the cache. A widget with no
+    /// [`Widget::measure`] has nothing worth fingerprinting and should
+    /// leave this `None`.
+    fn measure_fingerprint(&self) -> Option<u64> {
+        None
+    }
+
+    /// An explicit structural identity for this widget, opting its parent's
+    /// child list into keyed reconciliation: children are matched against
+    /// last frame's by key instead of by position, so inserting, removing,
+    /// or reordering a keyed sibling doesn't misattribute the rest of the
+    /// list's persistent state (focus, layer cache, scroll position, ...)
+    /// to the wrong item. Default: `None` (positional matching, the
+    /// existing behavior). Only takes effect when at least one child in a
+    /// given parent has a key; unkeyed siblings under the same parent still
+    /// match positionally against each other.
+    fn key(&self) -> Option<WidgetKey> {
         None
     }
 

@@ -88,6 +88,10 @@ impl Widget for Pre {
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.inner.measure_fingerprint()
+    }
 }
 
 /// A themed hyperlink: accent-colored, underlined text that brightens on
@@ -131,6 +135,10 @@ impl Widget for Link {
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
+    }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.inner.measure_fingerprint()
     }
 
     fn focusable(&self) -> bool {

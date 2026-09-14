@@ -152,13 +152,20 @@ impl TextController {
         self.selection.get()
     }
 
+    /// Called on every pointer-move while dragging a text selection, so a
+    /// clamped position repeated across consecutive moves (e.g. dragging
+    /// past either end of the text) must not re-notify subscribers each
+    /// time — see [`Signal::set_if_changed`].
     pub fn set_cursor(&self, cursor: usize) {
-        self.cursor.set(cursor.min(self.value.peek().len()));
+        self.cursor
+            .set_if_changed(cursor.min(self.value.peek().len()));
     }
 
+    /// Like [`TextController::set_cursor`], called just as often while
+    /// dragging a selection.
     pub fn set_selection(&self, selection: TextSelection) {
         let len = self.value.peek().len();
-        self.selection.set(TextSelection {
+        self.selection.set_if_changed(TextSelection {
             anchor: selection.anchor.min(len),
             focus: selection.focus.min(len),
         });

@@ -206,6 +206,28 @@ impl Widget for RawText {
         Some(hasher.finish())
     }
 
+    fn measure_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        // Must cover exactly what `measure`'s closure captures below — its
+        // width/height inputs come from `taffy` at call time, not from
+        // here, so this fingerprint doesn't need to (and can't) account
+        // for them.
+        let typography = self
+            .style
+            .resolve(creamui_core::StyleState::NORMAL)
+            .typography;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        typography
+            .font_size
+            .unwrap_or(14.0)
+            .to_bits()
+            .hash(&mut hasher);
+        typography.bold.unwrap_or(false).hash(&mut hasher);
+        typography.font_family.hash(&mut hasher);
+        Some(hasher.finish())
+    }
+
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         let text = self.text.clone();
         let typography = self
@@ -259,6 +281,23 @@ mod raw_text_fingerprint_tests {
         let a = RawText::new("hi", Color::rgb(1, 2, 3), 14.0);
         let b = RawText::new("hi", Color::rgb(4, 5, 6), 14.0);
         assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn measure_fingerprint_ignores_color_but_not_text_or_size() {
+        let a = RawText::new("hi", Color::rgb(1, 2, 3), 14.0);
+        let b = RawText::new("hi", Color::rgb(4, 5, 6), 14.0);
+        assert_eq!(
+            a.measure_fingerprint(),
+            b.measure_fingerprint(),
+            "color does not affect measurement"
+        );
+
+        let c = RawText::new("bye", Color::rgb(1, 2, 3), 14.0);
+        assert_ne!(a.measure_fingerprint(), c.measure_fingerprint());
+
+        let d = RawText::new("hi", Color::rgb(1, 2, 3), 20.0);
+        assert_ne!(a.measure_fingerprint(), d.measure_fingerprint());
     }
 }
 

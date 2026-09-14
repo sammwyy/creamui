@@ -1198,7 +1198,7 @@ impl WindowState {
                             window.request_redraw();
                         }
                     }
-                } else {
+                } else if !unchanged {
                     (self.repaint_light)();
                 }
             }
@@ -1778,7 +1778,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             if now >= state.next_blink {
                 state.caret_visible.set(!state.caret_visible.get());
                 state.next_blink = now + CARET_BLINK_INTERVAL;
-                (state.repaint)();
+                (state.repaint_light)();
             }
             next_wake = Some(next_wake.map_or(state.next_blink, |t| t.min(state.next_blink)));
         }
@@ -2555,6 +2555,63 @@ mod tests {
             "a redraw flushes exactly one call, for the latest queued position"
         );
         assert_eq!(calls.borrow()[1], Point { x: 30.0, y: 30.0 });
+    }
+
+    struct HoverCountingWidget {
+        paint_calls: Rc<Cell<usize>>,
+    }
+
+    impl creamui_core::Widget for HoverCountingWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(100.0),
+                    height: creamui_core::layout::Dimension::Length(100.0),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {
+            self.paint_calls.set(self.paint_calls.get() + 1);
+        }
+
+        fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
+            Some(Rc::new(|_| {}))
+        }
+    }
+
+    #[test]
+    fn cursor_moved_within_the_same_hover_region_does_not_repaint() {
+        let paint_calls = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let paint_calls = paint_calls.clone();
+            move |_| {
+                Box::new(HoverCountingWidget {
+                    paint_calls: paint_calls.clone(),
+                })
+            }
+        });
+
+        let baseline = paint_calls.get();
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        let after_enter = paint_calls.get();
+        assert!(
+            after_enter > baseline,
+            "entering a hover region must still repaint"
+        );
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },
+        });
+        assert_eq!(
+            paint_calls.get(),
+            after_enter,
+            "moving within the same hover region must not trigger another repaint"
+        );
     }
 
     #[test]

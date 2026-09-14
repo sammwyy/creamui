@@ -251,6 +251,20 @@ impl<T: Clone + 'static> Signal<T> {
     }
 }
 
+impl<T: Clone + PartialEq + 'static> Signal<T> {
+    /// Like [`Signal::set`], but reads the current value first and skips
+    /// the write (and the notification it would trigger) when `value`
+    /// equals it. Prefer this over `set` for internal control state whose
+    /// callers don't depend on an explicit notification even when nothing
+    /// changed (e.g. a pointer-move handler that recomputes a hovered
+    /// index every event).
+    pub fn set_if_changed(&self, value: T) {
+        if *self.inner.value.borrow() != value {
+            self.set(value);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +293,25 @@ mod tests {
         assert_eq!(runs.get(), 2);
         s.set(2);
         assert_eq!(runs.get(), 3);
+    }
+
+    #[test]
+    fn set_if_changed_skips_notification_when_value_is_equal() {
+        let s = Signal::new(1);
+        let runs = Rc::new(Cell::new(0));
+        let runs_clone = runs.clone();
+        let s_clone = s.clone();
+        let _effect = create_effect(move || {
+            let _ = s_clone.get();
+            runs_clone.set(runs_clone.get() + 1);
+        });
+        assert_eq!(runs.get(), 1);
+
+        s.set_if_changed(1);
+        assert_eq!(runs.get(), 1, "an equal value must not trigger a re-run");
+
+        s.set_if_changed(2);
+        assert_eq!(runs.get(), 2, "a changed value must still trigger a re-run");
     }
 
     #[test]

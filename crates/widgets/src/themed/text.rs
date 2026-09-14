@@ -87,6 +87,10 @@ impl Widget for Text {
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.inner.measure_fingerprint()
+    }
 }
 
 /// A themed block heading, the h1-h5 equivalent of [`Text`]: same five-step
@@ -165,5 +169,9 @@ impl Widget for Heading {
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
+    }
+
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.inner.measure_fingerprint()
     }
 }

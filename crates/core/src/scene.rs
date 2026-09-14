@@ -1,5 +1,6 @@
 use crate::geometry::{Point, Rect, Size};
-use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter};
+use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter, WidgetKey};
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use taffy::prelude::{AvailableSpace, Dimension, TaffyTree};
 use taffy::style::Position;
@@ -23,7 +24,25 @@ const LAYER_PROMOTE_STREAK: u8 = 2;
 
 struct Instance {
     widget: BoxedWidget,
+    /// Compared field-by-field (specifically `style.layout`) against next
+    /// frame's declared style to decide whether `node_id`'s `taffy::Style`
+    /// needs rewriting. `constrain_inflow` is a pure function, so comparing
+    /// its inputs here is equivalent to comparing its outputs, without
+    /// needing to also store the constrained form (a full extra
+    /// `taffy::style::Style` per node adds up fast down a deep chain).
     style: crate::Style,
+    /// Whether the measure context last written to `node_id` was `Some`. A
+    /// widget with no [`crate::Widget::measure`] at all (the common case
+    /// for containers) has nothing to compare fingerprints against, but
+    /// `None -> None` is trivially unchanged, so this alone is enough to
+    /// skip rewriting it — no fingerprint required.
+    has_measure: bool,
+    /// [`crate::Widget::measure_fingerprint`]'s value the last time
+    /// `node_id`'s measure context was written.
+    measure_fingerprint: Option<u64>,
+    /// [`crate::Widget::key`]'s value, cached so keyed reconciliation can
+    /// match without re-invoking a partially-consumed widget.
+    key: Option<WidgetKey>,
     children: Vec<Instance>,
     node_id: taffy::NodeId,
     layer_id: u64,
@@ -71,14 +90,12 @@ fn remove_instance(tree: &mut Tree, instance: Instance, painter: &mut dyn Painte
 /// lives in `Signal`s, not in widget structs — see `creamui_reactive`), so
 /// this reconciles purely structurally: a widget is considered "the same
 /// node" as whatever widget previously occupied the same position among its
-/// parent's children. That's enough to avoid recreating `taffy` nodes (and
-/// their subtrees) on every reactive re-render for the common case where a
-/// re-render only changes leaf styles/content, not the tree shape.
-///
-/// This does not (yet) support keyed reconciliation, so reordering a list
-/// of children will be treated as every item after the reorder point
-/// changing, rather than being matched up by identity — tracked on the
-/// roadmap alongside a real virtual-list/keyed-diff widget.
+/// parent's children, unless it or a sibling opts into [`WidgetKey`]
+/// matching (see [`reconcile_children`]). That's enough to avoid recreating
+/// `taffy` nodes (and their subtrees) on every reactive re-render for the
+/// common case where a re-render only changes leaf styles/content, not the
+/// tree shape — and, for a matched node, every `taffy` write is skipped
+/// unless the value being written actually changed.
 fn reconcile(
     tree: &mut Tree,
     existing: Option<Instance>,
@@ -95,6 +112,9 @@ fn reconcile(
     let new_child_widgets = widget.children();
     let new_style = widget.style();
     let new_measure = widget.measure();
+    let new_has_measure = new_measure.is_some();
+    let new_measure_fingerprint = widget.measure_fingerprint();
+    let new_key = widget.key();
 
     let Some(mut old) = existing else {
         // No previous node at this position: build a fresh subtree.
@@ -121,6 +141,9 @@ fn reconcile(
         return Instance {
             widget,
             style: new_style,
+            has_measure: new_has_measure,
+            measure_fingerprint: new_measure_fingerprint,
+            key: new_key,
             children,
             node_id,
             layer_id,
@@ -134,40 +157,50 @@ fn reconcile(
         };
     };
 
-    tree.set_style(old.node_id, constrain_inflow(new_style.layout.clone()))
-        .expect("updating the style of an existing node should not fail");
-    tree.set_node_context(old.node_id, new_measure)
-        .expect("updating the context of an existing node should not fail");
-    #[cfg(feature = "perf-metrics")]
-    crate::metrics::record(|m| {
-        m.taffy_style_writes += 1;
-        m.taffy_context_writes += 1;
-    });
+    if old.style.layout != new_style.layout {
+        tree.set_style(old.node_id, constrain_inflow(new_style.layout.clone()))
+            .expect("updating the style of an existing node should not fail");
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.taffy_style_writes += 1);
+    }
 
-    let mut new_children = Vec::with_capacity(new_child_widgets.len());
-    let mut old_children = old.children.drain(..);
-    for child_widget in new_child_widgets {
-        new_children.push(reconcile(
-            tree,
-            old_children.next(),
-            child_widget,
-            next_layer_id,
-            painter,
-        ));
+    let context_unchanged = if new_has_measure {
+        old.has_measure
+            && new_measure_fingerprint.is_some()
+            && new_measure_fingerprint == old.measure_fingerprint
+    } else {
+        !old.has_measure
+    };
+    if !context_unchanged {
+        tree.set_node_context(old.node_id, new_measure)
+            .expect("updating the context of an existing node should not fail");
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.taffy_context_writes += 1);
     }
-    for leftover in old_children {
-        remove_instance(tree, leftover, painter);
-    }
+
+    let old_child_ids: Vec<taffy::NodeId> = old.children.iter().map(|c| c.node_id).collect();
+    let new_children = reconcile_children(
+        tree,
+        &mut old.children,
+        new_child_widgets,
+        next_layer_id,
+        painter,
+    );
 
     let child_ids: Vec<_> = new_children.iter().map(|c| c.node_id).collect();
-    tree.set_children(old.node_id, &child_ids)
-        .expect("setting children of an existing node should not fail");
-    #[cfg(feature = "perf-metrics")]
-    crate::metrics::record(|m| m.taffy_children_writes += 1);
+    if child_ids != old_child_ids {
+        tree.set_children(old.node_id, &child_ids)
+            .expect("setting children of an existing node should not fail");
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.taffy_children_writes += 1);
+    }
 
     Instance {
         widget,
         style: new_style,
+        has_measure: new_has_measure,
+        measure_fingerprint: new_measure_fingerprint,
+        key: new_key,
         children: new_children,
         node_id: old.node_id,
         layer_id: old.layer_id,
@@ -179,6 +212,69 @@ fn reconcile(
         cached_clip: old.cached_clip,
         cached_rect: old.cached_rect,
     }
+}
+
+/// Matches `new_child_widgets` against `old_children` (draining it) and
+/// reconciles each pair. Purely positional, unless at least one new child
+/// carries a [`WidgetKey`] — then every child in this list is matched by
+/// key where present, falling back to positional matching, in original
+/// relative order, for the rest. Unmatched leftovers are removed.
+fn reconcile_children(
+    tree: &mut Tree,
+    old_children: &mut Vec<Instance>,
+    new_child_widgets: Vec<BoxedWidget>,
+    next_layer_id: &mut u64,
+    painter: &mut dyn Painter,
+) -> Vec<Instance> {
+    let mut new_children = Vec::with_capacity(new_child_widgets.len());
+
+    if new_child_widgets.iter().any(|w| w.key().is_some()) {
+        let mut by_key: HashMap<WidgetKey, Instance> = HashMap::new();
+        let mut unkeyed: VecDeque<Instance> = VecDeque::new();
+        for child in old_children.drain(..) {
+            match &child.key {
+                Some(key) => {
+                    by_key.insert(key.clone(), child);
+                }
+                None => unkeyed.push_back(child),
+            }
+        }
+        for child_widget in new_child_widgets {
+            let matched = match child_widget.key() {
+                Some(key) => by_key.remove(&key),
+                None => unkeyed.pop_front(),
+            };
+            new_children.push(reconcile(
+                tree,
+                matched,
+                child_widget,
+                next_layer_id,
+                painter,
+            ));
+        }
+        for leftover in by_key.into_values() {
+            remove_instance(tree, leftover, painter);
+        }
+        for leftover in unkeyed {
+            remove_instance(tree, leftover, painter);
+        }
+    } else {
+        let mut old = old_children.drain(..);
+        for child_widget in new_child_widgets {
+            new_children.push(reconcile(
+                tree,
+                old.next(),
+                child_widget,
+                next_layer_id,
+                painter,
+            ));
+        }
+        for leftover in old {
+            remove_instance(tree, leftover, painter);
+        }
+    }
+
+    new_children
 }
 
 fn viewport_rect(viewport: Size) -> Rect {
@@ -966,6 +1062,12 @@ mod tests {
                 .map(|_| Box::new(Branch { child_count: 0 }) as BoxedWidget)
                 .collect()
         }
+        fn measure_fingerprint(&self) -> Option<u64> {
+            // `Branch` never has a `measure()`, so its (empty) measure
+            // context is always the same — a fixed fingerprint lets tests
+            // prove the context write itself gets skipped when unchanged.
+            Some(0)
+        }
     }
 
     const VIEWPORT: Size = Size {
@@ -1027,6 +1129,72 @@ mod tests {
         let root = renderer.root.as_ref().unwrap();
         assert_eq!(root.children.len(), 4);
         assert_eq!(renderer.tree.children(root.node_id).unwrap().len(), 4);
+    }
+
+    #[cfg(feature = "perf-metrics")]
+    #[test]
+    fn unchanged_rerender_performs_zero_taffy_writes() {
+        let mut renderer = Renderer::new();
+        let mut painter = NoopPainter;
+
+        renderer.render(Box::new(Branch { child_count: 4 }), VIEWPORT, &mut painter);
+
+        crate::metrics::reset_frame_metrics();
+        renderer.render(Box::new(Branch { child_count: 4 }), VIEWPORT, &mut painter);
+        let metrics = crate::metrics::frame_metrics();
+
+        assert_eq!(metrics.taffy_style_writes, 0);
+        assert_eq!(metrics.taffy_context_writes, 0);
+        assert_eq!(metrics.taffy_children_writes, 0);
+    }
+
+    struct KeyedLeaf {
+        id: u64,
+    }
+    impl crate::widget::Widget for KeyedLeaf {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn key(&self) -> Option<crate::widget::WidgetKey> {
+            Some(crate::widget::WidgetKey::U64(self.id))
+        }
+    }
+
+    #[test]
+    fn keyed_children_preserve_taffy_node_identity_across_a_reorder() {
+        let build = |order: [u64; 3]| -> BoxedWidget {
+            Box::new(Root {
+                children: order
+                    .into_iter()
+                    .map(|id| Box::new(KeyedLeaf { id }) as BoxedWidget)
+                    .collect(),
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = NoopPainter;
+
+        renderer.render(build([1, 2, 3]), VIEWPORT, &mut painter);
+        let ids_before: std::collections::HashMap<u64, taffy::NodeId> = renderer
+            .root
+            .as_ref()
+            .unwrap()
+            .children
+            .iter()
+            .zip([1, 2, 3])
+            .map(|(instance, key)| (key, instance.node_id))
+            .collect();
+
+        renderer.render(build([3, 1, 2]), VIEWPORT, &mut painter);
+        let root = renderer.root.as_ref().unwrap();
+        let reordered_keys = [3u64, 1, 2];
+        for (instance, key) in root.children.iter().zip(reordered_keys) {
+            assert_eq!(
+                instance.node_id, ids_before[&key],
+                "key {key} must keep its taffy node identity across the reorder"
+            );
+        }
     }
 
     struct AnimPainter {

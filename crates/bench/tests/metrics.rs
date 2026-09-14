@@ -37,9 +37,9 @@ fn initial_mount_visits_and_writes_every_node_once() {
 }
 
 #[test]
-fn unchanged_rerender_still_rewrites_every_taffy_node_today() {
-    // `scene::reconcile` calls `set_style`/`set_node_context`/`set_children`
-    // unconditionally, with no diff against the previous frame's values.
+fn unchanged_rerender_performs_zero_taffy_writes() {
+    // `scene::reconcile` diffs against the previous frame's `taffy::Style`,
+    // measure fingerprint, and child-id list before writing any of them.
     let mut renderer = Renderer::new();
     let mut painter = NoopPainter;
     renderer.render(scenes::wide_tree(100), VIEWPORT, &mut painter);
@@ -48,22 +48,19 @@ fn unchanged_rerender_still_rewrites_every_taffy_node_today() {
         renderer.render(scenes::wide_tree(100), VIEWPORT, &mut painter);
     });
 
-    let node_count = 101;
-    assert_eq!(
-        metrics.taffy_style_writes, node_count,
-        "every node's taffy style is rewritten even though nothing changed"
-    );
-    assert_eq!(
-        metrics.taffy_children_writes, node_count,
-        "every node's child list is rewritten even though it's unchanged"
-    );
+    assert_eq!(metrics.taffy_style_writes, 0);
+    assert_eq!(metrics.taffy_context_writes, 0);
+    assert_eq!(metrics.taffy_children_writes, 0);
+    // Reconciliation still walks the whole ephemeral `Widget` tree to
+    // discover that nothing changed — that's the work Phase 2+ removes.
+    assert_eq!(metrics.reconcile_visits, 101);
 }
 
 #[test]
-fn single_leaf_paint_change_still_reconciles_and_visits_the_whole_tree_today() {
-    // The `Widget` tree is an ephemeral description rebuilt on every
-    // reactive re-render, so a one-leaf color change still reconciles and
-    // walks the entire tree from the root.
+fn single_leaf_paint_change_touches_no_taffy_state() {
+    // A background-color change affects only paint, not layout, so it must
+    // not write to `taffy` at all, even though the `Widget` tree is still
+    // rebuilt and reconciled from the root.
     let mut renderer = Renderer::new();
     let mut painter = NoopPainter;
     renderer.render(scenes::wide_tree(500), VIEWPORT, &mut painter);
@@ -79,10 +76,9 @@ fn single_leaf_paint_change_still_reconciles_and_visits_the_whole_tree_today() {
     let node_count = 501;
     assert_eq!(metrics.reconcile_visits, node_count);
     assert_eq!(metrics.paint_nodes_visited, node_count * 2);
-    assert_eq!(
-        metrics.taffy_style_writes, node_count,
-        "changing one leaf's color still rewrites every node's taffy style"
-    );
+    assert_eq!(metrics.taffy_style_writes, 0);
+    assert_eq!(metrics.taffy_context_writes, 0);
+    assert_eq!(metrics.taffy_children_writes, 0);
 }
 
 #[test]

@@ -148,3 +148,67 @@ baseline, for a `wide_tree(100)` scene (101 nodes: 1 root + 100 leaves):
 - Damage-rect count/area (`damaged_rect_count` / `damaged_pixel_area`) —
   only populated by the windowed animation-damage path in
   `crates/render/src/window.rs`, not exercised by the headless benches.
+
+## 2026-09-14 — after Phase 1
+
+Same environment and methodology as above. Phase 1 (`crates/core/src/scene.rs`'s
+`reconcile`) now diffs a node's `taffy::Style`, measure fingerprint, and
+child-id list against last frame's before writing any of them, instead of
+writing unconditionally.
+
+### Engine counters, `wide_tree(100)` (101 nodes)
+
+| Event | Before | After |
+|---|---|---|
+| Unchanged rerender: `taffy_style_writes` / `taffy_context_writes` / `taffy_children_writes` | 101 each | **0 each** |
+| Single-leaf paint-only change (500-node tree): `taffy_style_writes` / `taffy_context_writes` / `taffy_children_writes` | 501 each | **0 each** |
+
+Both are now covered by `crates/bench/tests/metrics.rs` as regression
+tests, not just one-off measurements.
+
+### `tree_update` timings
+
+| Scene | Before | After | Change |
+|---|---|---|---|
+| `unchanged_rerender`, 1,000 nodes | 0.53 ms | 0.36 ms | -15% |
+| `unchanged_rerender`, 10,000 nodes | 10.5 ms | 6.6 ms | -26% |
+| `unchanged_rerender`, 50,000 nodes | 101.0 ms | 79.0 ms | -12% |
+| `deep_tree` (depth 1,000), unchanged rerender | 9.3 ms | **0.69 ms** | **-93%** |
+
+The remaining `unchanged_rerender` cost is `reconcile` still walking the
+whole ephemeral `Widget` tree every frame to *discover* nothing changed
+(`reconcile_visits` is still `node_count`, unaffected by this phase) — the
+work Phase 2's persistent runtime tree removes. `deep_tree`'s much larger
+improvement is `taffy`'s own layout-cache invalidation: writing
+`set_style`/`set_children` on every node down a 1,000-deep chain was
+forcing `compute_layout` to treat the whole chain as dirty on every frame,
+even when nothing in it had changed.
+
+One regression surfaced and was fixed during this phase: caching a node's
+*constrained* `taffy::Style` on `Instance` for the diff (as literally
+written in REFACTOR.md 7.1's snippet) added a full extra `taffy::Style` to
+every stack frame of `reconcile`'s recursion, which overflowed the stack on
+`deep_tree`'s depth-1,000 chain. Comparing the *unconstrained*
+`style.layout` instead (constraining only the value actually being written,
+right before the write) is equivalent — `constrain_inflow` is a pure
+function, so equal inputs imply equal outputs — and needs no extra stored
+field at all.
+
+### Other Phase 1 changes (not yet benchmarked as throughput numbers)
+
+- **Hover repaint** (`crates/render/src/window.rs`): `CursorMoved` no
+  longer marks the scene dirty when the hover target didn't change —
+  regression-tested by
+  `window::tests::cursor_moved_within_the_same_hover_region_does_not_repaint`,
+  not a Criterion benchmark (the fix changes *how often* a repaint is
+  triggered, not the cost of one).
+- **Caret blink**: switched from the full rebuild+layout+paint path
+  (`repaint`) to the paint-only path (`repaint_light`).
+- **Keyed reconciliation**: `Widget::key()` lets a parent's children match
+  by identity instead of position across a reorder, preserving each item's
+  `taffy` node (and therefore its layer cache, focus, etc.) — regression-
+  tested by `scene::tests::keyed_children_preserve_taffy_node_identity_across_a_reorder`.
+  No widget in `creamui-widgets` opts into it yet.
+- **`Signal::set_if_changed`**: applied to `TextController::set_cursor`/
+  `set_selection`, called on every pointer-move while dragging a text
+  selection.

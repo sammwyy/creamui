@@ -4,7 +4,6 @@ use std::hash::Hash;
 
 use super::binding::SharedRuntime;
 use super::node::RuntimeNodeId;
-use super::transaction::RuntimeTransaction;
 
 struct ListEntry {
     owner: Owner,
@@ -22,7 +21,7 @@ pub fn create_keyed_list<T, K>(
     parent: RuntimeNodeId,
     items: Signal<Vec<T>>,
     key: impl Fn(&T) -> K + 'static,
-    render: impl Fn(&mut RuntimeTransaction, &Owner, &T) -> RuntimeNodeId + 'static,
+    render: impl Fn(&SharedRuntime, &Owner, &T) -> RuntimeNodeId + 'static,
 ) where
     T: Clone + 'static,
     K: Hash + Eq + Clone + 'static,
@@ -37,24 +36,24 @@ pub fn create_keyed_list<T, K>(
         let mut next_entries: HashMap<K, ListEntry> = HashMap::with_capacity(keys.len());
         let mut ordered_roots: Vec<RuntimeNodeId> = Vec::with_capacity(keys.len());
 
-        runtime.transaction(|tx| {
-            for (item, k) in current.iter().zip(&keys) {
-                let entry = match entries.remove(k) {
-                    Some(entry) => entry,
-                    None => {
-                        let item_owner = container.child();
-                        let root = render(tx, &item_owner, item);
-                        ListEntry {
-                            owner: item_owner,
-                            root,
-                        }
+        for (item, k) in current.iter().zip(&keys) {
+            let entry = match entries.remove(k) {
+                Some(entry) => entry,
+                None => {
+                    let item_owner = container.child();
+                    // `render` manages its own transaction(s) — see
+                    // `branch.rs`'s doc comment on the same constraint.
+                    let root = render(&runtime, &item_owner, item);
+                    ListEntry {
+                        owner: item_owner,
+                        root,
                     }
-                };
-                ordered_roots.push(entry.root);
-                next_entries.insert(k.clone(), entry);
-            }
-            tx.reorder_children(parent, &ordered_roots);
-        });
+                }
+            };
+            ordered_roots.push(entry.root);
+            next_entries.insert(k.clone(), entry);
+        }
+        runtime.transaction(|tx| tx.reorder_children(parent, &ordered_roots));
 
         for (_, removed) in entries.drain() {
             removed.owner.dispose();
@@ -73,16 +72,18 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    fn leaf(tx: &mut RuntimeTransaction, _owner: &Owner, id: &u32) -> RuntimeNodeId {
-        let node = tx.create_node(NodeKind::Container);
-        tx.apply(Mutation::SetPaintStyle {
-            node,
-            style: PaintStyle {
-                background: Some(Color::rgb(*id as u8, 0, 0).into()),
-                ..Default::default()
-            },
-        });
-        node
+    fn leaf(runtime: &SharedRuntime, _owner: &Owner, id: &u32) -> RuntimeNodeId {
+        runtime.transaction(|tx| {
+            let node = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetPaintStyle {
+                node,
+                style: PaintStyle {
+                    background: Some(Color::rgb(*id as u8, 0, 0).into()),
+                    ..Default::default()
+                },
+            });
+            node
+        })
     }
 
     #[test]
@@ -163,7 +164,7 @@ mod tests {
             let signal_1 = signal_1.clone();
             let runs = runs.clone();
             let inner_runtime = inner_runtime.clone();
-            move |tx, item_owner, _id| {
+            move |runtime, item_owner, _id| {
                 crate::runtime::create_binding(item_owner, inner_runtime.clone(), {
                     let signal_1 = signal_1.clone();
                     let runs = runs.clone();
@@ -172,7 +173,7 @@ mod tests {
                         runs.set(runs.get() + 1);
                     }
                 });
-                tx.create_node(NodeKind::Container)
+                leaf(runtime, item_owner, &0)
             }
         });
         assert_eq!(runs.get(), 1);

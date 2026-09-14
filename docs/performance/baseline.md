@@ -306,3 +306,39 @@ just the lower-level transaction API underneath it.
   `create_keyed_list` yet — REFACTOR.md's Phase 4 (JSX/component
   compilation) is what should start generating these calls from
   application code instead of a widget-rebuilding closure.
+
+## 2026-09-14 — Phase 4 (partial: mount/bind foundation only)
+
+`crates/core/src/runtime` adds `MountCx` (`container`/`text`/`image`/
+`bind`/`branch`/`keyed`/`on_cleanup`, matching REFACTOR.md 10.2's sketch)
+and `View`/`IntoView` (REFACTOR.md 10.5 — a component can return an
+already-mounted `RuntimeNodeId` or a legacy `BoxedWidget`, auto-adapted
+through `mount_legacy_widget`). Both are plain Rust APIs built on Phase
+3's `create_binding`/`create_branch`/`create_keyed_list`, exercised
+end-to-end by tests (`mount_cx.rs`, `view.rs`) including a component that
+calls `cx.container()` inside a `cx.branch()`/`cx.keyed()` callback — the
+realistic nested-mounting shape a real component tree would produce.
+
+**Not done**: the actual `jsx!` proc-macro rewrite (REFACTOR.md 10.1,
+10.3, 10.4, 10.6, 10.7) — the macro in `crates/macros` still expands to
+widget-builder calls, unchanged. Rewriting a 1,350-line proc macro that
+every example and `creamui-jsx`/`creamui-dynamic` depend on, to instead
+categorize each JSX expression (static/reactive/event/conditional/keyed)
+and emit `MountCx` calls, is a large, high-blast-radius change that needs
+its own dedicated pass with the full example suite as a correctness
+check — attempting it within this pass risked shipping something
+half-verified. `MountCx`/`View` are exactly what that rewrite would need
+to target, built and tested first so that work has a stable foundation.
+
+### Bug found while building this
+
+A branch/keyed `mount`/`render` closure that itself opened a nested
+mount (e.g. `cx.container()` called from inside a `cx.branch()` callback)
+used to panic: `create_branch`/`create_keyed_list` invoked the closure
+from inside an already-open `RuntimeTransaction`, and `MountCx`'s own
+calls each open their own transaction via `SharedRuntime`, producing a
+`RefCell` double-borrow. Fixed by changing the `mount`/`render` closure
+signature to receive `&SharedRuntime` instead of `&mut RuntimeTransaction`,
+so nested mounting manages its own transactions instead of reusing one
+held open by the caller. Regression-tested
+(`branch::tests::a_mount_closure_that_recurses_into_another_mount_does_not_panic`).

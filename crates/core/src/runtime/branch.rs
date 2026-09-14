@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use super::binding::SharedRuntime;
 use super::node::RuntimeNodeId;
-use super::transaction::RuntimeTransaction;
 
 /// A conditionally-mounted subtree anchored at a stable parent node — the
 /// runtime-tree analogue of `if condition.get() { <Panel/> }`: only the
@@ -25,20 +24,17 @@ impl BranchBinding {
         }
     }
 
-    fn show(
-        &mut self,
-        container: &Owner,
-        mount: &dyn Fn(&mut RuntimeTransaction, &Owner) -> RuntimeNodeId,
-    ) {
+    fn show(&mut self, container: &Owner, mount: &dyn Fn(&SharedRuntime, &Owner) -> RuntimeNodeId) {
         if self.active.is_some() {
             return;
         }
         let branch_owner = container.child();
-        let root = self.runtime.transaction(|tx| {
-            let root = mount(tx, &branch_owner);
-            tx.insert_child(self.parent, root, None);
-            root
-        });
+        // `mount` manages its own transaction(s) against `self.runtime` —
+        // it must not be handed an already-open one, since it may recurse
+        // into further mounts that each need their own borrow.
+        let root = mount(&self.runtime, &branch_owner);
+        self.runtime
+            .transaction(|tx| tx.insert_child(self.parent, root, None));
         self.active = Some((branch_owner, root));
     }
 
@@ -60,7 +56,7 @@ pub fn create_branch(
     runtime: SharedRuntime,
     parent: RuntimeNodeId,
     condition: Signal<bool>,
-    mount: impl Fn(&mut RuntimeTransaction, &Owner) -> RuntimeNodeId + 'static,
+    mount: impl Fn(&SharedRuntime, &Owner) -> RuntimeNodeId + 'static,
 ) {
     let container = owner.child();
     let branch = Rc::new(RefCell::new(BranchBinding::new(runtime, parent)));
@@ -79,6 +75,10 @@ mod tests {
     use crate::runtime::{create_binding, NodeKind, Runtime};
     use std::cell::Cell;
 
+    fn leaf(runtime: &SharedRuntime, _owner: &Owner) -> RuntimeNodeId {
+        runtime.transaction(|tx| tx.create_node(NodeKind::Container))
+    }
+
     #[test]
     fn toggling_the_condition_mounts_and_unmounts_the_branch() {
         let mut runtime = Runtime::new();
@@ -90,13 +90,7 @@ mod tests {
 
         let condition = Signal::new(false);
         let owner = Owner::new();
-        create_branch(
-            &owner,
-            runtime.clone(),
-            parent,
-            condition.clone(),
-            |tx, _| tx.create_node(NodeKind::Container),
-        );
+        create_branch(&owner, runtime.clone(), parent, condition.clone(), leaf);
 
         assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
 
@@ -105,6 +99,37 @@ mod tests {
 
         condition.set(false);
         assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
+    }
+
+    #[test]
+    fn a_mount_closure_that_recurses_into_another_mount_does_not_panic() {
+        // Regression test: `mount` used to receive an already-open
+        // `RuntimeTransaction`, so a mount closure that itself opened
+        // another transaction (e.g. via a nested `MountCx` call) would hit
+        // a `RefCell` double-borrow panic.
+        let mut runtime = Runtime::new();
+        let parent = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        let runtime = SharedRuntime::new(runtime);
+
+        let condition = Signal::new(true);
+        let owner = Owner::new();
+        create_branch(
+            &owner,
+            runtime.clone(),
+            parent,
+            condition,
+            |runtime, owner| {
+                let child = leaf(runtime, owner);
+                let grandchild = leaf(runtime, owner);
+                runtime.transaction(|tx| tx.insert_child(child, grandchild, None));
+                child
+            },
+        );
+
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
     }
 
     #[test]
@@ -125,7 +150,7 @@ mod tests {
             let inner_signal = inner_signal.clone();
             let inner_runs = inner_runs.clone();
             let inner_runtime = inner_runtime.clone();
-            move |tx, branch_owner| {
+            move |runtime, branch_owner| {
                 create_binding(branch_owner, inner_runtime.clone(), {
                     let inner_signal = inner_signal.clone();
                     let inner_runs = inner_runs.clone();
@@ -134,7 +159,7 @@ mod tests {
                         inner_runs.set(inner_runs.get() + 1);
                     }
                 });
-                tx.create_node(NodeKind::Container)
+                leaf(runtime, branch_owner)
             }
         });
         assert_eq!(inner_runs.get(), 1);
@@ -161,13 +186,7 @@ mod tests {
 
         let condition = Signal::new(true);
         let owner = Owner::new();
-        create_branch(
-            &owner,
-            runtime.clone(),
-            parent,
-            condition.clone(),
-            |tx, _| tx.create_node(NodeKind::Container),
-        );
+        create_branch(&owner, runtime.clone(), parent, condition.clone(), leaf);
         assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
 
         owner.dispose();

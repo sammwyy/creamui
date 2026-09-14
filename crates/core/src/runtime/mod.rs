@@ -10,18 +10,22 @@ mod branch;
 mod dirty;
 mod keyed;
 mod mount;
+mod mount_cx;
 mod mutation;
 mod node;
 mod transaction;
+mod view;
 
 pub use binding::{create_binding, SharedRuntime};
 pub use branch::create_branch;
 pub use dirty::DirtyFlags;
 pub use keyed::create_keyed_list;
 pub use mount::mount_legacy_widget;
+pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};
 pub use node::{Children, CustomNode, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
 pub use transaction::RuntimeTransaction;
+pub use view::{IntoView, View};
 
 use arena::Arena;
 

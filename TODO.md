@@ -12,9 +12,14 @@
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old
   reconcile path, reachable via `mount_legacy_widget`, `create_binding`,
-  `create_branch`, and `create_keyed_list`. REFACTOR.md Phase 4 (JSX/
-  component compilation) is what should start generating calls into these
-  from application code instead of a widget-rebuilding closure.
+  `create_branch`, `create_keyed_list`, and `MountCx`/`View`/`IntoView`.
+- The `jsx!` proc macro (`crates/macros`) still expands to widget-builder
+  calls, not `MountCx` operations — REFACTOR.md Phase 4's actual
+  compiler rewrite (categorizing static/reactive/event/conditional/keyed
+  JSX expressions, `#[component]` becoming a mount function, `CREAMUI_DUMP_JSX`
+  debug support) is not started. `MountCx`/`View`/`IntoView` exist as the
+  target the rewrite should compile into; the rewrite itself needs its own
+  pass validated against the full example suite given its blast radius.
 - `mount_legacy_widget` always produces `NodeKind::Custom` — it never
   classifies a legacy widget as `Text`/`Image`, so nothing downstream can
   yet tell a runtime-mounted text node from an opaque one without

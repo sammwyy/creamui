@@ -135,6 +135,7 @@ mod scroll;
 mod spinner;
 mod text_input;
 mod typography;
+mod virtualize;
 
 pub use button::*;
 pub use controls::*;
@@ -147,6 +148,7 @@ pub use scroll::*;
 pub use spinner::*;
 pub use text_input::*;
 pub use typography::*;
+pub use virtualize::*;
 
 macro_rules! impl_direct_styled {
     ($($widget:ty),+ $(,)?) => {

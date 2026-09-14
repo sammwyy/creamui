@@ -24,6 +24,9 @@ All notable changes to CreamUI will be documented in this file.
 - Added an opt-in `perf-metrics` feature to `creamui-devtools`: the F3
   overlay grows an "engine" panel of reconcile/layout/paint/GPU counters
   fed by `creamui-core`'s existing `FrameMetrics`.
+- Added `RawVirtualList`/`VirtualListState`: a scrollable list that mounts
+  only the rows visible in its viewport (plus overscan) instead of every
+  row, built on `creamui-core`'s existing `HeightIndex`.
 
 ## 0.1.1
 

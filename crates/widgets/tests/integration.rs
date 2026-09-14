@@ -1661,3 +1661,46 @@ fn table_renders_header_labels_and_clicking_a_row_reports_its_index() {
         assert_eq!(selected.get(), 1);
     });
 }
+
+#[test]
+fn virtual_list_paints_only_the_visible_range_of_a_100k_item_list() {
+    use creamui_core::{visible_range, HeightIndex};
+    use creamui_widgets::{RawVirtualList, VirtualListState};
+
+    let item_count = 100_000;
+    let item_height = 20.0;
+    let scroll_offset = 5_000.0;
+    let viewport_height = 100.0;
+    let overscan = 2;
+    let expected_rows = visible_range(
+        &HeightIndex::uniform(item_count, item_height),
+        scroll_offset,
+        viewport_height,
+        overscan,
+    )
+    .len();
+
+    let state = VirtualListState::new(item_count, item_height);
+    let controller = ScrollController::new(scroll_offset);
+    let list = RawVirtualList::new(Style::default(), state, controller, viewport_height, |_| {
+        Box::new(RawView::new(Style::default()).background(Color::rgb(200, 60, 60))) as _
+    })
+    .overscan(overscan)
+    .scrollbar(false);
+
+    let mut painter = RecordingPainter::default();
+    Renderer::new().render(
+        Box::new(list),
+        Size {
+            width: 200.0,
+            height: viewport_height,
+        },
+        &mut painter,
+    );
+
+    assert_eq!(painter.filled_rects.len(), expected_rows);
+    assert!(expected_rows < 20);
+    for (rect, _) in &painter.filled_rects {
+        assert!(rect.y > -100.0 && rect.y < viewport_height + 100.0);
+    }
+}

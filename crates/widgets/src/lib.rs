@@ -50,7 +50,8 @@ pub use raw::{
     DateTime, RawButton, RawCheckbox, RawColorPicker, RawDateTimePicker, RawFilePicker, RawLink,
     RawListView, RawMarquee, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider,
     RawSpinner, RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput,
-    RawTranslate, RawView, TabIndicatorSide, TableColumn, TextSelection,
+    RawTranslate, RawView, RawVirtualList, TabIndicatorSide, TableColumn, TextSelection,
+    VirtualListState,
 };
 pub use themed::{
     tab_styles, AlertDialog, Avatar, Badge, Button, ButtonSize, ButtonState, ButtonVariant, Card,

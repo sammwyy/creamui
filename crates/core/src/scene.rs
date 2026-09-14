@@ -350,6 +350,31 @@ thread_local! {
     static PAINT_INSTANCE_VISITS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 
+/// How far a border or outline paints outside its own rect.
+fn paint_overflow(paint: &crate::PaintStyle) -> f32 {
+    paint
+        .border
+        .map(|b| b.width / 2.0)
+        .unwrap_or(0.0)
+        .max(paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0))
+}
+
+/// The largest [`paint_overflow`] across any single interaction state —
+/// checking each flag alone covers every combination too, since `resolve`'s
+/// cascade only ever picks one state's patch per field.
+fn max_paint_overflow(style: &crate::Style) -> f32 {
+    [
+        crate::StyleState::NORMAL,
+        crate::StyleState::NORMAL.with_hovered(true),
+        crate::StyleState::NORMAL.with_pressed(true),
+        crate::StyleState::NORMAL.with_focused(true),
+        crate::StyleState::NORMAL.with_disabled(true),
+    ]
+    .iter()
+    .map(|&state| paint_overflow(&style.resolve(state).paint))
+    .fold(0.0f32, f32::max)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_instance(
     tree: &Tree,
@@ -423,12 +448,7 @@ fn paint_instance(
         // cover that overflow too, on both the miss path (about to paint
         // it) and the hit path (about to composite a layer sized for it).
         let resolved = instance.style.resolve(states);
-        let overflow = resolved
-            .paint
-            .border
-            .map(|b| b.width / 2.0)
-            .unwrap_or(0.0)
-            .max(resolved.paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0));
+        let overflow = paint_overflow(&resolved.paint);
         let layer_rect = if overflow > 0.0 {
             Rect {
                 x: rect.x - overflow,
@@ -608,7 +628,24 @@ fn paint_instance(
     // Portal layers escape ancestor clips.
     let clips = instance.widget.clips_children() && mode != PaintMode::Absolute;
     let child_clip = if clips {
-        match rect.intersect(effective_clip) {
+        // Give a child's own border/outline overflow (e.g. a focus ring)
+        // headroom so this container's own tight-fit edge doesn't clip it.
+        let margin = instance
+            .children
+            .iter()
+            .map(|child| max_paint_overflow(&child.style))
+            .fold(0.0f32, f32::max);
+        let clip_rect = if margin > 0.0 {
+            Rect {
+                x: rect.x - margin,
+                y: rect.y - margin,
+                width: rect.width + margin * 2.0,
+                height: rect.height + margin * 2.0,
+            }
+        } else {
+            rect
+        };
+        match clip_rect.intersect(effective_clip) {
             Some(c) => c,
             None => {
                 // fully clipped away: nothing inside could be visible either
@@ -1238,6 +1275,7 @@ mod tests {
         cached_layers: std::collections::HashSet<u64>,
         color_scheme: creamui_theme::ColorScheme,
         last_push_layer_rect: Option<Rect>,
+        last_push_clip_rect: Option<Rect>,
     }
     impl AnimPainter {
         fn new() -> Self {
@@ -1247,6 +1285,7 @@ mod tests {
                 cached_layers: std::collections::HashSet::new(),
                 color_scheme: creamui_theme::ColorScheme::default(),
                 last_push_layer_rect: None,
+                last_push_clip_rect: None,
             }
         }
     }
@@ -1282,6 +1321,9 @@ mod tests {
         }
         fn forget_layer(&mut self, id: u64) {
             self.cached_layers.remove(&id);
+        }
+        fn push_clip_rounded(&mut self, rect: Rect, _corner_radius: f32) {
+            self.last_push_clip_rect = Some(rect);
         }
     }
 
@@ -1425,6 +1467,51 @@ mod tests {
         fn paint_fingerprint(&self) -> Option<u64> {
             Some(self.fingerprint)
         }
+    }
+
+    struct ClippingRoot {
+        child: Option<BoxedWidget>,
+    }
+    impl crate::widget::Widget for ClippingRoot {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style::default().into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            self.child.take().into_iter().collect()
+        }
+        fn clips_children(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn a_clipping_containers_child_clip_covers_the_childs_border_overflow() {
+        let build = || -> BoxedWidget {
+            Box::new(Root {
+                children: vec![Box::new(ClippingRoot {
+                    child: Some(Box::new(BorderedFingerprintWidget {
+                        fingerprint: 1,
+                        border_width: 8.0,
+                    })),
+                })],
+            })
+        };
+
+        let mut renderer = Renderer::new();
+        let mut painter = AnimPainter::new();
+        renderer.render(build(), VIEWPORT, &mut painter);
+
+        // The container shrinks to fit its 10x10 child exactly, so its own
+        // edge sits flush against the child's — a naive clip there would cut
+        // off the border's overflow past that edge.
+        let clip = painter
+            .last_push_clip_rect
+            .expect("a clipping container pushes a clip");
+        assert!(
+            clip.width > 10.0 && clip.height > 10.0,
+            "child clip {clip:?} must have headroom for the child's border overflow"
+        );
     }
 
     #[test]

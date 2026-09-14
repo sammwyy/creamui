@@ -134,7 +134,12 @@ impl Button {
                     background.mix(theme.text_primary, 0.14)
                 },
             ))
-            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0));
+            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0))
+            .disabled_style(
+                creamui_core::StateStyle::new()
+                    .background(theme.surface_hover)
+                    .border(theme.border, 1.0),
+            );
         let mut button = Self {
             inner,
             theme,
@@ -208,6 +213,9 @@ impl Button {
 }
 
 impl Widget for Button {
+    fn style_state(&self) -> creamui_core::StyleState {
+        self.inner.style_state()
+    }
     fn focusable(&self) -> bool {
         self.inner.focusable()
     }
@@ -222,18 +230,7 @@ impl Widget for Button {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if self.enabled_children.is_some() {
-            let radius = self
-                .inner
-                .style_declaration()
-                .paint
-                .corner_radius
-                .unwrap_or(0.0);
-            painter.fill_rect(rect, self.theme.surface_hover, radius);
-            painter.stroke_rect(rect, self.theme.border, 1., radius);
-        } else {
-            self.inner.paint(painter, rect);
-        }
+        self.inner.paint(painter, rect);
     }
 
     fn children(&mut self) -> Vec<BoxedWidget> {

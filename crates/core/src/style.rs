@@ -897,6 +897,28 @@ impl Style {
         }
         self
     }
+
+    /// `self`'s paint, typography and interaction states survive unless
+    /// `incoming` explicitly sets them; `incoming`'s layout always wins.
+    ///
+    /// A caller-supplied `style` prop is usually a bare `layout::Style`
+    /// widened to `Style`, leaving every other field at its default.
+    /// Applying it with plain field assignment would erase colors, fonts
+    /// and state patches a component already baked in at construction from
+    /// the theme, so wrapper widgets should route `Styled::set_style`
+    /// through this instead.
+    pub fn merged_over(self, incoming: Self) -> Self {
+        Self {
+            layout: incoming.layout,
+            paint: self.paint.patched(incoming.paint),
+            typography: self.typography.patched(&incoming.typography),
+            states: if incoming.states == InteractionStyles::default() {
+                self.states
+            } else {
+                incoming.states
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1039,5 +1061,35 @@ mod tests {
             value.resolve(&ColorScheme::light()),
             ColorScheme::light().accent
         );
+    }
+
+    #[test]
+    fn merged_over_keeps_base_paint_and_typography_when_incoming_is_unset() {
+        let base = Style::new()
+            .background(Color::rgb(10, 20, 30))
+            .color(Color::rgb(1, 1, 1))
+            .bold(true);
+        let incoming = Style {
+            layout: crate::layout::Style {
+                position: crate::layout::Position::Absolute,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merged_over(incoming);
+        assert_eq!(merged.paint.background, Some(Color::rgb(10, 20, 30).into()));
+        assert_eq!(merged.typography.color, Some(Color::rgb(1, 1, 1).into()));
+        assert_eq!(merged.typography.bold, Some(true));
+        assert_eq!(merged.layout.position, crate::layout::Position::Absolute);
+    }
+
+    #[test]
+    fn merged_over_lets_incoming_override_fields_it_explicitly_sets() {
+        let base = Style::new().background(Color::rgb(10, 20, 30));
+        let incoming = Style::new().background(Color::rgb(99, 99, 99));
+
+        let merged = base.merged_over(incoming);
+        assert_eq!(merged.paint.background, Some(Color::rgb(99, 99, 99).into()));
     }
 }

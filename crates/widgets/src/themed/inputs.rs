@@ -1,4 +1,5 @@
 use super::*;
+
 /// A themed single-line text input.
 pub struct TextInput {
     inner: RawTextInput,

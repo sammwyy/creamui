@@ -6,11 +6,17 @@
 //!   independently swappable [`creamui_theme::ColorScheme`].
 //! - [`layout`] has convenience constructors for flex/grid layout styles.
 
+// Both macros route through `Style::merged_over` rather than a wholesale
+// field replace: a caller-supplied `style` prop is usually a bare
+// `layout::Style` widened to `Style` with every paint/typography field
+// unset, and assigning it directly would erase colors, fonts and state
+// patches the component already baked in at construction from the theme.
 macro_rules! impl_styled_inner {
     ($type:ty) => {
         impl creamui_core::Styled for $type {
             fn set_style(&mut self, style: creamui_core::Style) {
-                creamui_core::Styled::set_style(&mut self.inner, style);
+                let merged = creamui_core::Widget::style(&self.inner).merged_over(style);
+                creamui_core::Styled::set_style(&mut self.inner, merged);
             }
         }
     };
@@ -20,7 +26,7 @@ macro_rules! impl_styled_field {
     ($type:ty) => {
         impl creamui_core::Styled for $type {
             fn set_style(&mut self, style: creamui_core::Style) {
-                self.style = style;
+                self.style = self.style.clone().merged_over(style);
             }
         }
     };

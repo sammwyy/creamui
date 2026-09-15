@@ -142,6 +142,29 @@ impl RecordingPainter {
     pub fn into_ops(self) -> Vec<PaintOp> {
         self.ops
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_text(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        font_size: f32,
+        align: crate::TextAlign,
+        family: Option<&str>,
+        bold: bool,
+    ) {
+        self.ops
+            .push(PaintOp::Primitive(PaintPrimitive::Text(TextPrimitive {
+                rect,
+                text: Rc::from(text),
+                color,
+                font_size,
+                align,
+                family: family.map(Rc::from),
+                bold,
+            })));
+    }
 }
 
 impl crate::Painter for RecordingPainter {
@@ -183,16 +206,34 @@ impl crate::Painter for RecordingPainter {
         font_size: f32,
         align: crate::TextAlign,
     ) {
-        self.ops
-            .push(PaintOp::Primitive(PaintPrimitive::Text(TextPrimitive {
-                rect,
-                text: Rc::from(text),
-                color,
-                font_size,
-                align,
-                family: None,
-                bold: false,
-            })));
+        self.push_text(rect, text, color, font_size, align, None, false);
+    }
+
+    fn fill_text_weight(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        font_size: f32,
+        align: crate::TextAlign,
+        bold: bool,
+        _italic: bool,
+    ) {
+        self.push_text(rect, text, color, font_size, align, None, bold);
+    }
+
+    fn fill_text_font(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        font_size: f32,
+        align: crate::TextAlign,
+        family: Option<&str>,
+        bold: bool,
+        _italic: bool,
+    ) {
+        self.push_text(rect, text, color, font_size, align, family, bold);
     }
 
     fn push_clip(&mut self, rect: crate::Rect) {
@@ -243,6 +284,73 @@ mod recording_painter_tests {
                 })),
                 PaintOp::PopClip,
             ]
+        );
+    }
+
+    #[test]
+    fn fill_text_weight_records_bold_but_not_family() {
+        let mut painter = RecordingPainter::new(creamui_theme::ColorScheme::default());
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        painter.fill_text_weight(
+            rect,
+            "hi",
+            creamui_theme::Color::rgb(1, 2, 3),
+            14.0,
+            crate::TextAlign::Start,
+            true,
+            false,
+        );
+
+        assert_eq!(
+            painter.into_ops(),
+            vec![PaintOp::Primitive(PaintPrimitive::Text(TextPrimitive {
+                rect,
+                text: Rc::from("hi"),
+                color: creamui_theme::Color::rgb(1, 2, 3),
+                font_size: 14.0,
+                align: crate::TextAlign::Start,
+                family: None,
+                bold: true,
+            }))]
+        );
+    }
+
+    #[test]
+    fn fill_text_font_records_family_and_bold() {
+        let mut painter = RecordingPainter::new(creamui_theme::ColorScheme::default());
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        painter.fill_text_font(
+            rect,
+            "hi",
+            creamui_theme::Color::rgb(1, 2, 3),
+            14.0,
+            crate::TextAlign::Start,
+            Some("Inter"),
+            true,
+            false,
+        );
+
+        assert_eq!(
+            painter.into_ops(),
+            vec![PaintOp::Primitive(PaintPrimitive::Text(TextPrimitive {
+                rect,
+                text: Rc::from("hi"),
+                color: creamui_theme::Color::rgb(1, 2, 3),
+                font_size: 14.0,
+                align: crate::TextAlign::Start,
+                family: Some(Rc::from("Inter")),
+                bold: true,
+            }))]
         );
     }
 }

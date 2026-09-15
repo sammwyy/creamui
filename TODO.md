@@ -179,13 +179,19 @@
   single block per node — text selection highlighting, underline/
   strikethrough decorations, and per-glyph color runs (the legacy
   `Painter::fill_text_selected` path) have no `gpu_scene` equivalent.
-- `TextPrimitive::family`/`bold` are populated for native
-  `NodeKind::Text` nodes in `generate_fragment`, but `RecordingPainter`
-  (the legacy-widget paint-recording path) still only implements the
-  base `Painter::fill_text`, not `fill_text_weight`/`fill_text_font`, so
-  a legacy widget's family/bold choice never reaches a recorded
-  `TextPrimitive` — consistent with `NodeKind::Custom` already getting an
-  empty fragment (see the `mount_legacy_widget` entry above).
+- `RecordingPainter` (`crates/core/src/runtime/paint.rs`) now implements
+  `fill_text_weight`/`fill_text_font` directly, so a legacy widget's
+  family/bold choice reaches a recorded `TextPrimitive` instead of
+  silently dropping through `Painter`'s lossy default chain down to
+  `fill_text`. `RecordingPainter` itself is still not called from
+  anywhere live — `mount_legacy_widget` drops the widget after
+  translating it, so there's nothing yet that constructs one against a
+  still-alive widget post-layout (see the `Runtime::generate_fragment`
+  entry above, unchanged by this). `fill_text_selected`/
+  `fill_text_selected_font` (selection highlighting) and `italic` still
+  fall through the lossy default, since `TextPrimitive` has no field for
+  either — a larger change than this one, and already covered by the
+  `sync_text_node` entry below for the (also unwired) `gpu_scene` path.
 - `Runtime::rebuild_composite` (REFACTOR.md Phase 10) and
   `GpuSceneState::sync_transform` exist and are tested/benchmarked in
   isolation, but nothing calls either from a shared place — same

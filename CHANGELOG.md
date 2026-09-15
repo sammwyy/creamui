@@ -47,6 +47,8 @@ All notable changes to CreamUI will be documented in this file.
 - Fixed the persistent runtime tree's hit-testing to give an absolutely
   positioned node (a popover, an overlay) priority over a later flow
   sibling, regardless of tree depth or document order.
+- Fixed `RecordingPainter` dropping a legacy widget's bold/font-family
+  choice instead of recording it.
 
 ## 0.1.1
 

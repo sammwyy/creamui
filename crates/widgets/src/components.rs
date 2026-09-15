@@ -16,6 +16,7 @@ pub enum Symbol {
     Keyboard,
     Check,
     ChevronRight,
+    ChevronLeft,
     Search,
     Sun,
     Moon,
@@ -69,6 +70,7 @@ impl Icon {
         match symbol {
             Symbol::Check => line(&[(5., 12.), (10., 17.), (19., 7.)]),
             Symbol::ChevronRight => line(&[(9., 6.), (15., 12.), (9., 18.)]),
+            Symbol::ChevronLeft => line(&[(15., 6.), (9., 12.), (15., 18.)]),
             Symbol::Display => {
                 line(&[(3., 4.), (21., 4.), (21., 17.), (3., 17.), (3., 4.)]);
                 line(&[(12., 17.), (12., 21.)]);

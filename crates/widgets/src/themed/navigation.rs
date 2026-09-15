@@ -348,6 +348,17 @@ impl Widget for SidebarSeparator {
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if let Some(label) = &self.label {
             painter.fill_text(rect, label, self.colors.muted_text, 11.0, TextAlign::Start);
+            let line_x = rect.x + label.chars().count() as f32 * 6.0 + 8.0;
+            painter.fill_rect(
+                Rect {
+                    x: line_x,
+                    y: rect.y + rect.height / 2.0,
+                    width: (rect.x + rect.width - line_x).max(0.0),
+                    height: 1.0,
+                },
+                self.colors.separator,
+                0.0,
+            );
         } else {
             let y = rect.y + rect.height / 2.0;
             painter.fill_rect(
@@ -535,8 +546,10 @@ impl SidebarItem {
             inner.style.states.hover.paint.background = Some(colors.hover_background.into());
             inner.style.states.pressed.paint.background = Some(colors.hover_background.into());
         }
-        inner.style.states.focus.paint.outline =
-            Some(creamui_core::Border::new(colors.indicator, 2.0));
+        if !active {
+            inner.style.states.focus.paint.outline =
+                Some(creamui_core::Border::new(colors.indicator, 2.0));
+        }
         inner.on_hover = on_hover;
         Self { inner }
     }
@@ -577,40 +590,60 @@ impl Widget for SidebarItem {
 /// instead, with an automatic back item to return.
 pub struct SidebarNode<T> {
     pub id: T,
+    pub icon: crate::Symbol,
     pub label: String,
     pub children: Vec<SidebarNode<T>>,
+    inline_group: bool,
 }
 
 impl<T> SidebarNode<T> {
-    pub fn leaf(id: T, label: impl Into<String>) -> Self {
+    pub fn leaf(id: T, icon: crate::Symbol, label: impl Into<String>) -> Self {
         Self {
             id,
+            icon,
             label: label.into(),
             children: Vec::new(),
+            inline_group: false,
         }
     }
 
-    pub fn parent(id: T, label: impl Into<String>, children: Vec<SidebarNode<T>>) -> Self {
+    pub fn parent(
+        id: T,
+        icon: crate::Symbol,
+        label: impl Into<String>,
+        children: Vec<SidebarNode<T>>,
+    ) -> Self {
         Self {
             id,
+            icon,
             label: label.into(),
             children,
+            inline_group: false,
+        }
+    }
+
+    /// A titled group rendered inline with its children at the current level.
+    pub fn group(id: T, label: impl Into<String>, children: Vec<SidebarNode<T>>) -> Self {
+        Self {
+            id,
+            icon: crate::Symbol::Grid,
+            label: label.into(),
+            children,
+            inline_group: true,
         }
     }
 }
 
-/// A [`Sidebar`] with drill-down navigation, in the same
-/// "compose-a-widget-tree" spirit as [`Sidebar`] itself: `tree` describes
-/// the whole hierarchy, `nav` (an app-owned [`SidebarNavController`]) tracks
-/// which category is currently entered, and clicking a node with children
-/// replaces the visible level with those children plus a back item, while
-/// clicking a leaf calls `on_select`. `style` is the container style (as
-/// passed to [`Sidebar::new`]); `item_style` is applied to every rendered
-/// row (as passed to [`SidebarItem::new`]).
+/// A [`crate::NavigationItem`] rail with drill-down navigation: `tree`
+/// describes the whole hierarchy, `nav` (an app-owned
+/// [`SidebarNavController`]) tracks which category is currently entered,
+/// and clicking a node with children replaces the visible level with those
+/// children plus a back item, while clicking a leaf calls `on_select`.
+/// Unstyled itself — like a native app's sidebar rail, it's meant to sit
+/// directly on the window's canvas color, so `style` only needs to set its
+/// width/padding.
 pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
-    colors: TabColors,
     style: Style,
-    item_style: Style,
     tree: &[SidebarNode<T>],
     nav: &SidebarNavController<T>,
     active: Option<&T>,
@@ -629,29 +662,60 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
     let mut items: Vec<BoxedWidget> = Vec::with_capacity(level.len() + 1);
     if !path.is_empty() {
         let back = nav.clone();
-        items.push(Box::new(SidebarItem::new(
-            colors,
-            item_style.clone(),
-            "\u{2039} Back",
+        items.push(Box::new(crate::NavigationItem::new(
+            crate::Symbol::ChevronLeft,
+            "Back",
             false,
             move || back.back(),
         )));
     }
     for node in level {
+        if node.inline_group {
+            items.push(Box::new(
+                SidebarSeparator::new(
+                    TabColors::sidebar(),
+                    Style {
+                        size: creamui_core::layout::Size {
+                            width: Dimension::Percent(1.0),
+                            height: Dimension::Length(24.0),
+                        },
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    },
+                )
+                .label(node.label.clone()),
+            ));
+            for child in &node.children {
+                let id = child.id.clone();
+                let is_leaf = child.children.is_empty();
+                let is_active = is_leaf && active == Some(&id);
+                let nav = nav.clone();
+                let on_select = on_select.clone();
+                let label = child.label.clone();
+                let icon = child.icon;
+                items.push(Box::new(crate::NavigationItem::new(
+                    icon,
+                    label,
+                    is_active,
+                    move || {
+                        if is_leaf {
+                            on_select(id.clone());
+                        } else {
+                            nav.enter(id.clone());
+                        }
+                    },
+                )));
+            }
+            continue;
+        }
         let id = node.id.clone();
         let is_leaf = node.children.is_empty();
-        let label = if is_leaf {
-            node.label.clone()
-        } else {
-            format!("{}  \u{203a}", node.label)
-        };
         let is_active = is_leaf && active == Some(&id);
         let nav = nav.clone();
         let on_select = on_select.clone();
-        items.push(Box::new(SidebarItem::new(
-            colors,
-            item_style.clone(),
-            label,
+        items.push(Box::new(crate::NavigationItem::new(
+            node.icon,
+            node.label.clone(),
             is_active,
             move || {
                 if is_leaf {
@@ -663,5 +727,5 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
         )));
     }
 
-    Box::new(Sidebar::new(colors, style).with_children(items))
+    Box::new(RawView::new(style).with_children(items))
 }

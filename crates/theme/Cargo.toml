@@ -14,3 +14,5 @@ categories = ["gui"]
 [dependencies]
 creamui-reactive = { workspace = true }
 creamui-fonts = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

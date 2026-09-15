@@ -1,8 +1,13 @@
 //! Theme primitives split deliberately in two: [`ColorScheme`] owns colours,
 //! while [`Theme`] owns the shape and behaviour of components.
 
+mod persist;
+pub use persist::active_theme;
+
+use serde::{Deserialize, Serialize};
+
 /// An 8-bit sRGB color with alpha.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -38,7 +43,7 @@ impl Color {
 }
 
 /// All colour tokens. This can be changed independently from a [`Theme`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ColorScheme {
     /// Background primary: the app canvas.
     pub surface: Color,

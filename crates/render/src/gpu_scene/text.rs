@@ -169,6 +169,30 @@ fn shape_run(text: &str, font_size: f32, max_width: f32, family: &str, bold: boo
     }
 }
 
+/// Approximates an underline/strikethrough bar for a single-line text run
+/// at `(origin_x, origin_y)` — a wrapped multi-line run only gets one bar,
+/// at the first line's position (see `TODO.md`).
+pub fn decoration_rect(
+    origin_x: f32,
+    origin_y: f32,
+    width: f32,
+    font_size: f32,
+    strikethrough: bool,
+) -> creamui_core::Rect {
+    let thickness = (font_size * 0.08).max(1.0);
+    let offset = if strikethrough {
+        font_size * 0.45
+    } else {
+        font_size * 0.92
+    };
+    creamui_core::Rect {
+        x: origin_x,
+        y: origin_y + offset,
+        width,
+        height: thickness,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtlasRect {
     pub x: u32,
@@ -179,11 +203,8 @@ pub struct AtlasRect {
 
 const GLYPH_PADDING: u32 = 1;
 
-/// A shelf-packed glyph atlas: rasterized glyph bitmaps get a stable
-/// [`AtlasRect`] within a square region of `size` so a GPU-side owner can
-/// upload each glyph once and reference it by UV thereafter (REFACTOR.md
-/// 15.4). [`GlyphAtlas::grow`] doubles `size` without disturbing any
-/// existing placement.
+/// A shelf-packed glyph atlas mapping rasterized glyphs to a stable
+/// [`AtlasRect`] within a square region of `size`.
 pub struct GlyphAtlas {
     size: u32,
     cursor_x: u32,
@@ -247,13 +268,8 @@ impl GlyphAtlas {
         Some(rect)
     }
 
-    /// Doubles the atlas's pixel size without moving any already-placed
-    /// glyph — the shelf packer only ever bin-packs into `[0, size)`, so
-    /// enlarging `size` alone can't invalidate an existing rect, it just
-    /// gives [`GlyphAtlas::place`] more room to keep packing into. The
-    /// underlying GPU texture and every already-baked UV referencing this
-    /// atlas still need to be grown/rebaked by the caller — see
-    /// [`GlyphInstance::rescaled_uv`].
+    /// Doubles `size`; existing placements stay valid, since the packer
+    /// never repositions them.
     pub fn grow(&mut self) {
         self.size *= 2;
     }
@@ -321,11 +337,6 @@ impl GlyphInstance {
         }
     }
 
-    /// Rescales `uv_min`/`uv_max` by `ratio` — used to rebake every
-    /// already-placed glyph's UVs after [`GlyphAtlas::grow`] doubles the
-    /// atlas's pixel size out from under them (the underlying pixel rect
-    /// doesn't move, but its normalized UV fraction of the whole atlas
-    /// halves).
     pub fn rescaled_uv(self, ratio: f32) -> Self {
         let [umin_x, umin_y] = self.uv_min;
         let [umax_x, umax_y] = self.uv_max;
@@ -490,6 +501,27 @@ mod tests {
         let unwrapped = cache.shape("hello world", 16.0, 1_000_000.0, None, false);
         let wrapped = cache.shape("hello world", 16.0, 10.0, None, false);
         assert!(wrapped.height > unwrapped.height);
+    }
+
+    #[test]
+    fn decoration_rect_spans_the_given_origin_and_width() {
+        let rect = decoration_rect(10.0, 20.0, 50.0, 16.0, false);
+        assert_eq!(rect.x, 10.0);
+        assert_eq!(rect.width, 50.0);
+    }
+
+    #[test]
+    fn strikethrough_sits_above_underline() {
+        let underline = decoration_rect(0.0, 0.0, 50.0, 16.0, false);
+        let strikethrough = decoration_rect(0.0, 0.0, 50.0, 16.0, true);
+        assert!(strikethrough.y < underline.y);
+    }
+
+    #[test]
+    fn decoration_thickness_scales_with_font_size_but_has_a_floor() {
+        assert_eq!(decoration_rect(0.0, 0.0, 10.0, 1.0, false).height, 1.0);
+        let thick = decoration_rect(0.0, 0.0, 10.0, 100.0, false);
+        assert_eq!(thick.height, 8.0);
     }
 
     #[test]

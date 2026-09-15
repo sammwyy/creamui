@@ -152,9 +152,11 @@
   `gpu.rs` counters above. Needs a windowed smoke test (a scene with a
   handful of quads, compared visually or via `GpuState`'s CPU path) on a
   machine with a GPU and display attached before this is trusted.
-- `GpuSceneState`'s instance buffer only grows, never shrinks — a scene
-  that mounts many quads and then unmounts most of them keeps the larger
-  buffer allocated. Same applies to the glyph instance buffer.
+- `resized_capacity` (`crates/render/src/gpu_scene/mod.rs`) now shrinks
+  the quad/glyph instance buffers once usage drops to a quarter of
+  capacity, not just growing past it — unit-tested in isolation; the
+  actual `wgpu::Buffer` recreation this drives is unverified against a
+  live surface, same constraint as the rest of `gpu_scene`.
 - `GlyphAtlas::grow` now doubles `size` without touching `placed`/cursor
   state — the shelf packer only ever bin-packs into `[0, size)`, so
   enlarging `size` can't invalidate an existing rect, it only gives
@@ -182,10 +184,20 @@
   align/paint-position offsets afterward, the way `sync_text_node` does —
   not attempted here to avoid risking the live rendering path with no way
   to visually verify the change in this environment.
-- `sync_text_node` only emits `PaintPrimitive::Quad`/`Border` fill in a
-  single block per node — text selection highlighting, underline/
-  strikethrough decorations, and per-glyph color runs (the legacy
-  `Painter::fill_text_selected` path) have no `gpu_scene` equivalent.
+- `TextPrimitive` now carries `underline`/`strikethrough` (populated from
+  `TypographyStyle` by `generate_fragment`; `RecordingPainter` always sets
+  both `false`, since the `Painter` trait has no such parameters to
+  source them from). `sync_text_node` renders each as its own quad in
+  `quad_store` (tracked per-node in `GpuSceneState::node_text_decorations`,
+  also kept in sync by `sync_transform`/`sync_opacity`/`sync_clip`).
+  Position/thickness (`gpu_scene::text::decoration_rect`) are approximated
+  from `font_size` ratios, not real font metrics (no ascent/descent
+  available here) — reasonable for the common single-line case, but a
+  wrapped multi-line run only gets one bar, at the first line's position,
+  since `ShapedRun` doesn't expose per-line extents. Text selection
+  highlighting, per-glyph color runs, and italic (the rest of the legacy
+  `Painter::fill_text_selected` surface) still have no `gpu_scene`
+  equivalent.
 - `RecordingPainter` (`crates/core/src/runtime/paint.rs`) now implements
   `fill_text_weight`/`fill_text_font` directly, so a legacy widget's
   family/bold choice reaches a recorded `TextPrimitive` instead of

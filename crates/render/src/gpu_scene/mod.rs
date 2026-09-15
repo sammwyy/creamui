@@ -53,6 +53,18 @@ fn grow_instance_buffer(
     })
 }
 
+/// New capacity to resize an instance buffer to, or `None` to leave it as
+/// is. Grows past `current`; shrinks once usage drops to a quarter of it.
+fn resized_capacity(needed: u32, current: u32) -> Option<u32> {
+    let grow = needed > current;
+    let shrink = current > MIN_INSTANCE_CAPACITY && needed.saturating_mul(4) <= current;
+    if !grow && !shrink {
+        return None;
+    }
+    let candidate = needed.next_power_of_two().max(MIN_INSTANCE_CAPACITY);
+    (candidate != current).then_some(candidate)
+}
+
 pub struct GpuSceneState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -83,6 +95,7 @@ pub struct GpuSceneState {
     node_transforms: HashMap<RuntimeNodeId, Transform2D>,
     node_opacities: HashMap<RuntimeNodeId, f32>,
     node_clips: HashMap<RuntimeNodeId, Option<Rect>>,
+    node_text_decorations: HashMap<RuntimeNodeId, Vec<GpuPrimitiveId>>,
 }
 
 impl GpuSceneState {
@@ -405,6 +418,7 @@ impl GpuSceneState {
             node_transforms: HashMap::new(),
             node_opacities: HashMap::new(),
             node_clips: HashMap::new(),
+            node_text_decorations: HashMap::new(),
         }
     }
 
@@ -420,13 +434,8 @@ impl GpuSceneState {
         );
     }
 
-    /// Doubles the glyph atlas's texture and every already-baked glyph
-    /// instance's UV to match, called by [`GpuSceneState::sync_text_node`]
-    /// when [`GlyphAtlas::place`] runs out of room. The old texture's
-    /// pixel content is copied into the new, larger texture at its
-    /// original coordinates — [`GlyphAtlas::grow`] never moves an existing
-    /// placement, only [`GlyphAtlas::size`] changes, so every already-baked
-    /// UV just needs rescaling to the new size, not repositioning.
+    /// Grows the atlas texture and rebakes every already-placed glyph's UV
+    /// to match.
     fn grow_glyph_atlas(&mut self) {
         let old_size = self.glyph_atlas.size();
         self.glyph_atlas.grow();
@@ -498,14 +507,9 @@ impl GpuSceneState {
             .rescale_uv(old_size as f32 / new_size as f32);
     }
 
-    /// Replaces `node`'s quad instances with the ones derived from its
-    /// current paint fragment, `transform`, `opacity`, and `clip`, reusing
-    /// existing [`GpuPrimitiveId`] slots where the instance count didn't
-    /// change so most updates only dirty a handful of buffer slots instead
-    /// of the whole scene. A single-property change should go through
-    /// [`GpuSceneState::sync_transform`]/[`GpuSceneState::sync_opacity`]/
-    /// [`GpuSceneState::sync_clip`] instead, which skip re-deriving from
-    /// `fragment` entirely.
+    /// Rebuilds `node`'s quad instances from `fragment`. For a
+    /// single-property change, use `sync_transform`/`sync_opacity`/
+    /// `sync_clip` instead.
     pub fn sync_node(
         &mut self,
         node: RuntimeNodeId,
@@ -547,13 +551,8 @@ impl GpuSceneState {
         self.node_clips.insert(node, clip);
     }
 
-    /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
-    /// sure every glyph it needs is rasterized into the atlas, and replaces
-    /// `node`'s glyph instances the same incremental way
-    /// [`GpuSceneState::sync_node`] does for quads. A glyph that doesn't
-    /// fit grows the atlas once via [`GpuSceneState::grow_glyph_atlas`] and
-    /// retries; a glyph that still doesn't fit after that (larger than the
-    /// doubled atlas) is silently dropped.
+    /// Shapes `primitive`'s text and rebuilds `node`'s glyph instances,
+    /// the `sync_node` equivalent for text.
     pub fn sync_text_node(
         &mut self,
         node: RuntimeNodeId,
@@ -590,6 +589,45 @@ impl GpuSceneState {
         let align_y = ((primitive.rect.height - shaped.height) / 2.0).max(0.0);
         let [r, g, b, a] = quad::quad_color(primitive.color, self.decode_srgb);
         let color = [r, g, b, a * opacity];
+
+        let mut decoration_instances = Vec::new();
+        let origin_x = primitive.rect.x + align_x + transform.x;
+        let origin_y = primitive.rect.y + align_y + transform.y;
+        let mut push_decoration = |strikethrough: bool| {
+            let rect = text::decoration_rect(
+                origin_x,
+                origin_y,
+                shaped.width,
+                primitive.font_size,
+                strikethrough,
+            );
+            decoration_instances.push(
+                QuadInstance::fill(rect, primitive.color, 0.0, self.decode_srgb)
+                    .scaled_alpha(opacity)
+                    .clipped(clip_min, clip_max),
+            );
+        };
+        if primitive.underline {
+            push_decoration(false);
+        }
+        if primitive.strikethrough {
+            push_decoration(true);
+        }
+        let old_decoration_ids = self.node_text_decorations.remove(&node).unwrap_or_default();
+        let mut decoration_ids = Vec::with_capacity(decoration_instances.len());
+        for (i, instance) in decoration_instances.into_iter().enumerate() {
+            match old_decoration_ids.get(i) {
+                Some(&id) => {
+                    self.quad_store.update(id, instance);
+                    decoration_ids.push(id);
+                }
+                None => decoration_ids.push(self.quad_store.insert(instance)),
+            }
+        }
+        for &stale in &old_decoration_ids[decoration_ids.len()..] {
+            self.quad_store.remove(stale);
+        }
+        self.node_text_decorations.insert(node, decoration_ids);
 
         let mut new_instances = Vec::with_capacity(shaped.glyphs.len());
         for glyph in &shaped.glyphs {
@@ -693,6 +731,12 @@ impl GpuSceneState {
                 self.quad_store.update(id, current.translated(dx, dy));
             }
         }
+        if let Some(ids) = self.node_text_decorations.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store.update(id, current.translated(dx, dy));
+            }
+        }
         if let Some(ids) = self.node_glyphs.get(&node) {
             for &id in ids {
                 let current = self.glyph_store.get(id);
@@ -702,13 +746,8 @@ impl GpuSceneState {
         self.node_transforms.insert(node, transform);
     }
 
-    /// Rescales `node`'s already-retained quad and glyph alpha by the ratio
-    /// between `opacity` and whatever was last applied, the same
-    /// property-only update path [`GpuSceneState::sync_transform`] uses for
-    /// position. Since the ratio is relative to the previously applied
-    /// opacity, a node last synced at `0.0` can't recover a nonzero alpha
-    /// this way — that case needs a full [`GpuSceneState::sync_node`]/
-    /// [`GpuSceneState::sync_text_node`] call instead (see `TODO.md`).
+    /// A node last synced at `0.0` opacity can't recover a nonzero alpha
+    /// through this ratio-based path — see `TODO.md`.
     pub fn sync_opacity(&mut self, node: RuntimeNodeId, opacity: f32) {
         let previous = self.node_opacities.get(&node).copied().unwrap_or(1.0);
         if previous == opacity {
@@ -726,6 +765,12 @@ impl GpuSceneState {
                 self.quad_store.update(id, current.scaled_alpha(ratio));
             }
         }
+        if let Some(ids) = self.node_text_decorations.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store.update(id, current.scaled_alpha(ratio));
+            }
+        }
         if let Some(ids) = self.node_glyphs.get(&node) {
             for &id in ids {
                 let current = self.glyph_store.get(id);
@@ -735,11 +780,6 @@ impl GpuSceneState {
         self.node_opacities.insert(node, opacity);
     }
 
-    /// Overwrites `node`'s already-retained quad and glyph clip bounds with
-    /// `clip`, the same property-only update path [`GpuSceneState::sync_transform`]
-    /// uses for position. Unlike [`GpuSceneState::sync_opacity`], a clip
-    /// bound is absolute rather than cumulative, so this needs no ratio and
-    /// no previously-applied state to recover.
     pub fn sync_clip(&mut self, node: RuntimeNodeId, clip: Option<Rect>) {
         if self.node_clips.get(&node).copied().flatten() == clip {
             return;
@@ -747,6 +787,13 @@ impl GpuSceneState {
         let (clip_min, clip_max) = quad::clip_bounds(clip);
 
         if let Some(ids) = self.node_quads.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store
+                    .update(id, current.clipped(clip_min, clip_max));
+            }
+        }
+        if let Some(ids) = self.node_text_decorations.get(&node) {
             for &id in ids {
                 let current = self.quad_store.get(id);
                 self.quad_store
@@ -772,6 +819,11 @@ impl GpuSceneState {
         if let Some(ids) = self.node_glyphs.remove(&node) {
             for id in ids {
                 self.glyph_store.remove(id);
+            }
+        }
+        if let Some(ids) = self.node_text_decorations.remove(&node) {
+            for id in ids {
+                self.quad_store.remove(id);
             }
         }
         self.node_transforms.remove(&node);
@@ -847,8 +899,7 @@ impl GpuSceneState {
     fn sync_quad_buffer(&mut self) {
         let needed = self.quad_store.instances().len() as u32;
 
-        if needed > self.quad_instance_capacity {
-            let capacity = needed.next_power_of_two().max(MIN_INSTANCE_CAPACITY);
+        if let Some(capacity) = resized_capacity(needed, self.quad_instance_capacity) {
             self.quad_instance_buffer = grow_instance_buffer(
                 &self.device,
                 "creamui-quad-instances",
@@ -883,8 +934,7 @@ impl GpuSceneState {
     fn sync_glyph_buffer(&mut self) {
         let needed = self.glyph_store.instances().len() as u32;
 
-        if needed > self.glyph_instance_capacity {
-            let capacity = needed.next_power_of_two().max(MIN_INSTANCE_CAPACITY);
+        if let Some(capacity) = resized_capacity(needed, self.glyph_instance_capacity) {
             self.glyph_instance_buffer = grow_instance_buffer(
                 &self.device,
                 "creamui-glyph-instances",
@@ -914,5 +964,35 @@ impl GpuSceneState {
         creamui_core::metrics::record(|m| {
             m.gpu_upload_bytes += std::mem::size_of_val(dirty_slice) as u64
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resized_capacity_grows_past_current() {
+        assert_eq!(resized_capacity(100, 64), Some(128));
+    }
+
+    #[test]
+    fn resized_capacity_shrinks_at_a_quarter_usage() {
+        assert_eq!(resized_capacity(32, 128), Some(64));
+    }
+
+    #[test]
+    fn resized_capacity_never_shrinks_below_the_minimum() {
+        assert_eq!(resized_capacity(0, MIN_INSTANCE_CAPACITY), None);
+    }
+
+    #[test]
+    fn resized_capacity_leaves_comfortable_usage_alone() {
+        assert_eq!(resized_capacity(40, 128), None);
+    }
+
+    #[test]
+    fn resized_capacity_is_none_when_the_candidate_matches_current() {
+        assert_eq!(resized_capacity(64, 64), None);
     }
 }

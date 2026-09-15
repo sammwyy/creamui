@@ -26,6 +26,8 @@ pub struct TextPrimitive {
     pub align: crate::TextAlign,
     pub family: Option<Rc<str>>,
     pub bold: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +99,8 @@ pub(super) fn generate_fragment(
                 align: typography.align.unwrap_or_default(),
                 family: typography.font_family.as_deref().map(Rc::from),
                 bold: typography.bold.unwrap_or(false),
+                underline: typography.underline.unwrap_or(false),
+                strikethrough: typography.strikethrough.unwrap_or(false),
             })));
         }
         NodeKind::Image(image) => {
@@ -163,6 +167,8 @@ impl RecordingPainter {
                 align,
                 family: family.map(Rc::from),
                 bold,
+                underline: false,
+                strikethrough: false,
             })));
     }
 }
@@ -316,6 +322,8 @@ mod recording_painter_tests {
                 align: crate::TextAlign::Start,
                 family: None,
                 bold: true,
+                underline: false,
+                strikethrough: false,
             }))]
         );
     }
@@ -350,6 +358,8 @@ mod recording_painter_tests {
                 align: crate::TextAlign::Start,
                 family: Some(Rc::from("Inter")),
                 bold: true,
+                underline: false,
+                strikethrough: false,
             }))]
         );
     }

@@ -656,6 +656,17 @@ mod tests {
         node
     }
 
+    fn text_node(
+        runtime: &mut Runtime,
+        text: &str,
+        style: crate::TypographyStyle,
+    ) -> RuntimeNodeId {
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Text(TextNode { text: text.into() }));
+        tx.apply(Mutation::SetTypographyStyle { node, style });
+        node
+    }
+
     #[test]
     fn rebuild_paint_generates_a_quad_for_a_background() {
         let mut runtime = Runtime::new();
@@ -674,6 +685,29 @@ mod tests {
                 }
             ))]
         );
+    }
+
+    #[test]
+    fn rebuild_paint_carries_underline_and_strikethrough_into_the_text_primitive() {
+        let mut runtime = Runtime::new();
+        let node = text_node(
+            &mut runtime,
+            "hi",
+            crate::TypographyStyle {
+                underline: Some(true),
+                strikethrough: Some(true),
+                ..Default::default()
+            },
+        );
+
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let paint::PaintOp::Primitive(paint::PaintPrimitive::Text(text)) = &fragment.ops[0] else {
+            panic!("expected a text primitive");
+        };
+        assert!(text.underline);
+        assert!(text.strikethrough);
     }
 
     #[test]

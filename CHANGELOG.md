@@ -44,6 +44,9 @@ All notable changes to CreamUI will be documented in this file.
 - Cache a leaf's measurement result within one layout pass instead of
   recomputing it every time `taffy`'s flex/grid algorithm re-queries the
   same node with identical inputs.
+- Fixed the persistent runtime tree's hit-testing to give an absolutely
+  positioned node (a popover, an overlay) priority over a later flow
+  sibling, regardless of tree depth or document order.
 
 ## 0.1.1
 

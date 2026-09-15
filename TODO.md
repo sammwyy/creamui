@@ -84,10 +84,21 @@
   O(whole tree), not O(interactive nodes). ~787µs for a 50,000-node tree
   with one interactive leaf (see `docs/performance/baseline.md`'s Phase 6
   section).
-- Hit-test entries are collected in plain depth-first child order with no
-  z-order/stacking-context handling (REFACTOR.md 12.2) — an absolutely
-  positioned node isn't given priority the way the legacy `Scene`'s
-  Flow/Absolute two-pass paint does.
+- REFACTOR.md 12.2: `Runtime::rebuild_hit_test` (`crates/core/src/runtime/events.rs`)
+  now mirrors the legacy `Scene`'s deferred Flow/Absolute two-pass paint
+  for `hit_entries` — every normal-flow node is collected first, then
+  every absolutely positioned subtree's nodes (in encounter order,
+  appended after), so `hit_test`'s reverse scan always picks an
+  absolutely positioned node over a flow sibling regardless of tree
+  depth/document order. A node nested inside an already-deferred absolute
+  subtree isn't independently re-deferred — its whole ancestor subtree
+  already moved as one unit (simpler than the legacy renderer's own
+  per-level Flow/Absolute mode-switching, and correct for a doubly-nested
+  absolute where the legacy path silently drops the paint). `focus_order`
+  is untouched — plain depth-first document order, since tab order
+  doesn't follow paint order. No stacking-context/z-index concept beyond
+  "absolute or not" — two absolutely positioned nodes at the same tree
+  level are ordered by encounter order, not an explicit z-index.
 - No spatial index (REFACTOR.md 12.4) for hit-testing; `hit_test` is a
   linear scan over `hit_entries`.
 - `crates/core/src/runtime`'s event/hit-test state (`EventState`,

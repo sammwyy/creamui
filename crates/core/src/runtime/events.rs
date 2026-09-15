@@ -19,9 +19,17 @@ pub struct PointerState {
 impl Runtime {
     /// Rebuilds the retained hit-test list and focus order from scratch if
     /// (and only if) something marked either dirty since the last call.
-    /// Interactive nodes are collected in child order (depth-first,
-    /// pre-order) — [`Runtime::hit_test`] scans this in reverse, so the
-    /// last-painted (topmost) match wins.
+    ///
+    /// `focus_order` is always plain depth-first document order, unaffected
+    /// by position — tab order doesn't follow paint order. `hit_entries`
+    /// instead collects every normal-flow node first, then every
+    /// absolutely positioned subtree's nodes (in encounter order),
+    /// mirroring the legacy `Scene`'s deferred Flow/Absolute two-pass
+    /// paint — [`Runtime::hit_test`] scans `hit_entries` in reverse, so an
+    /// absolutely positioned node's entries, being last, always win over a
+    /// flow sibling's regardless of tree depth/order. A node nested inside
+    /// an already-deferred absolute subtree is not independently deferred
+    /// again — its whole ancestor subtree already moved as one unit.
     pub fn rebuild_hit_test(&mut self) {
         if !self.hit_test_dirty {
             return;
@@ -32,12 +40,19 @@ impl Runtime {
             self.hit_test_dirty = false;
             return;
         };
-        let mut stack = vec![root];
-        while let Some(id) = stack.pop() {
+
+        let mut deferred_absolute: Vec<RuntimeNodeId> = Vec::new();
+        let mut stack: Vec<(RuntimeNodeId, bool)> = vec![(root, false)];
+        while let Some((id, inside_absolute)) = stack.pop() {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            if node.events.is_interactive() {
+            let is_absolute_root =
+                !inside_absolute && node.layout_style.position == taffy::style::Position::Absolute;
+            if is_absolute_root {
+                deferred_absolute.push(id);
+            }
+            if !inside_absolute && !is_absolute_root && node.events.is_interactive() {
                 self.hit_entries.push(HitEntry {
                     node: id,
                     rect: node.layout.rect,
@@ -46,8 +61,32 @@ impl Runtime {
             if node.events.focusable {
                 self.focus_order.push(id);
             }
-            stack.extend(node.children.as_slice().iter().rev());
+            let inside_absolute = inside_absolute || is_absolute_root;
+            stack.extend(
+                node.children
+                    .as_slice()
+                    .iter()
+                    .rev()
+                    .map(|&child| (child, inside_absolute)),
+            );
         }
+
+        for absolute_root in deferred_absolute {
+            let mut stack = vec![absolute_root];
+            while let Some(id) = stack.pop() {
+                let Some(node) = self.nodes.get(id) else {
+                    continue;
+                };
+                if node.events.is_interactive() {
+                    self.hit_entries.push(HitEntry {
+                        node: id,
+                        rect: node.layout.rect,
+                    });
+                }
+                stack.extend(node.children.as_slice().iter().rev());
+            }
+        }
+
         self.hit_test_dirty = false;
     }
 
@@ -182,6 +221,28 @@ mod tests {
         node
     }
 
+    fn absolute_leaf_at(
+        runtime: &mut Runtime,
+        parent: RuntimeNodeId,
+        rect: crate::Rect,
+    ) -> RuntimeNodeId {
+        let node = leaf_at(runtime, parent, rect);
+        runtime.nodes.get_mut(node).unwrap().layout_style.position =
+            taffy::style::Position::Absolute;
+        node
+    }
+
+    fn clickable(runtime: &mut Runtime, node: RuntimeNodeId) {
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetEventHandlers {
+            node,
+            handlers: EventState {
+                on_click: Some(Rc::new(|| {})),
+                ..Default::default()
+            },
+        });
+    }
+
     fn rect(x: f32, y: f32, w: f32, h: f32) -> crate::Rect {
         crate::Rect {
             x,
@@ -217,6 +278,79 @@ mod tests {
         assert_eq!(
             runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }),
             Some(front)
+        );
+    }
+
+    #[test]
+    fn an_absolutely_positioned_node_hit_tests_above_a_later_flow_sibling() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        // Created first (earlier document order), but absolutely
+        // positioned — must still win over a plain-flow node created
+        // afterward, which a plain depth-first hit list would favor.
+        let popover = absolute_leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        let later_flow_sibling = leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        clickable(&mut runtime, popover);
+        clickable(&mut runtime, later_flow_sibling);
+        runtime.rebuild_hit_test();
+
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }),
+            Some(popover)
+        );
+    }
+
+    #[test]
+    fn a_node_nested_inside_an_absolute_subtree_also_hit_tests_above_flow() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let popover = absolute_leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        let popover_child = leaf_at(&mut runtime, popover, rect(0.0, 0.0, 100.0, 100.0));
+        let later_flow_sibling = leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        clickable(&mut runtime, popover_child);
+        clickable(&mut runtime, later_flow_sibling);
+        runtime.rebuild_hit_test();
+
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }),
+            Some(popover_child)
+        );
+    }
+
+    #[test]
+    fn focus_order_stays_plain_document_order_regardless_of_position() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let popover = absolute_leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        let later_flow_sibling = leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        for node in [popover, later_flow_sibling] {
+            let mut tx = runtime.transaction();
+            tx.apply(Mutation::SetEventHandlers {
+                node,
+                handlers: EventState {
+                    focusable: true,
+                    ..Default::default()
+                },
+            });
+        }
+        runtime.rebuild_hit_test();
+
+        assert_eq!(runtime.next_focus(None, false), Some(popover));
+        assert_eq!(
+            runtime.next_focus(Some(popover), false),
+            Some(later_flow_sibling)
         );
     }
 

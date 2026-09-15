@@ -3,7 +3,9 @@
 //! A [`CNode`] is an opaque packed index+generation handle — see
 //! [`creamui_abi::CNode`].
 
-use creamui_abi::{CColor, CNode, CRect, CStyle, CUI_NODE_KIND_TEXT, CUI_NODE_NONE};
+use creamui_abi::{
+    CColor, CNode, CRect, CStyle, CTypographyStyle, CUI_NODE_KIND_TEXT, CUI_NODE_NONE,
+};
 use creamui_core::runtime::{Mutation, NodeKind, Runtime, RuntimeNodeId, Transform2D};
 use creamui_core::{PaintStyle, Size};
 use creamui_theme::Color;
@@ -137,6 +139,27 @@ pub unsafe extern "C" fn cui_set_background(
                 corner_radius: Some(corner_radius),
                 ..Default::default()
             },
+        });
+    }
+}
+
+/// Overrides `node`'s typography. Each field of `style` independently
+/// falls back to whatever `node`'s style already resolves (theme default,
+/// or an ancestor's) when left unset — see [`CTypographyStyle::unset`].
+///
+/// # Safety
+/// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
+/// `style.font_family` must be null or a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn cui_set_typography_style(
+    rt: *mut CRuntime,
+    node: CNode,
+    style: CTypographyStyle,
+) {
+    if let Some(rt) = rt.as_mut() {
+        rt.0.transaction().apply(Mutation::SetTypographyStyle {
+            node: decode(node),
+            style: crate::typography_style_from_c(style),
         });
     }
 }
@@ -329,6 +352,62 @@ mod tests {
             };
             assert_eq!(cui_get_rect(rt, CUI_NODE_NONE), zero);
             assert_eq!(cui_get_rect(std::ptr::null(), CUI_NODE_NONE), zero);
+
+            cui_runtime_free(rt);
+        }
+    }
+
+    #[test]
+    fn set_typography_style_reaches_the_node() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let node = cui_create_node(rt, CUI_NODE_KIND_TEXT);
+            let family = CString::new("Inter").unwrap();
+            cui_set_typography_style(
+                rt,
+                node,
+                CTypographyStyle {
+                    has_color: 1,
+                    color: CColor::rgb(1, 2, 3),
+                    font_size: 18.0,
+                    font_family: family.as_ptr(),
+                    align: creamui_abi::TEXT_ALIGN_START,
+                    bold: creamui_abi::TRISTATE_TRUE,
+                    ..CTypographyStyle::unset()
+                },
+            );
+
+            let typography = &(*rt).0.get(decode(node)).unwrap().typography_style;
+            assert_eq!(
+                typography.color,
+                Some(creamui_theme::Color::rgb(1, 2, 3).into())
+            );
+            assert_eq!(typography.font_size, Some(18.0));
+            assert_eq!(typography.font_family.as_deref(), Some("Inter"));
+            assert_eq!(typography.align, Some(creamui_core::TextAlign::Start));
+            assert_eq!(typography.bold, Some(true));
+            assert_eq!(typography.italic, None);
+
+            cui_runtime_free(rt);
+        }
+    }
+
+    #[test]
+    fn set_typography_style_unset_leaves_every_field_none() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let node = cui_create_node(rt, CUI_NODE_KIND_TEXT);
+            cui_set_typography_style(rt, node, CTypographyStyle::unset());
+
+            let typography = &(*rt).0.get(decode(node)).unwrap().typography_style;
+            assert_eq!(typography.color, None);
+            assert_eq!(typography.font_size, None);
+            assert_eq!(typography.font_family, None);
+            assert_eq!(typography.align, None);
+            assert_eq!(typography.bold, None);
+            assert_eq!(typography.italic, None);
+            assert_eq!(typography.underline, None);
+            assert_eq!(typography.strikethrough, None);
 
             cui_runtime_free(rt);
         }

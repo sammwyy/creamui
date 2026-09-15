@@ -218,6 +218,71 @@ impl Default for CStyle {
     }
 }
 
+/// One of the `TEXT_ALIGN_*` constants, or [`TEXT_ALIGN_UNSET`] for "unset".
+pub const TEXT_ALIGN_CENTER: u8 = 0;
+pub const TEXT_ALIGN_START: u8 = 1;
+pub const TEXT_ALIGN_END: u8 = 2;
+/// Sentinel for [`CTypographyStyle::align`] meaning "unset" (`None`).
+pub const TEXT_ALIGN_UNSET: u8 = 255;
+
+/// A three-state flag: [`TRISTATE_UNSET`] (`None`), [`TRISTATE_FALSE`], or
+/// [`TRISTATE_TRUE`] — used by [`CTypographyStyle`]'s boolean fields, each
+/// of which is independently optional on the Rust side.
+pub const TRISTATE_UNSET: u8 = 0;
+pub const TRISTATE_FALSE: u8 = 1;
+pub const TRISTATE_TRUE: u8 = 2;
+
+/// Typography style control — the field-for-field subset of
+/// `creamui_core::TypographyStyle` that's C-representable. Every field is
+/// independently optional (`has_color`/a negative `font_size`/a null
+/// `font_family`/[`TEXT_ALIGN_UNSET`]/[`TRISTATE_UNSET`] mean "unset",
+/// matching `TypographyStyle`'s `Option<T>` fields), so a caller can
+/// override just the fields it cares about. Build one with
+/// [`CTypographyStyle::unset`] and override only what's needed. `color`
+/// is always a literal color, never a theme token — same restriction
+/// [`CStyle`]'s color-bearing mutations already have.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CTypographyStyle {
+    pub has_color: c_int,
+    pub color: CColor,
+    /// Negative means "unset".
+    pub font_size: f32,
+    /// Null means "unset". Must be a valid NUL-terminated UTF-8 string for
+    /// the duration of the call it's passed to.
+    pub font_family: *const c_char,
+    /// One of the `TEXT_ALIGN_*` constants, or [`TEXT_ALIGN_UNSET`].
+    pub align: u8,
+    /// One of the `TRISTATE_*` constants.
+    pub bold: u8,
+    pub italic: u8,
+    pub underline: u8,
+    pub strikethrough: u8,
+}
+
+impl CTypographyStyle {
+    /// Every field unset — start here and override only what's needed.
+    pub fn unset() -> Self {
+        CTypographyStyle {
+            has_color: 0,
+            color: CColor::rgb(0, 0, 0),
+            font_size: -1.0,
+            font_family: std::ptr::null(),
+            align: TEXT_ALIGN_UNSET,
+            bold: TRISTATE_UNSET,
+            italic: TRISTATE_UNSET,
+            underline: TRISTATE_UNSET,
+            strikethrough: TRISTATE_UNSET,
+        }
+    }
+}
+
+impl Default for CTypographyStyle {
+    fn default() -> Self {
+        Self::unset()
+    }
+}
+
 /// Render backend requested via [`CWindowOptions::backend`]: [`CUI_RENDER_BACKEND_GPU`]
 /// (`wgpu`, the default) or [`CUI_RENDER_BACKEND_CPU`] (`softbuffer`). Can
 /// still be force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`.

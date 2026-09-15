@@ -17,7 +17,10 @@
 
 pub mod runtime;
 
-use creamui_abi::{DIMENSION_LENGTH, DIMENSION_PERCENT};
+use creamui_abi::{
+    DIMENSION_LENGTH, DIMENSION_PERCENT, TEXT_ALIGN_CENTER, TEXT_ALIGN_END, TEXT_ALIGN_START,
+    TRISTATE_TRUE,
+};
 use creamui_core::layout::{
     AlignItems, Dimension, FlexDirection, JustifyContent, LengthPercentage, LengthPercentageAuto,
     Rect as LayoutRect, Size as LayoutSize, Style,
@@ -40,7 +43,7 @@ use std::os::raw::c_int;
 // the consuming side of this ABI so the two can never drift out of sync.
 // Re-exported here so existing code importing them from `creamui_ffi`
 // (this crate's public name) keeps working unchanged.
-pub use creamui_abi::{CColor, CDimension, CStyle, CTheme, CWindowOptions};
+pub use creamui_abi::{CColor, CDimension, CStyle, CTheme, CTypographyStyle, CWindowOptions};
 pub use creamui_abi::{CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU};
 
 /// Opaque handle to a reactive `i32` value.
@@ -410,6 +413,35 @@ pub(crate) fn style_from_c(s: CStyle) -> Style {
         flex_shrink: s.flex_shrink,
         flex_basis: dimension_to_dimension(s.flex_basis),
         ..Default::default()
+    }
+}
+
+fn tristate_to_option_bool(value: u8) -> Option<bool> {
+    match value {
+        creamui_abi::TRISTATE_FALSE => Some(false),
+        TRISTATE_TRUE => Some(true),
+        _ => None,
+    }
+}
+
+/// # Safety
+/// `t.font_family` must be null or a valid NUL-terminated UTF-8 string.
+pub(crate) unsafe fn typography_style_from_c(t: CTypographyStyle) -> creamui_core::TypographyStyle {
+    creamui_core::TypographyStyle {
+        color: (t.has_color != 0)
+            .then(|| Color::rgba(t.color.r, t.color.g, t.color.b, t.color.a).into()),
+        font_size: (t.font_size >= 0.0).then_some(t.font_size),
+        font_family: (!t.font_family.is_null()).then(|| cstr_to_string(t.font_family)),
+        align: match t.align {
+            TEXT_ALIGN_CENTER => Some(creamui_core::TextAlign::Center),
+            TEXT_ALIGN_START => Some(creamui_core::TextAlign::Start),
+            TEXT_ALIGN_END => Some(creamui_core::TextAlign::End),
+            _ => None,
+        },
+        bold: tristate_to_option_bool(t.bold),
+        italic: tristate_to_option_bool(t.italic),
+        underline: tristate_to_option_bool(t.underline),
+        strikethrough: tristate_to_option_bool(t.strikethrough),
     }
 }
 

@@ -49,6 +49,8 @@ All notable changes to CreamUI will be documented in this file.
   sibling, regardless of tree depth or document order.
 - Fixed `RecordingPainter` dropping a legacy widget's bold/font-family
   choice instead of recording it.
+- Added `cui_set_typography_style` to ABI-v2, so a C caller can set a
+  node's color/font-size/family/align/bold/italic/underline/strikethrough.
 
 ## 0.1.1
 

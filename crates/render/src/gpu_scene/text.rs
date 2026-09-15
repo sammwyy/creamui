@@ -182,9 +182,8 @@ const GLYPH_PADDING: u32 = 1;
 /// A shelf-packed glyph atlas: rasterized glyph bitmaps get a stable
 /// [`AtlasRect`] within a square region of `size` so a GPU-side owner can
 /// upload each glyph once and reference it by UV thereafter (REFACTOR.md
-/// 15.4). Growing the atlas forgets every placement rather than relocating
-/// existing regions — simpler, at the cost of re-rasterizing glyphs that
-/// were already placed.
+/// 15.4). [`GlyphAtlas::grow`] doubles `size` without disturbing any
+/// existing placement.
 pub struct GlyphAtlas {
     size: u32,
     cursor_x: u32,
@@ -248,12 +247,15 @@ impl GlyphAtlas {
         Some(rect)
     }
 
+    /// Doubles the atlas's pixel size without moving any already-placed
+    /// glyph — the shelf packer only ever bin-packs into `[0, size)`, so
+    /// enlarging `size` alone can't invalidate an existing rect, it just
+    /// gives [`GlyphAtlas::place`] more room to keep packing into. The
+    /// underlying GPU texture and every already-baked UV referencing this
+    /// atlas still need to be grown/rebaked by the caller — see
+    /// [`GlyphInstance::rescaled_uv`].
     pub fn grow(&mut self) {
         self.size *= 2;
-        self.cursor_x = 0;
-        self.cursor_y = 0;
-        self.shelf_height = 0;
-        self.placed.clear();
     }
 }
 
@@ -318,6 +320,21 @@ impl GlyphInstance {
             ..self
         }
     }
+
+    /// Rescales `uv_min`/`uv_max` by `ratio` — used to rebake every
+    /// already-placed glyph's UVs after [`GlyphAtlas::grow`] doubles the
+    /// atlas's pixel size out from under them (the underlying pixel rect
+    /// doesn't move, but its normalized UV fraction of the whole atlas
+    /// halves).
+    pub fn rescaled_uv(self, ratio: f32) -> Self {
+        let [umin_x, umin_y] = self.uv_min;
+        let [umax_x, umax_y] = self.uv_max;
+        GlyphInstance {
+            uv_min: [umin_x * ratio, umin_y * ratio],
+            uv_max: [umax_x * ratio, umax_y * ratio],
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -379,6 +396,19 @@ impl GlyphStore {
 
     pub fn take_dirty_range(&mut self) -> Option<(u32, u32)> {
         self.dirty.take()
+    }
+
+    /// Rescales every stored instance's UV by `ratio` in place and marks
+    /// the whole buffer dirty — see [`GlyphInstance::rescaled_uv`].
+    pub fn rescale_uv(&mut self, ratio: f32) {
+        if self.slots.is_empty() {
+            return;
+        }
+        for slot in &mut self.slots {
+            *slot = slot.rescaled_uv(ratio);
+        }
+        self.mark_dirty(0);
+        self.mark_dirty(self.slots.len() as u32 - 1);
     }
 
     fn mark_dirty(&mut self, index: u32) {
@@ -489,13 +519,23 @@ mod tests {
     }
 
     #[test]
-    fn growing_the_atlas_doubles_its_size_and_forgets_placements() {
+    fn growing_the_atlas_doubles_its_size_and_keeps_existing_placements() {
         let mut atlas = GlyphAtlas::new(16);
-        atlas.place(key(1), 15, 15);
+        let before = atlas.place(key(1), 15, 15).expect("fits");
         atlas.grow();
         assert_eq!(atlas.size(), 32);
-        assert!(atlas.rect_for(key(1)).is_none());
-        assert!(atlas.place(key(1), 15, 15).is_some());
+        assert_eq!(atlas.rect_for(key(1)), Some(before));
+    }
+
+    #[test]
+    fn growing_the_atlas_makes_room_for_placements_that_did_not_fit() {
+        let mut atlas = GlyphAtlas::new(16);
+        for i in 0..20u16 {
+            atlas.place(key(i), 15, 15);
+        }
+        assert!(atlas.place(key(100), 15, 15).is_none());
+        atlas.grow();
+        assert!(atlas.place(key(100), 15, 15).is_some());
     }
 
     #[test]
@@ -615,5 +655,59 @@ mod tests {
         assert_eq!(clipped.clip_max, [3.0, 4.0]);
         assert_eq!(clipped.position, instance.position);
         assert_eq!(clipped.color, instance.color);
+    }
+
+    #[test]
+    fn rescaled_uv_scales_min_and_max_only() {
+        let rect = AtlasRect {
+            x: 8,
+            y: 16,
+            width: 4,
+            height: 8,
+        };
+        let instance = GlyphInstance::new([1.0, 2.0], [4.0, 8.0], rect, 32, [1.0; 4]);
+        let rescaled = instance.rescaled_uv(0.5);
+        assert_eq!(rescaled.uv_min, [0.125, 0.25]);
+        assert_eq!(rescaled.uv_max, [0.1875, 0.375]);
+        assert_eq!(rescaled.position, instance.position);
+        assert_eq!(rescaled.color, instance.color);
+    }
+
+    #[test]
+    fn glyph_store_rescale_uv_updates_every_slot_and_marks_the_full_range_dirty() {
+        let rect = AtlasRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        };
+        let mut store = GlyphStore::new();
+        let a = store.insert(GlyphInstance::new(
+            [0.0, 0.0],
+            [4.0, 8.0],
+            rect,
+            32,
+            [1.0; 4],
+        ));
+        let b = store.insert(GlyphInstance::new(
+            [1.0, 1.0],
+            [4.0, 8.0],
+            rect,
+            32,
+            [1.0; 4],
+        ));
+        store.take_dirty_range();
+
+        store.rescale_uv(0.5);
+        assert_eq!(store.take_dirty_range(), Some((0, 1)));
+        assert_eq!(store.get(a).uv_min, [0.0, 0.0]);
+        assert_eq!(store.get(b).uv_max, [0.0625, 0.125]);
+    }
+
+    #[test]
+    fn glyph_store_rescale_uv_on_an_empty_store_does_not_mark_dirty() {
+        let mut store = GlyphStore::new();
+        store.rescale_uv(0.5);
+        assert_eq!(store.take_dirty_range(), None);
     }
 }

@@ -155,16 +155,23 @@
 - `GpuSceneState`'s instance buffer only grows, never shrinks — a scene
   that mounts many quads and then unmounts most of them keeps the larger
   buffer allocated. Same applies to the glyph instance buffer.
-- `GlyphAtlas::grow` (doubling the atlas and forgetting every placement)
-  is implemented and unit-tested in isolation but `GpuSceneState` never
-  calls it — the atlas is a fixed 1024x1024 `R8Unorm` texture, and
-  `sync_text_node` silently drops any glyph `GlyphAtlas::place` can't fit.
-  Wiring `grow` up for real needs the GPU texture recreated at the new
-  size *and* every already-baked `GlyphInstance` in `glyph_store`
-  re-derived (their `uv_min`/`uv_max` are baked against the old atlas
-  size and go stale the moment `size()` changes) — not attempted here
-  since getting that rebake wrong would silently corrupt already-visible
-  text.
+- `GlyphAtlas::grow` now doubles `size` without touching `placed`/cursor
+  state — the shelf packer only ever bin-packs into `[0, size)`, so
+  enlarging `size` can't invalidate an existing rect, it only gives
+  `place` more room. `GpuSceneState::grow_glyph_atlas` (private, called
+  from `sync_text_node` when `place` returns `None`) recreates the atlas
+  texture at the new size, copies the old texture's pixel content into it
+  via `copy_texture_to_texture` (the original texture is now created with
+  `COPY_SRC` too, for this), rebuilds the bind group, and rescales every
+  already-baked `GlyphInstance` in `glyph_store` (`GlyphStore::rescale_uv`)
+  by `old_size / new_size` — the pixel rects don't move, but a UV is a
+  fraction of the whole atlas, so it still needs rebaking. A glyph that's
+  larger than the doubled atlas (still `None` after one grow) is dropped,
+  same as before; growth isn't retried more than once per glyph. This
+  path is unverified against a live surface — same "no display server"
+  constraint as the rest of `gpu_scene` (see the entry above); the CPU
+  rebake math (`rescaled_uv`/`rescale_uv`) and `GlyphAtlas::grow`'s
+  placement-preserving behavior are unit-tested in isolation.
 - `ShapeCache`/`GpuSceneState::sync_text_node` are only reachable from the
   unwired `gpu_scene` path — the live legacy renderer
   (`crates/widgets/src/text_metrics.rs`, `crates/render/src/font.rs`)

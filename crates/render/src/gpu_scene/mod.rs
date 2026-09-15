@@ -75,7 +75,9 @@ pub struct GpuSceneState {
     node_glyphs: HashMap<RuntimeNodeId, Vec<GlyphPrimitiveId>>,
     glyph_atlas: GlyphAtlas,
     glyph_atlas_texture: wgpu::Texture,
+    glyph_atlas_bind_group_layout: wgpu::BindGroupLayout,
     glyph_atlas_bind_group: wgpu::BindGroup,
+    glyph_atlas_sampler: wgpu::Sampler,
     shape_cache: ShapeCache,
 
     node_transforms: HashMap<RuntimeNodeId, Transform2D>,
@@ -287,7 +289,9 @@ impl GpuSceneState {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let glyph_atlas_view =
@@ -393,7 +397,9 @@ impl GpuSceneState {
             node_glyphs: HashMap::new(),
             glyph_atlas: GlyphAtlas::new(GLYPH_ATLAS_SIZE),
             glyph_atlas_texture,
+            glyph_atlas_bind_group_layout,
             glyph_atlas_bind_group,
+            glyph_atlas_sampler,
             shape_cache: ShapeCache::new(),
 
             node_transforms: HashMap::new(),
@@ -412,6 +418,84 @@ impl GpuSceneState {
             0,
             bytemuck::cast_slice(&[width as f32, height as f32, 0.0, 0.0]),
         );
+    }
+
+    /// Doubles the glyph atlas's texture and every already-baked glyph
+    /// instance's UV to match, called by [`GpuSceneState::sync_text_node`]
+    /// when [`GlyphAtlas::place`] runs out of room. The old texture's
+    /// pixel content is copied into the new, larger texture at its
+    /// original coordinates — [`GlyphAtlas::grow`] never moves an existing
+    /// placement, only [`GlyphAtlas::size`] changes, so every already-baked
+    /// UV just needs rescaling to the new size, not repositioning.
+    fn grow_glyph_atlas(&mut self) {
+        let old_size = self.glyph_atlas.size();
+        self.glyph_atlas.grow();
+        let new_size = self.glyph_atlas.size();
+
+        let new_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("creamui-glyph-atlas"),
+            size: wgpu::Extent3d {
+                width: new_size,
+                height: new_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("creamui-glyph-atlas-grow-encoder"),
+            });
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.glyph_atlas_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: &new_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: old_size,
+                height: old_size,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        self.glyph_atlas_texture = new_texture;
+        let view = self
+            .glyph_atlas_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.glyph_atlas_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("creamui-glyph-atlas-bind-group"),
+            layout: &self.glyph_atlas_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.glyph_atlas_sampler),
+                },
+            ],
+        });
+
+        self.glyph_store
+            .rescale_uv(old_size as f32 / new_size as f32);
     }
 
     /// Replaces `node`'s quad instances with the ones derived from its
@@ -466,9 +550,10 @@ impl GpuSceneState {
     /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
     /// sure every glyph it needs is rasterized into the atlas, and replaces
     /// `node`'s glyph instances the same incremental way
-    /// [`GpuSceneState::sync_node`] does for quads. Glyphs that don't fit
-    /// the atlas are silently dropped rather than growing/rebaking it — see
-    /// `TODO.md`.
+    /// [`GpuSceneState::sync_node`] does for quads. A glyph that doesn't
+    /// fit grows the atlas once via [`GpuSceneState::grow_glyph_atlas`] and
+    /// retries; a glyph that still doesn't fit after that (larger than the
+    /// doubled atlas) is silently dropped.
     pub fn sync_text_node(
         &mut self,
         node: RuntimeNodeId,
@@ -515,11 +600,19 @@ impl GpuSceneState {
                     if metrics.width == 0 || metrics.height == 0 {
                         continue;
                     }
-                    let Some(rect) = self.glyph_atlas.place(
+                    let placed = self.glyph_atlas.place(
                         glyph.raster_key,
                         metrics.width as u32,
                         metrics.height as u32,
-                    ) else {
+                    );
+                    let Some(rect) = placed.or_else(|| {
+                        self.grow_glyph_atlas();
+                        self.glyph_atlas.place(
+                            glyph.raster_key,
+                            metrics.width as u32,
+                            metrics.height as u32,
+                        )
+                    }) else {
                         continue;
                     };
                     self.queue.write_texture(

@@ -2,6 +2,25 @@ use bytemuck::Zeroable;
 use creamui_core::runtime::{PaintFragment, PaintOp, PaintPrimitive};
 use creamui_theme::Color;
 
+/// A clip bound pair for an unclipped instance — spans every finite pixel
+/// coordinate, so the fragment shader's clip test never discards.
+pub const UNCLIPPED: ([f32; 2], [f32; 2]) = (
+    [f32::NEG_INFINITY, f32::NEG_INFINITY],
+    [f32::INFINITY, f32::INFINITY],
+);
+
+/// Converts a retained clip rect into the `[min, max]` pixel-space bound
+/// pair the GPU clip test compares a fragment's position against.
+pub fn clip_bounds(clip: Option<creamui_core::Rect>) -> ([f32; 2], [f32; 2]) {
+    match clip {
+        Some(rect) => (
+            [rect.x, rect.y],
+            [rect.x + rect.width, rect.y + rect.height],
+        ),
+        None => UNCLIPPED,
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct QuadInstance {
@@ -11,7 +30,8 @@ pub struct QuadInstance {
     pub border_color: [f32; 4],
     pub corner_radius: f32,
     pub border_width: f32,
-    padding: [f32; 2],
+    pub clip_min: [f32; 2],
+    pub clip_max: [f32; 2],
 }
 
 impl QuadInstance {
@@ -21,6 +41,7 @@ impl QuadInstance {
         corner_radius: f32,
         decode_srgb: bool,
     ) -> Self {
+        let (clip_min, clip_max) = UNCLIPPED;
         QuadInstance {
             position: [rect.x, rect.y],
             size: [rect.width, rect.height],
@@ -28,7 +49,8 @@ impl QuadInstance {
             border_color: [0.0; 4],
             corner_radius,
             border_width: 0.0,
-            padding: [0.0; 2],
+            clip_min,
+            clip_max,
         }
     }
 
@@ -39,6 +61,7 @@ impl QuadInstance {
         corner_radius: f32,
         decode_srgb: bool,
     ) -> Self {
+        let (clip_min, clip_max) = UNCLIPPED;
         QuadInstance {
             position: [rect.x, rect.y],
             size: [rect.width, rect.height],
@@ -46,7 +69,8 @@ impl QuadInstance {
             border_color: quad_color(color, decode_srgb),
             corner_radius,
             border_width: width,
-            padding: [0.0; 2],
+            clip_min,
+            clip_max,
         }
     }
 
@@ -63,6 +87,14 @@ impl QuadInstance {
         QuadInstance {
             color: [r, g, b, a * factor],
             border_color: [br, bg, bb, ba * factor],
+            ..self
+        }
+    }
+
+    pub fn clipped(self, clip_min: [f32; 2], clip_max: [f32; 2]) -> Self {
+        QuadInstance {
+            clip_min,
+            clip_max,
             ..self
         }
     }
@@ -256,6 +288,28 @@ mod tests {
         assert_eq!(scaled.border_color[..3], instance.border_color[..3]);
         assert_eq!(scaled.position, instance.position);
         assert_eq!(scaled.size, instance.size);
+    }
+
+    #[test]
+    fn clipped_sets_only_the_clip_bounds() {
+        let instance =
+            QuadInstance::fill(rect(0.0, 0.0, 10.0, 10.0), Color::rgb(1, 1, 1), 0.0, false);
+        let clipped = instance.clipped([1.0, 2.0], [3.0, 4.0]);
+        assert_eq!(clipped.clip_min, [1.0, 2.0]);
+        assert_eq!(clipped.clip_max, [3.0, 4.0]);
+        assert_eq!(clipped.position, instance.position);
+        assert_eq!(clipped.color, instance.color);
+    }
+
+    #[test]
+    fn clip_bounds_of_none_is_unclipped() {
+        assert_eq!(clip_bounds(None), UNCLIPPED);
+    }
+
+    #[test]
+    fn clip_bounds_of_some_converts_rect_to_min_max() {
+        let bounds = clip_bounds(Some(rect(1.0, 2.0, 10.0, 20.0)));
+        assert_eq!(bounds, ([1.0, 2.0], [11.0, 22.0]));
     }
 
     #[test]

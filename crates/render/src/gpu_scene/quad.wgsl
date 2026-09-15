@@ -12,6 +12,8 @@ struct QuadInstance {
     @location(3) border_color: vec4<f32>,
     @location(4) corner_radius: f32,
     @location(5) border_width: f32,
+    @location(6) clip_min: vec2<f32>,
+    @location(7) clip_max: vec2<f32>,
 };
 
 struct VertexOutput {
@@ -22,6 +24,9 @@ struct VertexOutput {
     @location(3) size: vec2<f32>,
     @location(4) corner_radius: f32,
     @location(5) border_width: f32,
+    @location(6) frag_pixel: vec2<f32>,
+    @location(7) clip_min: vec2<f32>,
+    @location(8) clip_max: vec2<f32>,
 };
 
 @vertex
@@ -49,6 +54,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, instance: QuadInstance) -> 
     out.size = instance.size;
     out.corner_radius = instance.corner_radius;
     out.border_width = instance.border_width;
+    out.frag_pixel = pixel;
+    out.clip_min = instance.clip_min;
+    out.clip_max = instance.clip_max;
     return out;
 }
 
@@ -59,6 +67,11 @@ fn rounded_rect_sdf(p: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if (in.frag_pixel.x < in.clip_min.x || in.frag_pixel.x > in.clip_max.x ||
+        in.frag_pixel.y < in.clip_min.y || in.frag_pixel.y > in.clip_max.y) {
+        discard;
+    }
+
     let half_size = in.size * 0.5;
     let centered = in.local_pos - half_size;
     let radius = min(in.corner_radius, min(half_size.x, half_size.y));

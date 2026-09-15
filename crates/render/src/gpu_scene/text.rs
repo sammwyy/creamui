@@ -265,6 +265,8 @@ pub struct GlyphInstance {
     pub uv_min: [f32; 2],
     pub uv_max: [f32; 2],
     pub color: [f32; 4],
+    pub clip_min: [f32; 2],
+    pub clip_max: [f32; 2],
 }
 
 impl GlyphInstance {
@@ -276,6 +278,7 @@ impl GlyphInstance {
         color: [f32; 4],
     ) -> Self {
         let atlas_size = atlas_size as f32;
+        let (clip_min, clip_max) = super::quad::UNCLIPPED;
         GlyphInstance {
             position,
             size,
@@ -288,6 +291,8 @@ impl GlyphInstance {
                 (atlas_rect.y + atlas_rect.height) as f32 / atlas_size,
             ],
             color,
+            clip_min,
+            clip_max,
         }
     }
 
@@ -302,6 +307,14 @@ impl GlyphInstance {
         let [r, g, b, a] = self.color;
         GlyphInstance {
             color: [r, g, b, a * factor],
+            ..self
+        }
+    }
+
+    pub fn clipped(self, clip_min: [f32; 2], clip_max: [f32; 2]) -> Self {
+        GlyphInstance {
+            clip_min,
+            clip_max,
             ..self
         }
     }
@@ -586,5 +599,21 @@ mod tests {
         let scaled = instance.scaled_alpha(0.5);
         assert_eq!(scaled.color, [0.2, 0.4, 0.6, 0.4]);
         assert_eq!(scaled.position, instance.position);
+    }
+
+    #[test]
+    fn glyph_clipped_sets_only_the_clip_bounds() {
+        let rect = AtlasRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        };
+        let instance = GlyphInstance::new([1.0, 2.0], [4.0, 8.0], rect, 32, [1.0; 4]);
+        let clipped = instance.clipped([1.0, 2.0], [3.0, 4.0]);
+        assert_eq!(clipped.clip_min, [1.0, 2.0]);
+        assert_eq!(clipped.clip_max, [3.0, 4.0]);
+        assert_eq!(clipped.position, instance.position);
+        assert_eq!(clipped.color, instance.color);
     }
 }

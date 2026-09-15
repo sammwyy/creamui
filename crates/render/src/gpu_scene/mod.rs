@@ -4,7 +4,8 @@
 //!
 //! Solid quads and borders (with rounded corners) are supported, as is
 //! text through a cached-shaping, GPU-atlas glyph pipeline (REFACTOR.md
-//! Phase 9). Images, clips, and transforms are not yet consumed here.
+//! Phase 9). Retained per-node transform, opacity, and clip (REFACTOR.md
+//! Phase 10) are applied per-instance; images are not yet consumed here.
 
 mod quad;
 mod text;
@@ -15,6 +16,7 @@ pub use text::{
 };
 
 use creamui_core::runtime::{PaintFragment, RuntimeNodeId, TextPrimitive, Transform2D};
+use creamui_core::Rect;
 use creamui_platform::PlatformWindow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -78,6 +80,7 @@ pub struct GpuSceneState {
 
     node_transforms: HashMap<RuntimeNodeId, Transform2D>,
     node_opacities: HashMap<RuntimeNodeId, f32>,
+    node_clips: HashMap<RuntimeNodeId, Option<Rect>>,
 }
 
 impl GpuSceneState {
@@ -210,6 +213,8 @@ impl GpuSceneState {
             3 => Float32x4,
             4 => Float32,
             5 => Float32,
+            6 => Float32x2,
+            7 => Float32x2,
         ];
         let quad_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("creamui-quad-pipeline"),
@@ -326,6 +331,8 @@ impl GpuSceneState {
             2 => Float32x2,
             3 => Float32x2,
             4 => Float32x4,
+            5 => Float32x2,
+            6 => Float32x2,
         ];
         let glyph_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("creamui-glyph-pipeline"),
@@ -391,6 +398,7 @@ impl GpuSceneState {
 
             node_transforms: HashMap::new(),
             node_opacities: HashMap::new(),
+            node_clips: HashMap::new(),
         }
     }
 
@@ -407,19 +415,22 @@ impl GpuSceneState {
     }
 
     /// Replaces `node`'s quad instances with the ones derived from its
-    /// current paint fragment, `transform`, and `opacity`, reusing existing
-    /// [`GpuPrimitiveId`] slots where the instance count didn't change so
-    /// most updates only dirty a handful of buffer slots instead of the
-    /// whole scene. A `transform`-only or `opacity`-only change should go
-    /// through [`GpuSceneState::sync_transform`]/[`GpuSceneState::sync_opacity`]
-    /// instead, which skip re-deriving from `fragment` entirely.
+    /// current paint fragment, `transform`, `opacity`, and `clip`, reusing
+    /// existing [`GpuPrimitiveId`] slots where the instance count didn't
+    /// change so most updates only dirty a handful of buffer slots instead
+    /// of the whole scene. A single-property change should go through
+    /// [`GpuSceneState::sync_transform`]/[`GpuSceneState::sync_opacity`]/
+    /// [`GpuSceneState::sync_clip`] instead, which skip re-deriving from
+    /// `fragment` entirely.
     pub fn sync_node(
         &mut self,
         node: RuntimeNodeId,
         fragment: &PaintFragment,
         transform: Transform2D,
         opacity: f32,
+        clip: Option<Rect>,
     ) {
+        let (clip_min, clip_max) = quad::clip_bounds(clip);
         let new_instances: Vec<QuadInstance> =
             quad::quad_instances_for_fragment(fragment, self.decode_srgb)
                 .into_iter()
@@ -427,6 +438,7 @@ impl GpuSceneState {
                     instance
                         .translated(transform.x, transform.y)
                         .scaled_alpha(opacity)
+                        .clipped(clip_min, clip_max)
                 })
                 .collect();
         let old_ids = self.node_quads.remove(&node).unwrap_or_default();
@@ -448,6 +460,7 @@ impl GpuSceneState {
         self.node_quads.insert(node, ids);
         self.node_transforms.insert(node, transform);
         self.node_opacities.insert(node, opacity);
+        self.node_clips.insert(node, clip);
     }
 
     /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
@@ -462,7 +475,9 @@ impl GpuSceneState {
         primitive: &TextPrimitive,
         transform: Transform2D,
         opacity: f32,
+        clip: Option<Rect>,
     ) {
+        let (clip_min, clip_max) = quad::clip_bounds(clip);
         let family = primitive.family.as_deref();
         let bold = primitive.bold;
         let shaped = self.shape_cache.shape(
@@ -541,13 +556,10 @@ impl GpuSceneState {
                 primitive.rect.y + align_y + glyph.y + transform.y,
             ];
             let size = [rect.width as f32, rect.height as f32];
-            new_instances.push(GlyphInstance::new(
-                position,
-                size,
-                rect,
-                self.glyph_atlas.size(),
-                color,
-            ));
+            new_instances.push(
+                GlyphInstance::new(position, size, rect, self.glyph_atlas.size(), color)
+                    .clipped(clip_min, clip_max),
+            );
         }
 
         let old_ids = self.node_glyphs.remove(&node).unwrap_or_default();
@@ -567,6 +579,7 @@ impl GpuSceneState {
         self.node_glyphs.insert(node, ids);
         self.node_transforms.insert(node, transform);
         self.node_opacities.insert(node, opacity);
+        self.node_clips.insert(node, clip);
     }
 
     /// Repositions `node`'s already-retained quad and glyph instances by
@@ -629,6 +642,34 @@ impl GpuSceneState {
         self.node_opacities.insert(node, opacity);
     }
 
+    /// Overwrites `node`'s already-retained quad and glyph clip bounds with
+    /// `clip`, the same property-only update path [`GpuSceneState::sync_transform`]
+    /// uses for position. Unlike [`GpuSceneState::sync_opacity`], a clip
+    /// bound is absolute rather than cumulative, so this needs no ratio and
+    /// no previously-applied state to recover.
+    pub fn sync_clip(&mut self, node: RuntimeNodeId, clip: Option<Rect>) {
+        if self.node_clips.get(&node).copied().flatten() == clip {
+            return;
+        }
+        let (clip_min, clip_max) = quad::clip_bounds(clip);
+
+        if let Some(ids) = self.node_quads.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store
+                    .update(id, current.clipped(clip_min, clip_max));
+            }
+        }
+        if let Some(ids) = self.node_glyphs.get(&node) {
+            for &id in ids {
+                let current = self.glyph_store.get(id);
+                self.glyph_store
+                    .update(id, current.clipped(clip_min, clip_max));
+            }
+        }
+        self.node_clips.insert(node, clip);
+    }
+
     pub fn remove_node(&mut self, node: RuntimeNodeId) {
         if let Some(ids) = self.node_quads.remove(&node) {
             for id in ids {
@@ -642,6 +683,7 @@ impl GpuSceneState {
         }
         self.node_transforms.remove(&node);
         self.node_opacities.remove(&node);
+        self.node_clips.remove(&node);
     }
 
     pub fn render(&mut self) {

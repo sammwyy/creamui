@@ -2,7 +2,7 @@
 //! while [`Theme`] owns the shape and behaviour of components.
 
 mod persist;
-pub use persist::active_theme;
+pub use persist::{active_theme, active_theme_id, list_themes, set_active_theme, ThemeInfo};
 
 use serde::{Deserialize, Serialize};
 

@@ -541,6 +541,49 @@ impl Default for TreeController {
     }
 }
 
+/// Drill-down navigation state for [`crate::themed::nested_sidebar`]: the
+/// stack of category ids entered so far, root when empty.
+#[derive(Clone)]
+pub struct SidebarNavController<T: Clone + PartialEq + 'static> {
+    path: Signal<Vec<T>>,
+}
+
+impl<T: Clone + PartialEq + 'static> SidebarNavController<T> {
+    pub fn new() -> Self {
+        Self {
+            path: Signal::new(Vec::new()),
+        }
+    }
+
+    pub fn path(&self) -> Vec<T> {
+        self.path.get()
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.path.get().is_empty()
+    }
+
+    pub fn enter(&self, id: T) {
+        self.path.update(|path| path.push(id));
+    }
+
+    pub fn back(&self) {
+        self.path.update(|path| {
+            path.pop();
+        });
+    }
+
+    pub fn reset(&self) {
+        self.path.set(Vec::new());
+    }
+}
+
+impl<T: Clone + PartialEq + 'static> Default for SidebarNavController<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

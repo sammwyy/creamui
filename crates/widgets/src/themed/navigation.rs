@@ -1,4 +1,5 @@
 use super::*;
+use crate::controller::SidebarNavController;
 /// Shared visual tokens for [`Tabs`]/[`Tab`] and [`Sidebar`]/[`SidebarItem`],
 /// the same pattern as [`MenuColors`]: derive from a theme, override
 /// individual colors if needed.
@@ -569,4 +570,98 @@ impl Widget for SidebarItem {
     fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
         self.inner.on_hover.clone()
     }
+}
+
+/// One entry of a [`nested_sidebar`] tree. A leaf (no children) is
+/// selectable via `on_select`; a node with children drills into them
+/// instead, with an automatic back item to return.
+pub struct SidebarNode<T> {
+    pub id: T,
+    pub label: String,
+    pub children: Vec<SidebarNode<T>>,
+}
+
+impl<T> SidebarNode<T> {
+    pub fn leaf(id: T, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            children: Vec::new(),
+        }
+    }
+
+    pub fn parent(id: T, label: impl Into<String>, children: Vec<SidebarNode<T>>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            children,
+        }
+    }
+}
+
+/// A [`Sidebar`] with drill-down navigation, in the same
+/// "compose-a-widget-tree" spirit as [`Sidebar`] itself: `tree` describes
+/// the whole hierarchy, `nav` (an app-owned [`SidebarNavController`]) tracks
+/// which category is currently entered, and clicking a node with children
+/// replaces the visible level with those children plus a back item, while
+/// clicking a leaf calls `on_select`. `style` is the container style (as
+/// passed to [`Sidebar::new`]); `item_style` is applied to every rendered
+/// row (as passed to [`SidebarItem::new`]).
+pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
+    colors: TabColors,
+    style: Style,
+    item_style: Style,
+    tree: &[SidebarNode<T>],
+    nav: &SidebarNavController<T>,
+    active: Option<&T>,
+    on_select: impl Fn(T) + 'static,
+) -> BoxedWidget {
+    let path = nav.path();
+    let mut level = tree;
+    for id in &path {
+        level = match level.iter().find(|node| &node.id == id) {
+            Some(node) => node.children.as_slice(),
+            None => tree,
+        };
+    }
+
+    let on_select: Rc<dyn Fn(T)> = Rc::new(on_select);
+    let mut items: Vec<BoxedWidget> = Vec::with_capacity(level.len() + 1);
+    if !path.is_empty() {
+        let back = nav.clone();
+        items.push(Box::new(SidebarItem::new(
+            colors,
+            item_style.clone(),
+            "\u{2039} Back",
+            false,
+            move || back.back(),
+        )));
+    }
+    for node in level {
+        let id = node.id.clone();
+        let is_leaf = node.children.is_empty();
+        let label = if is_leaf {
+            node.label.clone()
+        } else {
+            format!("{}  \u{203a}", node.label)
+        };
+        let is_active = is_leaf && active == Some(&id);
+        let nav = nav.clone();
+        let on_select = on_select.clone();
+        items.push(Box::new(SidebarItem::new(
+            colors,
+            item_style.clone(),
+            label,
+            is_active,
+            move || {
+                if is_leaf {
+                    on_select(id.clone());
+                } else {
+                    nav.enter(id.clone());
+                }
+            },
+        )));
+    }
+
+    Box::new(Sidebar::new(colors, style).with_children(items))
 }

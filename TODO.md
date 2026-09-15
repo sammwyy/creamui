@@ -202,24 +202,37 @@
   `Mutation::SetTransform` also has no scroll-view/drag caller yet — it
   exists as plumbing, not wired to any interaction.
 - REFACTOR.md 16.1: `RuntimeNode` now also carries `opacity: f32`
-  (`[0.0, 1.0]`, clamped in `Mutation::SetOpacity`'s handler), and
-  `LayoutState::effective_opacity` cascades it multiplicatively alongside
-  `effective_transform` in the same `Runtime::rebuild_composite` pass —
-  same "own value + inherited from parent, only where COMPOSITE-dirty"
-  shape as transform. Only translation is modeled for transform still —
-  no scale/rotate — and there is no `ClipNode` (16.1's third retained
-  property kind), no compositor-owned layer-promotion policy, and no
-  devtools layer-memory view (16.4/16.5's remaining exit criteria). The
-  existing paint-time layer promotion heuristic in `crates/core/src/scene.rs`
-  (the legacy reconcile path) is untouched, and `effective_opacity` isn't
-  read from anywhere yet — same "computed, not consumed" state
-  `effective_transform` was in before `GpuSceneState::sync_transform`
-  (itself still unwired — see the Phase 8 entries above); an analogous
-  `sync_opacity` wasn't added there for the same reason.
+  (`[0.0, 1.0]`, clamped in `Mutation::SetOpacity`'s handler) and
+  `clips_children: bool`, and `LayoutState` grew `effective_opacity`
+  (cascaded multiplicatively) and `effective_clip: Option<Rect>`
+  (cascaded by intersecting each clipping ancestor's own laid-out rect —
+  `None` means unclipped; a clip with zero overlap is `Some(zero-area
+  rect)`, not `None`, so "clipped to nothing" stays distinguishable from
+  "never clipped"). All three cascade together in one
+  `Runtime::rebuild_composite` pass. Unlike transform/opacity, an
+  ancestor's `effective_clip` also depends on that ancestor's *own*
+  `layout.rect`, which changes via `compute_layout`, not a
+  `RuntimeTransaction` mutation — `sync_layout_rects` (`crates/core/src/runtime/mod.rs`)
+  now explicitly re-queues a clipping node's children for composite
+  whenever its rect actually changes, since `rebuild_composite`'s own
+  "cascade past a node only if its own effective state changed" check
+  can't see that a *parent's* rect moved. Only translation is modeled for
+  transform still — no scale/rotate — and there is no compositor-owned
+  layer-promotion policy or devtools layer-memory view (16.4/16.5's
+  remaining exit criteria). The existing paint-time layer promotion
+  heuristic in `crates/core/src/scene.rs` (the legacy reconcile path) is
+  untouched, and none of `effective_transform`/`effective_opacity`/
+  `effective_clip` are read from anywhere live yet — same "computed, not
+  consumed" state `effective_transform` was in before
+  `GpuSceneState::sync_transform` (itself still unwired — see the Phase 8
+  entries above); no `sync_clip`/`sync_opacity` were added there for the
+  same reason. No corner-radius/rounded-clip concept — `effective_clip`
+  is a plain axis-aligned rect, unlike the legacy `Scene`'s
+  `push_clip_rounded`.
 - `Runtime::rebuild_composite`'s cascade can revisit the same node twice
   in one pass if a single transaction calls `Mutation::SetTransform`/
-  `Mutation::SetOpacity` on both a node and one of its ancestors —
-  harmless (recomputes to the same value, `#[cfg(feature = "perf-metrics")]`'s
+  `Mutation::SetOpacity`/`Mutation::SetClipsChildren` on both a node and
+  one of its ancestors — harmless (recomputes to the same value, `#[cfg(feature = "perf-metrics")]`'s
   `composite_nodes_updated` counter just double-counts that node), not
   worth a dedup pass for this edge case yet.
 - REFACTOR.md 17.1: `creamui_widgets::RawVirtualList` (`crates/widgets/src/raw/virtualize.rs`)

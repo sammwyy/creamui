@@ -54,6 +54,9 @@ All notable changes to CreamUI will be documented in this file.
 - Added retained per-node opacity to the persistent runtime tree,
   cascading multiplicatively to children alongside the existing
   transform compositing.
+- Added retained per-node clipping to the persistent runtime tree,
+  intersecting each clipping ancestor's own rect into its children's
+  effective clip region.
 
 ## 0.1.1
 

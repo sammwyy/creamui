@@ -39,6 +39,22 @@ pub use view::{IntoView, View};
 use arena::Arena;
 use taffy::TaffyTree;
 
+/// Intersects `rect` into `ambient` (or takes `rect` as-is if there's no
+/// ambient clip yet). A non-overlapping intersection yields a zero-area
+/// rect at `rect`'s origin rather than `None` — still clipped, just to
+/// nothing.
+fn clip_to(ambient: Option<crate::Rect>, rect: crate::Rect) -> crate::Rect {
+    match ambient {
+        Some(existing) => existing.intersect(rect).unwrap_or(crate::Rect {
+            x: rect.x,
+            y: rect.y,
+            width: 0.0,
+            height: 0.0,
+        }),
+        None => rect,
+    }
+}
+
 pub struct Runtime {
     nodes: Arena<RuntimeNode>,
     root: Option<RuntimeNodeId>,
@@ -207,6 +223,18 @@ impl Runtime {
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
                 self.hit_test_dirty = true;
                 self.paint_queue.push(id);
+                // A clipping node's rect feeds its children's effective_clip.
+                // The node's own effective_clip is unaffected, so
+                // rebuild_composite's own change-detection won't cascade to
+                // them on its own — queue them here instead.
+                if node.clips_children {
+                    for &child in &children {
+                        if let Some(child_node) = self.nodes.get_mut(child) {
+                            child_node.dirty |= DirtyFlags::COMPOSITE;
+                        }
+                    }
+                    self.composite_queue.extend(children.iter().copied());
+                }
             }
 
             stack.extend(children.into_iter().map(|child| (child, child_origin)));
@@ -268,12 +296,13 @@ impl Runtime {
         &self.paint_order
     }
 
-    /// Recomputes `effective_transform`/`effective_opacity` for every
-    /// queued (COMPOSITE-dirty) node, cascading to a node's children
-    /// whenever either actually changed (they inherit both) — no layout,
-    /// no paint-fragment regeneration. Returns every node whose composited
-    /// state was touched, so a renderer can reposition/re-blend
-    /// already-retained content for exactly those nodes.
+    /// Recomputes `effective_transform`/`effective_opacity`/`effective_clip`
+    /// for every queued (COMPOSITE-dirty) node, cascading to a node's
+    /// children whenever any of the three actually changed (they inherit
+    /// all three) — no layout, no paint-fragment regeneration. Returns
+    /// every node whose composited state was touched, so a renderer can
+    /// reposition/re-blend/re-clip already-retained content for exactly
+    /// those nodes.
     pub fn rebuild_composite(&mut self) -> Vec<RuntimeNodeId> {
         let mut queue = std::mem::take(&mut self.composite_queue);
         let mut touched = Vec::with_capacity(queue.len());
@@ -285,16 +314,22 @@ impl Runtime {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            let (parent_transform, parent_opacity) = node
+            let (parent_transform, parent_opacity, parent_clip) = node
                 .parent
                 .and_then(|parent| self.nodes.get(parent))
                 .map(|parent| {
+                    let clip = if parent.clips_children {
+                        Some(clip_to(parent.layout.effective_clip, parent.layout.rect))
+                    } else {
+                        parent.layout.effective_clip
+                    };
                     (
                         parent.layout.effective_transform,
                         parent.layout.effective_opacity,
+                        clip,
                     )
                 })
-                .unwrap_or((Transform2D::default(), 1.0));
+                .unwrap_or((Transform2D::default(), 1.0, None));
             let own = node.transform;
             let new_transform = Transform2D {
                 x: parent_transform.x + own.x,
@@ -304,9 +339,11 @@ impl Runtime {
 
             let node = self.nodes.get_mut(id).expect("checked above");
             let changed = node.layout.effective_transform != new_transform
-                || node.layout.effective_opacity != new_opacity;
+                || node.layout.effective_opacity != new_opacity
+                || node.layout.effective_clip != parent_clip;
             node.layout.effective_transform = new_transform;
             node.layout.effective_opacity = new_opacity;
+            node.layout.effective_clip = parent_clip;
             node.dirty.remove(DirtyFlags::COMPOSITE);
             #[cfg(feature = "perf-metrics")]
             crate::metrics::record(|m| m.composite_nodes_updated += 1);
@@ -845,6 +882,187 @@ mod tests {
         drop(tx);
 
         assert_eq!(runtime.get(node).unwrap().layout.effective_opacity, 1.0);
+    }
+
+    fn set_rect(runtime: &mut Runtime, id: RuntimeNodeId, rect: crate::Rect) {
+        runtime.nodes.get_mut(id).unwrap().layout.rect = rect;
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> crate::Rect {
+        crate::Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn rebuild_composite_sets_a_childs_effective_clip_from_its_clipping_parent() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetClipsChildren {
+            node: parent,
+            clips_children: true,
+        });
+        drop(tx);
+        set_rect(&mut runtime, parent, rect(0.0, 0.0, 100.0, 50.0));
+
+        runtime.rebuild_composite();
+
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(0.0, 0.0, 100.0, 50.0))
+        );
+        assert_eq!(runtime.get(parent).unwrap().layout.effective_clip, None);
+    }
+
+    #[test]
+    fn rebuild_composite_intersects_nested_clips() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let grandparent = tx.create_node(NodeKind::Container);
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(grandparent, parent, None);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetClipsChildren {
+            node: grandparent,
+            clips_children: true,
+        });
+        tx.apply(Mutation::SetClipsChildren {
+            node: parent,
+            clips_children: true,
+        });
+        drop(tx);
+        set_rect(&mut runtime, grandparent, rect(0.0, 0.0, 100.0, 100.0));
+        set_rect(&mut runtime, parent, rect(50.0, 50.0, 100.0, 100.0));
+
+        runtime.rebuild_composite();
+
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(50.0, 50.0, 50.0, 50.0))
+        );
+    }
+
+    #[test]
+    fn a_clip_with_no_overlap_becomes_a_zero_area_rect_not_none() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let grandparent = tx.create_node(NodeKind::Container);
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(grandparent, parent, None);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetClipsChildren {
+            node: grandparent,
+            clips_children: true,
+        });
+        tx.apply(Mutation::SetClipsChildren {
+            node: parent,
+            clips_children: true,
+        });
+        drop(tx);
+        set_rect(&mut runtime, grandparent, rect(0.0, 0.0, 10.0, 10.0));
+        set_rect(&mut runtime, parent, rect(500.0, 500.0, 10.0, 10.0));
+
+        runtime.rebuild_composite();
+
+        let clip = runtime.get(child).unwrap().layout.effective_clip;
+        assert_eq!(
+            clip,
+            Some(rect(500.0, 500.0, 0.0, 0.0)),
+            "fully clipped away must stay Some(..) with zero area, not None"
+        );
+    }
+
+    #[test]
+    fn a_non_clipping_node_passes_the_ambient_clip_through_unchanged() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let grandparent = tx.create_node(NodeKind::Container);
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(grandparent, parent, None);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetClipsChildren {
+            node: grandparent,
+            clips_children: true,
+        });
+        drop(tx);
+        set_rect(&mut runtime, grandparent, rect(0.0, 0.0, 100.0, 100.0));
+        set_rect(&mut runtime, parent, rect(500.0, 500.0, 10.0, 10.0));
+
+        runtime.rebuild_composite();
+
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(0.0, 0.0, 100.0, 100.0))
+        );
+    }
+
+    #[test]
+    fn toggling_clips_children_updates_the_childrens_effective_clip_next_pass() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(parent, child, None);
+        drop(tx);
+        set_rect(&mut runtime, parent, rect(0.0, 0.0, 20.0, 20.0));
+        runtime.rebuild_composite();
+        assert_eq!(runtime.get(child).unwrap().layout.effective_clip, None);
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetClipsChildren {
+            node: parent,
+            clips_children: true,
+        });
+        drop(tx);
+        runtime.rebuild_composite();
+
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(0.0, 0.0, 20.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn changing_a_clipping_nodes_layout_rect_updates_its_childrens_effective_clip() {
+        let mut runtime = Runtime::new();
+        let root = full_size_root(&mut runtime);
+        runtime.set_root(Some(root));
+        let child = {
+            let mut tx = runtime.transaction();
+            let child = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, child, None);
+            tx.apply(Mutation::SetClipsChildren {
+                node: root,
+                clips_children: true,
+            });
+            child
+        };
+        runtime.compute_layout(size(100.0, 100.0));
+        runtime.rebuild_composite();
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(0.0, 0.0, 100.0, 100.0))
+        );
+
+        runtime.compute_layout(size(200.0, 150.0));
+        runtime.rebuild_composite();
+
+        assert_eq!(
+            runtime.get(child).unwrap().layout.effective_clip,
+            Some(rect(0.0, 0.0, 200.0, 150.0)),
+            "a clipping ancestor's own rect change must reach its children's \
+             effective_clip on the next rebuild_composite, with no explicit \
+             SetClipsChildren/SetTransform/SetOpacity mutation in between"
+        );
     }
 
     /// A tiny xorshift generator, so this test is reproducible without a

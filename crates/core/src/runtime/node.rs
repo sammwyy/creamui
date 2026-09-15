@@ -112,6 +112,13 @@ pub struct LayoutState {
     /// This node's own [`RuntimeNode::opacity`] multiplied by every
     /// ancestor's, as of the last [`super::Runtime::rebuild_composite`].
     pub effective_opacity: f32,
+    /// The visible region this node is clipped to by the nearest ancestor
+    /// (or ancestors) with [`RuntimeNode::clips_children`] set, as of the
+    /// last [`super::Runtime::rebuild_composite`]. `None` means unclipped
+    /// (the common case: no clipping ancestor). A clipping ancestor whose
+    /// rect doesn't overlap the ambient clip at all yields a zero-area
+    /// rect here, not `None` — "clipped to nothing" is still clipped.
+    pub effective_clip: Option<crate::Rect>,
 }
 
 /// Retained event handlers and interaction metadata for one node, set
@@ -157,6 +164,10 @@ pub struct RuntimeNode {
     /// ancestors' — see [`LayoutState::effective_opacity`] for the
     /// cascaded value a renderer actually composites with.
     pub opacity: f32,
+    /// Whether this node clips content painted by its children to its own
+    /// laid-out rect — see [`LayoutState::effective_clip`] for the
+    /// cascaded clip region a renderer actually composites with.
+    pub clips_children: bool,
     pub dirty: DirtyFlags,
     pub layout: LayoutState,
     pub events: EventState,
@@ -182,6 +193,7 @@ impl RuntimeNode {
             typography_style: crate::TypographyStyle::default(),
             transform: super::mutation::Transform2D::default(),
             opacity: 1.0,
+            clips_children: false,
             dirty: DirtyFlags::STRUCTURE,
             layout: LayoutState {
                 taffy_node,
@@ -191,6 +203,7 @@ impl RuntimeNode {
                 last_layout_epoch: 0,
                 effective_transform: super::mutation::Transform2D::default(),
                 effective_opacity: 1.0,
+                effective_clip: None,
             },
             events: EventState::default(),
             paint: super::paint::PaintState::default(),

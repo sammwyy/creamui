@@ -275,6 +275,23 @@ impl<'a> RuntimeTransaction<'a> {
                     self.touch(node, DirtyFlags::COMPOSITE);
                 }
             }
+            Mutation::SetClipsChildren {
+                node,
+                clips_children,
+            } => {
+                let result = self.runtime.nodes.get_mut(node).map(|n| {
+                    let changed = n.clips_children != clips_children;
+                    n.clips_children = clips_children;
+                    (changed, n.children.as_slice().to_vec())
+                });
+                if let Some((true, children)) = result {
+                    self.touch(node, DirtyFlags::COMPOSITE);
+                    // Children, not just `node`, since their effective_clip depends on `node.clips_children`, not `node`'s own.
+                    for child in children {
+                        self.touch(child, DirtyFlags::COMPOSITE);
+                    }
+                }
+            }
             Mutation::SetMeasure {
                 node,
                 measure,

@@ -38,6 +38,11 @@ pub enum Mutation {
         node: RuntimeNodeId,
         opacity: f32,
     },
+    /// See [`super::node::RuntimeNode::clips_children`].
+    SetClipsChildren {
+        node: RuntimeNodeId,
+        clips_children: bool,
+    },
     /// Registers (or clears) `node`'s intrinsic-size function. `fingerprint`
     /// is a hash of whatever `measure` captures; a match against the
     /// node's stored fingerprint skips the `taffy` write. `None` always

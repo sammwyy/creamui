@@ -56,6 +56,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
+use xkbcommon::xkb;
 
 const USER_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -357,6 +358,8 @@ struct Runtime {
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    xkb_context: xkb::Context,
+    xkb_state: Option<xkb::State>,
     cursor_shape_manager: Option<CursorShapeManager>,
     layer_shell: Option<ZwlrLayerShellV1>,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
@@ -387,6 +390,8 @@ impl Runtime {
             seat,
             pointer: None,
             keyboard: None,
+            xkb_context: xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
+            xkb_state: None,
             cursor_shape_manager,
             layer_shell,
             cursor_shape_device: None,
@@ -867,6 +872,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
     ) {
         let mut runtime = state.runtime.borrow_mut();
         match event {
+            wl_keyboard::Event::Keymap {
+                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+                fd,
+                ..
+            } => {
+                let mut file = std::fs::File::from(fd);
+                runtime.xkb_state = xkb::Keymap::new_from_file(
+                    &runtime.xkb_context,
+                    &mut file,
+                    xkb::KEYMAP_FORMAT_TEXT_V1,
+                    xkb::COMPILE_NO_FLAGS,
+                )
+                .map(|keymap| xkb::State::new(&keymap));
+            }
             wl_keyboard::Event::Enter { surface, .. } => {
                 if let Some(id) = runtime.id_for_surface(&surface) {
                     runtime.keyboard_focus = Some(id);
@@ -887,14 +906,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                 ..
             } => {
                 if let Some(id) = runtime.keyboard_focus {
+                    let key = keyboard_key(key, runtime.xkb_state.as_ref());
                     runtime.events.push((
                         id,
                         WindowEvent::KeyboardInput(KeyEvent {
-                            key: keyboard_key(key),
+                            key,
                             pressed: key_state == wl_keyboard::KeyState::Pressed,
                             synthetic: false,
                         }),
                     ));
+                }
+            }
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
+                if let Some(state) = runtime.xkb_state.as_mut() {
+                    state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 }
             }
             _ => {}
@@ -1213,7 +1244,13 @@ fn cursor_shape(icon: CursorIcon) -> Shape {
     }
 }
 
-fn keyboard_key(key: u32) -> Key {
+fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
+    if let Some(character) = xkb_state
+        .map(|state| state.key_get_utf8(xkb::Keycode::new(key + 8)))
+        .filter(|character| !character.is_empty())
+    {
+        return Key::Character(character);
+    }
     match key {
         1 => Key::Escape,
         14 => Key::Backspace,

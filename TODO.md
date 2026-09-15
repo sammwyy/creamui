@@ -201,16 +201,25 @@
   returns, call `sync_transform(id, runtime.get(id).unwrap().layout.effective_transform)`.
   `Mutation::SetTransform` also has no scroll-view/drag caller yet — it
   exists as plumbing, not wired to any interaction.
-- Only translation is modeled (`Transform2D { x, y }`) — no scale/rotate,
-  no `OpacityNode`/`ClipNode` (REFACTOR.md 16.1's other two retained
-  property kinds), and no explicit compositor-owned layer-promotion
-  policy or devtools layer-memory view (16.4/16.5's remaining exit
-  criteria). The existing paint-time layer promotion heuristic in
-  `crates/core/src/scene.rs` (the legacy reconcile path) is untouched.
+- REFACTOR.md 16.1: `RuntimeNode` now also carries `opacity: f32`
+  (`[0.0, 1.0]`, clamped in `Mutation::SetOpacity`'s handler), and
+  `LayoutState::effective_opacity` cascades it multiplicatively alongside
+  `effective_transform` in the same `Runtime::rebuild_composite` pass —
+  same "own value + inherited from parent, only where COMPOSITE-dirty"
+  shape as transform. Only translation is modeled for transform still —
+  no scale/rotate — and there is no `ClipNode` (16.1's third retained
+  property kind), no compositor-owned layer-promotion policy, and no
+  devtools layer-memory view (16.4/16.5's remaining exit criteria). The
+  existing paint-time layer promotion heuristic in `crates/core/src/scene.rs`
+  (the legacy reconcile path) is untouched, and `effective_opacity` isn't
+  read from anywhere yet — same "computed, not consumed" state
+  `effective_transform` was in before `GpuSceneState::sync_transform`
+  (itself still unwired — see the Phase 8 entries above); an analogous
+  `sync_opacity` wasn't added there for the same reason.
 - `Runtime::rebuild_composite`'s cascade can revisit the same node twice
-  in one pass if a single transaction calls `Mutation::SetTransform` on
-  both a node and one of its ancestors — harmless (recomputes to the
-  same value, `#[cfg(feature = "perf-metrics")]`'s
+  in one pass if a single transaction calls `Mutation::SetTransform`/
+  `Mutation::SetOpacity` on both a node and one of its ancestors —
+  harmless (recomputes to the same value, `#[cfg(feature = "perf-metrics")]`'s
   `composite_nodes_updated` counter just double-counts that node), not
   worth a dedup pass for this edge case yet.
 - REFACTOR.md 17.1: `creamui_widgets::RawVirtualList` (`crates/widgets/src/raw/virtualize.rs`)

@@ -268,11 +268,11 @@ impl Runtime {
         &self.paint_order
     }
 
-    /// Recomputes `effective_transform` for every queued (COMPOSITE-dirty)
-    /// node, cascading to a node's children whenever its own
-    /// `effective_transform` actually changed (they inherit it) — no
-    /// layout, no paint-fragment regeneration. Returns every node whose
-    /// `effective_transform` was touched, so a renderer can reposition
+    /// Recomputes `effective_transform`/`effective_opacity` for every
+    /// queued (COMPOSITE-dirty) node, cascading to a node's children
+    /// whenever either actually changed (they inherit both) — no layout,
+    /// no paint-fragment regeneration. Returns every node whose composited
+    /// state was touched, so a renderer can reposition/re-blend
     /// already-retained content for exactly those nodes.
     pub fn rebuild_composite(&mut self) -> Vec<RuntimeNodeId> {
         let mut queue = std::mem::take(&mut self.composite_queue);
@@ -285,20 +285,28 @@ impl Runtime {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            let parent_effective = node
+            let (parent_transform, parent_opacity) = node
                 .parent
                 .and_then(|parent| self.nodes.get(parent))
-                .map(|parent| parent.layout.effective_transform)
-                .unwrap_or_default();
+                .map(|parent| {
+                    (
+                        parent.layout.effective_transform,
+                        parent.layout.effective_opacity,
+                    )
+                })
+                .unwrap_or((Transform2D::default(), 1.0));
             let own = node.transform;
-            let new_effective = Transform2D {
-                x: parent_effective.x + own.x,
-                y: parent_effective.y + own.y,
+            let new_transform = Transform2D {
+                x: parent_transform.x + own.x,
+                y: parent_transform.y + own.y,
             };
+            let new_opacity = parent_opacity * node.opacity;
 
             let node = self.nodes.get_mut(id).expect("checked above");
-            let changed = node.layout.effective_transform != new_effective;
-            node.layout.effective_transform = new_effective;
+            let changed = node.layout.effective_transform != new_transform
+                || node.layout.effective_opacity != new_opacity;
+            node.layout.effective_transform = new_transform;
+            node.layout.effective_opacity = new_opacity;
             node.dirty.remove(DirtyFlags::COMPOSITE);
             #[cfg(feature = "perf-metrics")]
             crate::metrics::record(|m| m.composite_nodes_updated += 1);
@@ -773,6 +781,70 @@ mod tests {
         runtime.rebuild_composite();
 
         assert!(runtime.rebuild_composite().is_empty());
+    }
+
+    #[test]
+    fn rebuild_composite_sets_a_leafs_effective_opacity_to_its_own() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetOpacity { node, opacity: 0.4 });
+        drop(tx);
+
+        runtime.rebuild_composite();
+        assert_eq!(runtime.get(node).unwrap().layout.effective_opacity, 0.4);
+    }
+
+    #[test]
+    fn rebuild_composite_multiplies_a_parents_opacity_into_its_children() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let parent = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.insert_child(parent, child, None);
+        tx.apply(Mutation::SetOpacity {
+            node: parent,
+            opacity: 0.5,
+        });
+        tx.apply(Mutation::SetOpacity {
+            node: child,
+            opacity: 0.5,
+        });
+        drop(tx);
+
+        runtime.rebuild_composite();
+        assert_eq!(runtime.get(parent).unwrap().layout.effective_opacity, 0.5);
+        assert_eq!(runtime.get(child).unwrap().layout.effective_opacity, 0.25);
+    }
+
+    #[test]
+    fn set_opacity_clamps_to_the_zero_one_range() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let over = tx.create_node(NodeKind::Container);
+        let under = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetOpacity {
+            node: over,
+            opacity: 2.0,
+        });
+        tx.apply(Mutation::SetOpacity {
+            node: under,
+            opacity: -1.0,
+        });
+        drop(tx);
+
+        assert_eq!(runtime.get(over).unwrap().opacity, 1.0);
+        assert_eq!(runtime.get(under).unwrap().opacity, 0.0);
+    }
+
+    #[test]
+    fn a_default_nodes_effective_opacity_is_fully_opaque() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let node = tx.create_node(NodeKind::Container);
+        drop(tx);
+
+        assert_eq!(runtime.get(node).unwrap().layout.effective_opacity, 1.0);
     }
 
     /// A tiny xorshift generator, so this test is reproducible without a

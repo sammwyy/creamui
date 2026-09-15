@@ -264,6 +264,17 @@ impl<'a> RuntimeTransaction<'a> {
                     self.touch(node, DirtyFlags::COMPOSITE);
                 }
             }
+            Mutation::SetOpacity { node, opacity } => {
+                let opacity = opacity.clamp(0.0, 1.0);
+                let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
+                    let changed = n.opacity != opacity;
+                    n.opacity = opacity;
+                    changed
+                });
+                if changed {
+                    self.touch(node, DirtyFlags::COMPOSITE);
+                }
+            }
             Mutation::SetMeasure {
                 node,
                 measure,

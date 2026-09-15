@@ -33,6 +33,11 @@ pub enum Mutation {
         node: RuntimeNodeId,
         transform: Transform2D,
     },
+    /// Clamped to `[0.0, 1.0]`; see [`super::node::RuntimeNode::opacity`].
+    SetOpacity {
+        node: RuntimeNodeId,
+        opacity: f32,
+    },
     /// Registers (or clears) `node`'s intrinsic-size function. `fingerprint`
     /// is a hash of whatever `measure` captures; a match against the
     /// node's stored fingerprint skips the `taffy` write. `None` always

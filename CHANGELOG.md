@@ -51,6 +51,9 @@ All notable changes to CreamUI will be documented in this file.
   choice instead of recording it.
 - Added `cui_set_typography_style` to ABI-v2, so a C caller can set a
   node's color/font-size/family/align/bold/italic/underline/strikethrough.
+- Added retained per-node opacity to the persistent runtime tree,
+  cascading multiplicatively to children alongside the existing
+  transform compositing.
 
 ## 0.1.1
 

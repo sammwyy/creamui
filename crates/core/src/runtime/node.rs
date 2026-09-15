@@ -109,6 +109,9 @@ pub struct LayoutState {
     /// This node's own [`RuntimeNode::transform`] plus every ancestor's, as
     /// of the last [`super::Runtime::rebuild_composite`].
     pub effective_transform: super::mutation::Transform2D,
+    /// This node's own [`RuntimeNode::opacity`] multiplied by every
+    /// ancestor's, as of the last [`super::Runtime::rebuild_composite`].
+    pub effective_opacity: f32,
 }
 
 /// Retained event handlers and interaction metadata for one node, set
@@ -150,6 +153,10 @@ pub struct RuntimeNode {
     pub paint_style: crate::PaintStyle,
     pub typography_style: crate::TypographyStyle,
     pub transform: super::mutation::Transform2D,
+    /// This node's own opacity, in `[0.0, 1.0]`, independent of its
+    /// ancestors' — see [`LayoutState::effective_opacity`] for the
+    /// cascaded value a renderer actually composites with.
+    pub opacity: f32,
     pub dirty: DirtyFlags,
     pub layout: LayoutState,
     pub events: EventState,
@@ -174,6 +181,7 @@ impl RuntimeNode {
             paint_style: crate::PaintStyle::default(),
             typography_style: crate::TypographyStyle::default(),
             transform: super::mutation::Transform2D::default(),
+            opacity: 1.0,
             dirty: DirtyFlags::STRUCTURE,
             layout: LayoutState {
                 taffy_node,
@@ -182,6 +190,7 @@ impl RuntimeNode {
                 previous_rect: crate::Rect::default(),
                 last_layout_epoch: 0,
                 effective_transform: super::mutation::Transform2D::default(),
+                effective_opacity: 1.0,
             },
             events: EventState::default(),
             paint: super::paint::PaintState::default(),

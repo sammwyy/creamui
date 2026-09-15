@@ -841,14 +841,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for DispatchState {
                 }
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
-                let delta = match axis {
-                    WEnum::Value(wl_pointer::Axis::VerticalScroll) => {
-                        MouseScrollDelta::PixelDelta(PhysicalPosition { x: 0.0, y: value })
-                    }
-                    WEnum::Value(wl_pointer::Axis::HorizontalScroll) => {
-                        MouseScrollDelta::PixelDelta(PhysicalPosition { x: value, y: 0.0 })
-                    }
-                    _ => return,
+                let Some(delta) = (match axis {
+                    WEnum::Value(axis) => wayland_axis_delta(axis, value),
+                    _ => None,
+                }) else {
+                    return;
                 };
                 if let Some(id) = runtime.pointer_target() {
                     runtime.events.push((id, WindowEvent::MouseWheel { delta }));
@@ -1183,6 +1180,26 @@ fn pointer_button(button: u32) -> MouseButton {
     }
 }
 
+fn wayland_axis_delta(axis: wl_pointer::Axis, value: f64) -> Option<MouseScrollDelta> {
+    // Wayland's axis convention is positive for down/right, while
+    // MouseScrollDelta follows winit's positive-up/left convention. Keep
+    // backend events consistent before the renderer converts them into a
+    // positive scroll-view offset.
+    match axis {
+        wl_pointer::Axis::VerticalScroll => Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
+            x: 0.0,
+            y: -value,
+        })),
+        wl_pointer::Axis::HorizontalScroll => {
+            Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
+                x: -value,
+                y: 0.0,
+            }))
+        }
+        _ => None,
+    }
+}
+
 fn cursor_shape(icon: CursorIcon) -> Shape {
     match icon {
         CursorIcon::Default => Shape::Default,
@@ -1244,4 +1261,27 @@ fn dispatch_with_timeout(
         .dispatch_pending(state)
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wayland_axis_deltas_match_the_platform_scroll_convention() {
+        assert_eq!(
+            wayland_axis_delta(wl_pointer::Axis::VerticalScroll, 12.0),
+            Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
+                x: 0.0,
+                y: -12.0
+            }))
+        );
+        assert_eq!(
+            wayland_axis_delta(wl_pointer::Axis::HorizontalScroll, 8.0),
+            Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
+                x: -8.0,
+                y: 0.0
+            }))
+        );
+    }
 }

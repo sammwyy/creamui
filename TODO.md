@@ -193,14 +193,23 @@
   either — a larger change than this one, and already covered by the
   `sync_text_node` entry below for the (also unwired) `gpu_scene` path.
 - `Runtime::rebuild_composite` (REFACTOR.md Phase 10) and
-  `GpuSceneState::sync_transform` exist and are tested/benchmarked in
-  isolation, but nothing calls either from a shared place — same
-  "exists alongside, not wired into a caller" state as the rest of the
-  runtime tree and `gpu_scene`. A real caller would run
-  `rebuild_composite` after every transaction and, for each id it
-  returns, call `sync_transform(id, runtime.get(id).unwrap().layout.effective_transform)`.
-  `Mutation::SetTransform` also has no scroll-view/drag caller yet — it
-  exists as plumbing, not wired to any interaction.
+  `GpuSceneState::sync_transform`/`sync_opacity` exist and are
+  tested/benchmarked in isolation, but nothing calls any of them from a
+  shared place — same "exists alongside, not wired into a caller" state
+  as the rest of the runtime tree and `gpu_scene`. A real caller would
+  run `rebuild_composite` after every transaction and, for each id it
+  returns, call `sync_transform(id, node.layout.effective_transform)`/
+  `sync_opacity(id, node.layout.effective_opacity)`; `sync_node`/
+  `sync_text_node` also both now take an `opacity` parameter (applied to
+  fill/border/glyph alpha alongside the existing `transform` parameter)
+  that a caller deriving a fragment from scratch would pass
+  `effective_opacity` into. `sync_opacity`'s ratio-based rescale can't
+  recover a nonzero alpha for a node last synced at exactly `0.0` opacity
+  — that edge case needs a full `sync_node`/`sync_text_node` call instead
+  of the incremental path; not handled here since nothing calls either
+  function yet to hit it. `Mutation::SetTransform`/`SetOpacity` also have
+  no scroll-view/drag/fade caller yet — they exist as plumbing, not wired
+  to any interaction.
 - REFACTOR.md 16.1: `RuntimeNode` now also carries `opacity: f32`
   (`[0.0, 1.0]`, clamped in `Mutation::SetOpacity`'s handler) and
   `clips_children: bool`, and `LayoutState` grew `effective_opacity`
@@ -225,10 +234,14 @@
   `effective_clip` are read from anywhere live yet — same "computed, not
   consumed" state `effective_transform` was in before
   `GpuSceneState::sync_transform` (itself still unwired — see the Phase 8
-  entries above); no `sync_clip`/`sync_opacity` were added there for the
-  same reason. No corner-radius/rounded-clip concept — `effective_clip`
-  is a plain axis-aligned rect, unlike the legacy `Scene`'s
-  `push_clip_rounded`.
+  entries above). `GpuSceneState::sync_opacity` now exists alongside
+  `sync_transform` (see the entry above), in the same unwired state; no
+  `sync_clip` was added, since a clip needs a shader-level clip-rect
+  attribute (or per-draw scissor coordination across multiple differently
+  clipped nodes in one batch) rather than a per-instance color rescale,
+  a larger change than this pass attempted. No corner-radius/rounded-clip
+  concept — `effective_clip` is a plain axis-aligned rect, unlike the
+  legacy `Scene`'s `push_clip_rounded`.
 - `Runtime::rebuild_composite`'s cascade can revisit the same node twice
   in one pass if a single transaction calls `Mutation::SetTransform`/
   `Mutation::SetOpacity`/`Mutation::SetClipsChildren` on both a node and

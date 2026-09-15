@@ -56,6 +56,16 @@ impl QuadInstance {
             ..self
         }
     }
+
+    pub fn scaled_alpha(self, factor: f32) -> Self {
+        let [r, g, b, a] = self.color;
+        let [br, bg, bb, ba] = self.border_color;
+        QuadInstance {
+            color: [r, g, b, a * factor],
+            border_color: [br, bg, bb, ba * factor],
+            ..self
+        }
+    }
 }
 
 fn srgb_channel_to_linear(c: f32) -> f32 {
@@ -230,6 +240,22 @@ mod tests {
         assert_eq!(shifted.position, [6.0, 1.0]);
         assert_eq!(shifted.size, instance.size);
         assert_eq!(shifted.color, instance.color);
+    }
+
+    #[test]
+    fn scaled_alpha_scales_fill_and_border_alpha_only() {
+        let instance = QuadInstance::border(
+            rect(0.0, 0.0, 10.0, 10.0),
+            Color::rgba(255, 0, 0, 200),
+            2.0,
+            0.0,
+            false,
+        );
+        let scaled = instance.scaled_alpha(0.5);
+        assert_eq!(scaled.border_color[3], instance.border_color[3] * 0.5);
+        assert_eq!(scaled.border_color[..3], instance.border_color[..3]);
+        assert_eq!(scaled.position, instance.position);
+        assert_eq!(scaled.size, instance.size);
     }
 
     #[test]

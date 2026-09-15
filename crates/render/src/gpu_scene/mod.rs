@@ -77,6 +77,7 @@ pub struct GpuSceneState {
     shape_cache: ShapeCache,
 
     node_transforms: HashMap<RuntimeNodeId, Transform2D>,
+    node_opacities: HashMap<RuntimeNodeId, f32>,
 }
 
 impl GpuSceneState {
@@ -389,6 +390,7 @@ impl GpuSceneState {
             shape_cache: ShapeCache::new(),
 
             node_transforms: HashMap::new(),
+            node_opacities: HashMap::new(),
         }
     }
 
@@ -405,22 +407,27 @@ impl GpuSceneState {
     }
 
     /// Replaces `node`'s quad instances with the ones derived from its
-    /// current paint fragment and `transform`, reusing existing
+    /// current paint fragment, `transform`, and `opacity`, reusing existing
     /// [`GpuPrimitiveId`] slots where the instance count didn't change so
     /// most updates only dirty a handful of buffer slots instead of the
-    /// whole scene. A `transform`-only change should go through
-    /// [`GpuSceneState::sync_transform`] instead, which skips re-deriving
-    /// from `fragment` entirely.
+    /// whole scene. A `transform`-only or `opacity`-only change should go
+    /// through [`GpuSceneState::sync_transform`]/[`GpuSceneState::sync_opacity`]
+    /// instead, which skip re-deriving from `fragment` entirely.
     pub fn sync_node(
         &mut self,
         node: RuntimeNodeId,
         fragment: &PaintFragment,
         transform: Transform2D,
+        opacity: f32,
     ) {
         let new_instances: Vec<QuadInstance> =
             quad::quad_instances_for_fragment(fragment, self.decode_srgb)
                 .into_iter()
-                .map(|instance| instance.translated(transform.x, transform.y))
+                .map(|instance| {
+                    instance
+                        .translated(transform.x, transform.y)
+                        .scaled_alpha(opacity)
+                })
                 .collect();
         let old_ids = self.node_quads.remove(&node).unwrap_or_default();
 
@@ -440,6 +447,7 @@ impl GpuSceneState {
 
         self.node_quads.insert(node, ids);
         self.node_transforms.insert(node, transform);
+        self.node_opacities.insert(node, opacity);
     }
 
     /// Shapes (cache-hit on unchanged text/style) `primitive`'s text, makes
@@ -453,6 +461,7 @@ impl GpuSceneState {
         node: RuntimeNodeId,
         primitive: &TextPrimitive,
         transform: Transform2D,
+        opacity: f32,
     ) {
         let family = primitive.family.as_deref();
         let bold = primitive.bold;
@@ -479,7 +488,8 @@ impl GpuSceneState {
             creamui_core::TextAlign::End => (primitive.rect.width - shaped.width).max(0.0),
         };
         let align_y = ((primitive.rect.height - shaped.height) / 2.0).max(0.0);
-        let color = quad::quad_color(primitive.color, self.decode_srgb);
+        let [r, g, b, a] = quad::quad_color(primitive.color, self.decode_srgb);
+        let color = [r, g, b, a * opacity];
 
         let mut new_instances = Vec::with_capacity(shaped.glyphs.len());
         for glyph in &shaped.glyphs {
@@ -556,6 +566,7 @@ impl GpuSceneState {
         }
         self.node_glyphs.insert(node, ids);
         self.node_transforms.insert(node, transform);
+        self.node_opacities.insert(node, opacity);
     }
 
     /// Repositions `node`'s already-retained quad and glyph instances by
@@ -585,6 +596,39 @@ impl GpuSceneState {
         self.node_transforms.insert(node, transform);
     }
 
+    /// Rescales `node`'s already-retained quad and glyph alpha by the ratio
+    /// between `opacity` and whatever was last applied, the same
+    /// property-only update path [`GpuSceneState::sync_transform`] uses for
+    /// position. Since the ratio is relative to the previously applied
+    /// opacity, a node last synced at `0.0` can't recover a nonzero alpha
+    /// this way — that case needs a full [`GpuSceneState::sync_node`]/
+    /// [`GpuSceneState::sync_text_node`] call instead (see `TODO.md`).
+    pub fn sync_opacity(&mut self, node: RuntimeNodeId, opacity: f32) {
+        let previous = self.node_opacities.get(&node).copied().unwrap_or(1.0);
+        if previous == opacity {
+            return;
+        }
+        let ratio = if previous != 0.0 {
+            opacity / previous
+        } else {
+            0.0
+        };
+
+        if let Some(ids) = self.node_quads.get(&node) {
+            for &id in ids {
+                let current = self.quad_store.get(id);
+                self.quad_store.update(id, current.scaled_alpha(ratio));
+            }
+        }
+        if let Some(ids) = self.node_glyphs.get(&node) {
+            for &id in ids {
+                let current = self.glyph_store.get(id);
+                self.glyph_store.update(id, current.scaled_alpha(ratio));
+            }
+        }
+        self.node_opacities.insert(node, opacity);
+    }
+
     pub fn remove_node(&mut self, node: RuntimeNodeId) {
         if let Some(ids) = self.node_quads.remove(&node) {
             for id in ids {
@@ -597,6 +641,7 @@ impl GpuSceneState {
             }
         }
         self.node_transforms.remove(&node);
+        self.node_opacities.remove(&node);
     }
 
     pub fn render(&mut self) {

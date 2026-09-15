@@ -297,6 +297,14 @@ impl GlyphInstance {
             ..self
         }
     }
+
+    pub fn scaled_alpha(self, factor: f32) -> Self {
+        let [r, g, b, a] = self.color;
+        GlyphInstance {
+            color: [r, g, b, a * factor],
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -564,5 +572,19 @@ mod tests {
         assert_eq!(shifted.position, [4.0, 0.0]);
         assert_eq!(shifted.uv_min, instance.uv_min);
         assert_eq!(shifted.uv_max, instance.uv_max);
+    }
+
+    #[test]
+    fn glyph_scaled_alpha_scales_only_the_color_alpha() {
+        let rect = AtlasRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 8,
+        };
+        let instance = GlyphInstance::new([1.0, 2.0], [4.0, 8.0], rect, 32, [0.2, 0.4, 0.6, 0.8]);
+        let scaled = instance.scaled_alpha(0.5);
+        assert_eq!(scaled.color, [0.2, 0.4, 0.6, 0.4]);
+        assert_eq!(scaled.position, instance.position);
     }
 }

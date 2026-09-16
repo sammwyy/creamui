@@ -42,6 +42,7 @@ pub mod layout;
 pub use layout::CUIWindowDragArea;
 pub mod raw;
 mod text_metrics;
+pub use text_metrics::{clamp_to_lines, row_height_family};
 pub mod themed;
 
 pub use controller::{

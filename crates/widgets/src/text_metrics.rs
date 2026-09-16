@@ -188,6 +188,49 @@ pub fn content_height_family(
     layout.height()
 }
 
+/// Wraps `text` at `max_width` exactly as the renderer will, and — if that
+/// takes more than `max_lines` rows — trims it down to the longest prefix
+/// whose rows (plus a trailing "…") still fit within `max_lines`. Returns
+/// `text` unchanged when it already fits.
+pub fn clamp_to_lines(
+    text: &str,
+    font_size: f32,
+    max_width: f32,
+    family: Option<&str>,
+    max_lines: usize,
+) -> String {
+    if max_lines == 0 || text.is_empty() {
+        return text.to_string();
+    }
+    let row_starts = |value: &str| -> Vec<usize> {
+        let mut starts = Vec::new();
+        let mut last_y = None;
+        for glyph in layout_family(value, font_size, max_width, family) {
+            if last_y != Some(glyph.y) {
+                starts.push(glyph.byte_offset);
+                last_y = Some(glyph.y);
+            }
+        }
+        starts
+    };
+    let rows = row_starts(text);
+    if rows.len() <= max_lines {
+        return text.to_string();
+    }
+    let cut = rows.get(max_lines).copied().unwrap_or(text.len());
+    let mut candidate = text[..cut.min(text.len())].trim_end().to_string();
+    loop {
+        let attempt = format!("{candidate}\u{2026}");
+        if row_starts(&attempt).len() <= max_lines {
+            return attempt;
+        }
+        if candidate.pop().is_none() {
+            return attempt;
+        }
+        candidate = candidate.trim_end().to_string();
+    }
+}
+
 /// The row height a lone, one-line layout at `font_size` gets — a fallback
 /// for [`caret_xy`] and empty documents, where no glyph/row exists yet to
 /// read a real one from.
@@ -266,5 +309,37 @@ mod tests {
             (constrained_width - natural_width).abs() < 0.01,
             "measuring with max_width set to the natural width should reproduce that width with no wrap: got {constrained_width}, expected {natural_width}"
         );
+    }
+
+    #[test]
+    fn text_that_already_fits_is_returned_unchanged() {
+        let clamped = clamp_to_lines("Wireshark", 12.0, 90.0, None, 2);
+        assert_eq!(clamped, "Wireshark");
+    }
+
+    #[test]
+    fn text_needing_more_rows_than_allowed_gets_an_ellipsis() {
+        let clamped = clamp_to_lines(
+            "A very long application name that keeps going",
+            12.0,
+            90.0,
+            None,
+            2,
+        );
+        assert!(clamped.ends_with('\u{2026}'));
+        assert!(clamped.len() < "A very long application name that keeps going".len());
+    }
+
+    #[test]
+    fn clamped_text_fits_within_the_requested_rows() {
+        let text = "A very long application name that keeps going and going";
+        let clamped = clamp_to_lines(text, 12.0, 90.0, None, 2);
+        let glyphs = layout_family(&clamped, 12.0, 90.0, None);
+        let rows = glyphs
+            .iter()
+            .map(|glyph| glyph.y.to_bits())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(rows <= 2, "expected at most 2 rows, got {rows}");
     }
 }

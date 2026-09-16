@@ -218,6 +218,11 @@ impl PopupOptions {
         self.placement = PopupPlacement::Below;
         self
     }
+
+    pub fn placed(mut self, placement: PopupPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
 }
 
 impl std::fmt::Debug for PopupOptions {

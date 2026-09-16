@@ -221,6 +221,8 @@ impl ActiveEventLoop<'_> {
                     | WindowRole::Overlay
                     | WindowRole::TopPanel
                     | WindowRole::BottomPanel
+                    | WindowRole::LeftPanel
+                    | WindowRole::RightPanel
             )
         {
             return create_layer_window(&mut runtime, self.queue_handle, id, attributes);
@@ -429,7 +431,17 @@ impl Runtime {
                 .expect("window close request lock poisoned"),
         );
         for id in requests {
-            self.windows.remove(&id);
+            // Layer-shell surfaces do not necessarily unmap merely because
+            // their last Rust proxy is dropped. Explicitly destroy them so a
+            // panel replaced at another edge cannot remain mapped.
+            if let Some(NativeWindow::Layer {
+                layer_surface,
+                handle,
+            }) = self.windows.remove(&id)
+            {
+                layer_surface.destroy();
+                handle.surface.destroy();
+            }
             if self.pointer_focus == Some(id) {
                 self.pointer_focus = None;
             }
@@ -507,14 +519,36 @@ fn create_layer_window(
             input_region.destroy();
         }
     } else {
-        let edge = if attributes.role == WindowRole::TopPanel {
-            Anchor::Top
-        } else {
-            Anchor::Bottom
+        let (anchor, width, height, exclusive_zone) = match attributes.role {
+            WindowRole::TopPanel => (
+                Anchor::Top | Anchor::Left | Anchor::Right,
+                0,
+                attributes.size.height.ceil().max(1.0) as u32,
+                attributes.size.height.ceil().max(1.0) as i32,
+            ),
+            WindowRole::BottomPanel => (
+                Anchor::Bottom | Anchor::Left | Anchor::Right,
+                0,
+                attributes.size.height.ceil().max(1.0) as u32,
+                attributes.size.height.ceil().max(1.0) as i32,
+            ),
+            WindowRole::LeftPanel => (
+                Anchor::Left | Anchor::Top | Anchor::Bottom,
+                attributes.size.width.ceil().max(1.0) as u32,
+                0,
+                attributes.size.width.ceil().max(1.0) as i32,
+            ),
+            WindowRole::RightPanel => (
+                Anchor::Right | Anchor::Top | Anchor::Bottom,
+                attributes.size.width.ceil().max(1.0) as u32,
+                0,
+                attributes.size.width.ceil().max(1.0) as i32,
+            ),
+            _ => unreachable!("only panel roles reach the panel setup"),
         };
-        layer_surface.set_anchor(edge | Anchor::Left | Anchor::Right);
-        layer_surface.set_size(0, attributes.size.height.ceil().max(1.0) as u32);
-        layer_surface.set_exclusive_zone(attributes.size.height.ceil().max(1.0) as i32);
+        layer_surface.set_anchor(anchor);
+        layer_surface.set_size(width, height);
+        layer_surface.set_exclusive_zone(exclusive_zone);
         layer_surface.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
     }
     surface.commit();
@@ -951,7 +985,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                 if let Some(state) = runtime.xkb_state.as_mut() {
                     state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                     let modifiers = Modifiers {
-                        ctrl: state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE),
+                        ctrl: state
+                            .mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE),
                         shift: state
                             .mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE),
                     };

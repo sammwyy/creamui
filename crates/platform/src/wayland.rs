@@ -61,6 +61,30 @@ impl PopupPositioner {
                 positioner.set_anchor(xdg_positioner::Anchor::Bottom);
                 positioner.set_gravity(xdg_positioner::Gravity::Bottom);
             }
+            PopupPlacement::RightTop => {
+                positioner.set_anchor(xdg_positioner::Anchor::TopRight);
+                positioner.set_gravity(xdg_positioner::Gravity::BottomRight);
+            }
+            PopupPlacement::RightCenter => {
+                positioner.set_anchor(xdg_positioner::Anchor::Right);
+                positioner.set_gravity(xdg_positioner::Gravity::Right);
+            }
+            PopupPlacement::RightBottom => {
+                positioner.set_anchor(xdg_positioner::Anchor::BottomRight);
+                positioner.set_gravity(xdg_positioner::Gravity::TopRight);
+            }
+            PopupPlacement::LeftTop => {
+                positioner.set_anchor(xdg_positioner::Anchor::TopLeft);
+                positioner.set_gravity(xdg_positioner::Gravity::BottomLeft);
+            }
+            PopupPlacement::LeftCenter => {
+                positioner.set_anchor(xdg_positioner::Anchor::Left);
+                positioner.set_gravity(xdg_positioner::Gravity::Left);
+            }
+            PopupPlacement::LeftBottom => {
+                positioner.set_anchor(xdg_positioner::Anchor::BottomLeft);
+                positioner.set_gravity(xdg_positioner::Gravity::TopLeft);
+            }
         }
         positioner.set_constraint_adjustment(
             xdg_positioner::ConstraintAdjustment::SlideX

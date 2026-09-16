@@ -63,6 +63,8 @@ pub enum WindowRole {
     Overlay,
     TopPanel,
     BottomPanel,
+    LeftPanel,
+    RightPanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +144,12 @@ pub struct InputSerial(pub u32);
 pub enum PopupPlacement {
     Above,
     Below,
+    RightTop,
+    RightCenter,
+    RightBottom,
+    LeftTop,
+    LeftCenter,
+    LeftBottom,
 }
 
 #[derive(Debug, Clone)]

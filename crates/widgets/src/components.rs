@@ -87,7 +87,12 @@ impl Icon {
         self.size = size;
         self
     }
-    pub fn draw(source: impl Into<IconSource>, painter: &mut dyn Painter, rect: Rect, color: Color) {
+    pub fn draw(
+        source: impl Into<IconSource>,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        color: Color,
+    ) {
         let symbol = match source.into() {
             IconSource::Image(image) => {
                 if image.monochrome {

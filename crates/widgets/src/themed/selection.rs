@@ -132,7 +132,10 @@ impl Widget for Select {
         let option_height = 34.0;
         let query_controller = self.controller.query();
         let query = query_controller.value().to_ascii_lowercase();
-        let matching: Vec<_> = self.options.iter().enumerate()
+        let matching: Vec<_> = self
+            .options
+            .iter()
+            .enumerate()
             .filter(|(_, label)| query.is_empty() || label.to_ascii_lowercase().contains(&query))
             .collect();
         let list_height = (matching.len() as f32 * option_height).min(204.0);
@@ -152,7 +155,9 @@ impl Widget for Select {
                     },
                     // Keep the popup's opaque surface and hit region
                     // deterministic across absolute-layout parents.
-                    height: Dimension::Length(list_height + if self.searchable { 46.0 } else { 6.0 }),
+                    height: Dimension::Length(
+                        list_height + if self.searchable { 46.0 } else { 6.0 },
+                    ),
                 },
                 ..column(2.0)
             },
@@ -160,9 +165,19 @@ impl Widget for Select {
         );
         let mut popup = Popover::new(popup_style);
         if self.searchable {
-            popup = popup.child(Box::new(TextInput::controlled(&query_controller).placeholder("Search…").layout(Style { size: fixed(220.0, 36.0), ..Default::default() })));
+            popup = popup.child(Box::new(
+                TextInput::controlled(&query_controller)
+                    .placeholder("Search…")
+                    .layout(Style {
+                        size: fixed(220.0, 36.0),
+                        ..Default::default()
+                    }),
+            ));
         }
-        let mut options = RawView::new(Style { flex_direction: creamui_core::layout::FlexDirection::Column, ..Default::default() });
+        let mut options = RawView::new(Style {
+            flex_direction: creamui_core::layout::FlexDirection::Column,
+            ..Default::default()
+        });
         for (index, label) in matching {
             let selected = self.controller.selected() == index;
             let controller = self.controller.clone();
@@ -194,14 +209,16 @@ impl Widget for Select {
             };
             let mut item = RawButton::new(item_style, move || {
                 controller.select(index);
-                if let Some(callback) = &on_select { callback(index); }
+                if let Some(callback) = &on_select {
+                    callback(index);
+                }
             })
-                .background(background)
-                .corner_radius(self.theme.menu_item_radius)
-                .child(Box::new(
-                    RawText::new(label, foreground, self.theme.typography.body)
-                        .text_align(TextAlign::Start),
-                ));
+            .background(background)
+            .corner_radius(self.theme.menu_item_radius)
+            .child(Box::new(
+                RawText::new(label, foreground, self.theme.typography.body)
+                    .text_align(TextAlign::Start),
+            ));
             item = item
                 .hover_style(creamui_core::StateStyle::new().background(if selected {
                     self.theme.accent_hover
@@ -211,8 +228,14 @@ impl Widget for Select {
                 .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0));
             options = options.child(Box::new(item));
         }
-        let list_style = Style { size: fixed(220.0, list_height), ..Default::default() };
-        popup = popup.child(Box::new(RawScrollView::controlled(list_style, self.controller.scroll()).child(Box::new(options))));
+        let list_style = Style {
+            size: fixed(220.0, list_height),
+            ..Default::default()
+        };
+        popup = popup.child(Box::new(
+            RawScrollView::controlled(list_style, self.controller.scroll())
+                .child(Box::new(options)),
+        ));
         let dismiss = self.controller.clone();
         vec![
             super::portal_dismiss_layer(move || dismiss.set_open(false)),

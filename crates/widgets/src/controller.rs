@@ -284,8 +284,12 @@ impl SelectController {
         self.open.update(|open| *open = !*open);
     }
 
-    pub fn query(&self) -> TextController { self.query.clone() }
-    pub fn scroll(&self) -> ScrollController { self.scroll.clone() }
+    pub fn query(&self) -> TextController {
+        self.query.clone()
+    }
+    pub fn scroll(&self) -> ScrollController {
+        self.scroll.clone()
+    }
 }
 
 impl Default for SelectController {

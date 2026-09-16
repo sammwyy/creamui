@@ -99,7 +99,9 @@ pub fn set_active_theme(id: &str) -> bool {
 
 fn read_active_id(dir: &Path) -> Option<String> {
     let contents = std::fs::read_to_string(active_theme_path(dir)).ok()?;
-    toml::from_str::<ActiveTheme>(&contents).ok().map(|a| a.theme)
+    toml::from_str::<ActiveTheme>(&contents)
+        .ok()
+        .map(|a| a.theme)
 }
 
 fn load_theme(dir: &Path, id: &str) -> Option<Theme> {

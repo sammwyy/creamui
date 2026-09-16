@@ -34,7 +34,9 @@ macro_rules! impl_styled_field {
 
 mod components;
 mod controller;
-pub use components::{Choice, Icon, NavigationItem, Surface, SurfaceRole, Symbol};
+pub use components::{
+    Choice, Icon, IconImage, IconSource, NavigationItem, Surface, SurfaceRole, Symbol,
+};
 pub use creamui_core::Styled;
 pub mod layout;
 pub use layout::CUIWindowDragArea;

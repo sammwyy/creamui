@@ -590,17 +590,17 @@ impl Widget for SidebarItem {
 /// instead, with an automatic back item to return.
 pub struct SidebarNode<T> {
     pub id: T,
-    pub icon: crate::Symbol,
+    pub icon: crate::IconSource,
     pub label: String,
     pub children: Vec<SidebarNode<T>>,
     inline_group: bool,
 }
 
 impl<T> SidebarNode<T> {
-    pub fn leaf(id: T, icon: crate::Symbol, label: impl Into<String>) -> Self {
+    pub fn leaf(id: T, icon: impl Into<crate::IconSource>, label: impl Into<String>) -> Self {
         Self {
             id,
-            icon,
+            icon: icon.into(),
             label: label.into(),
             children: Vec::new(),
             inline_group: false,
@@ -609,13 +609,13 @@ impl<T> SidebarNode<T> {
 
     pub fn parent(
         id: T,
-        icon: crate::Symbol,
+        icon: impl Into<crate::IconSource>,
         label: impl Into<String>,
         children: Vec<SidebarNode<T>>,
     ) -> Self {
         Self {
             id,
-            icon,
+            icon: icon.into(),
             label: label.into(),
             children,
             inline_group: false,
@@ -626,7 +626,7 @@ impl<T> SidebarNode<T> {
     pub fn group(id: T, label: impl Into<String>, children: Vec<SidebarNode<T>>) -> Self {
         Self {
             id,
-            icon: crate::Symbol::Grid,
+            icon: crate::Symbol::Grid.into(),
             label: label.into(),
             children,
             inline_group: true,
@@ -692,7 +692,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
                 let nav = nav.clone();
                 let on_select = on_select.clone();
                 let label = child.label.clone();
-                let icon = child.icon;
+                let icon = child.icon.clone();
                 items.push(Box::new(crate::NavigationItem::new(
                     icon,
                     label,
@@ -714,7 +714,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
         let nav = nav.clone();
         let on_select = on_select.clone();
         items.push(Box::new(crate::NavigationItem::new(
-            node.icon,
+            node.icon.clone(),
             node.label.clone(),
             is_active,
             move || {

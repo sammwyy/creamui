@@ -4,6 +4,8 @@
 //! and/or `webp`.
 
 mod background;
+#[cfg(feature = "svg")]
+mod svg;
 
 use creamui_core::layout::Dimension;
 use creamui_core::{Painter, Rect, Style, Styled, Widget};
@@ -12,6 +14,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
+#[cfg(feature = "svg")]
+pub use svg::SvgSize;
 
 /// How an [`Image`] fits its source pixels inside its layout box.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -84,6 +88,23 @@ impl ImageData {
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
+
+    /// Recolors every visible pixel to `color`, keeping each pixel's own
+    /// alpha (its coverage/opacity) — turns the image into a solid-color
+    /// silhouette. Works on any `ImageData`, decoded SVG or raster alike,
+    /// which is what makes a single icon file reusable across a light and a
+    /// dark theme: decode once, then tint to whatever the active theme's
+    /// icon color is.
+    pub fn tinted(mut self, color: creamui_theme::Color) -> Self {
+        let pixels = Arc::make_mut(&mut self.pixels);
+        for pixel in pixels.chunks_exact_mut(4) {
+            let alpha = pixel[3] as u16;
+            pixel[0] = (color.r as u16 * alpha / 255) as u8;
+            pixel[1] = (color.g as u16 * alpha / 255) as u8;
+            pixel[2] = (color.b as u16 * alpha / 255) as u8;
+        }
+        self
+    }
 }
 
 /// Errors returned while loading or validating [`ImageData`].
@@ -96,6 +117,7 @@ pub enum ImageError {
         height: u32,
         length: usize,
     },
+    Svg(String),
 }
 
 impl fmt::Display for ImageError {
@@ -112,6 +134,7 @@ impl fmt::Display for ImageError {
                 "expected {} RGBA bytes for {width}×{height}, got {length}",
                 *width as usize * *height as usize * 4
             ),
+            Self::Svg(error) => write!(f, "could not render SVG: {error}"),
         }
     }
 }
@@ -293,5 +316,35 @@ mod tests {
         let a = Image::new(ImageData::from_rgba(2, 2, vec![255; 16]).unwrap());
         let b = Image::new(ImageData::from_rgba(2, 2, vec![255; 16]).unwrap());
         assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
+    }
+
+    #[test]
+    fn tinted_recolors_visible_pixels_but_keeps_their_alpha() {
+        // A half-transparent red pixel, straight alpha in, premultiplied out.
+        let data = ImageData::from_rgba(1, 1, vec![255, 0, 0, 128])
+            .unwrap()
+            .tinted(creamui_theme::Color::rgb(0, 255, 0));
+        let [r, g, b, a] = data.pixels() else {
+            unreachable!()
+        };
+        assert_eq!(*r, 0);
+        assert!(*g > 0, "green channel should carry the tint");
+        assert_eq!(*b, 0);
+        assert_eq!(*a, 128, "alpha must survive the tint unchanged");
+    }
+
+    #[cfg(feature = "svg")]
+    #[test]
+    fn from_svg_rasterizes_and_tints() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+            <rect x="0" y="0" width="10" height="10" fill="#123456"/>
+        </svg>"##;
+        let data = ImageData::from_svg(svg, SvgSize::Max(8)).unwrap();
+        assert_eq!(data.width().max(data.height()), 8);
+        let tinted = data.tinted(creamui_theme::Color::rgb(255, 255, 255));
+        let last = tinted.pixels().len() - 4;
+        // The center of a fully opaque fill should end up fully white, not
+        // the source document's navy blue.
+        assert_eq!(&tinted.pixels()[last - 4..last], &[255, 255, 255, 255]);
     }
 }

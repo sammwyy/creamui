@@ -33,16 +33,52 @@ pub enum Symbol {
     Close,
 }
 
+/// Already-decoded RGBA8 pixels for a custom (non-vector) icon. Kept
+/// dependency-free of any specific image-decoding crate — apps that bundle
+/// SVG/PNG icons hand in bytes they rasterized themselves.
+#[derive(Clone)]
+pub struct IconImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Rc<[u8]>,
+    /// When true, every visible pixel is recolored to the `color` an
+    /// [`Icon`] is drawn with (its alpha is all that survives) — for a
+    /// single-color icon that must track the active/hover state and theme
+    /// the same way a [`Symbol`] does. When false (a photo, an app's own
+    /// branded icon), pixels are drawn as decoded.
+    pub monochrome: bool,
+}
+
+/// What an [`Icon`]/[`NavigationItem`]/[`crate::SidebarNode`] draws: one of
+/// the built-in vector [`Symbol`]s, a pre-rasterized bitmap, or a filled
+/// circle with a single letter — the avatar fallback for an account with no
+/// picture.
+#[derive(Clone)]
+pub enum IconSource {
+    Symbol(Symbol),
+    Image(IconImage),
+    Initial {
+        letter: char,
+        background: Color,
+        text_color: Color,
+    },
+}
+impl From<Symbol> for IconSource {
+    fn from(symbol: Symbol) -> Self {
+        IconSource::Symbol(symbol)
+    }
+}
+
 /// A small, consistent line icon. Paths use a 24-unit optical grid.
 pub struct Icon {
-    pub symbol: Symbol,
+    pub source: IconSource,
     pub color: Color,
     pub size: f32,
 }
 impl Icon {
-    pub fn new(symbol: Symbol, color: Color) -> Self {
+    pub fn new(source: impl Into<IconSource>, color: Color) -> Self {
         Self {
-            symbol,
+            source: source.into(),
             color,
             size: 18.,
         }
@@ -51,7 +87,47 @@ impl Icon {
         self.size = size;
         self
     }
-    pub fn draw(symbol: Symbol, painter: &mut dyn Painter, rect: Rect, color: Color) {
+    pub fn draw(source: impl Into<IconSource>, painter: &mut dyn Painter, rect: Rect, color: Color) {
+        let symbol = match source.into() {
+            IconSource::Image(image) => {
+                if image.monochrome {
+                    let mut tinted = image.rgba.to_vec();
+                    for pixel in tinted.chunks_exact_mut(4) {
+                        let alpha = pixel[3] as u16;
+                        pixel[0] = (color.r as u16 * alpha / 255) as u8;
+                        pixel[1] = (color.g as u16 * alpha / 255) as u8;
+                        pixel[2] = (color.b as u16 * alpha / 255) as u8;
+                    }
+                    painter.draw_rgba_image(rect, &tinted, image.width, image.height);
+                } else {
+                    painter.draw_rgba_image(rect, &image.rgba, image.width, image.height);
+                }
+                return;
+            }
+            IconSource::Initial {
+                letter,
+                background,
+                text_color,
+            } => {
+                let side = rect.width.min(rect.height);
+                let circle = Rect {
+                    x: rect.x + (rect.width - side) / 2.,
+                    y: rect.y + (rect.height - side) / 2.,
+                    width: side,
+                    height: side,
+                };
+                painter.fill_rect(circle, background, side / 2.);
+                painter.fill_text(
+                    circle,
+                    &letter.to_string(),
+                    text_color,
+                    side * 0.55,
+                    TextAlign::Center,
+                );
+                return;
+            }
+            IconSource::Symbol(symbol) => symbol,
+        };
         let unit = rect.width.min(rect.height) / 24.;
         let p = |x: f32, y: f32| Point {
             x: rect.x + x * unit,
@@ -193,13 +269,30 @@ impl Widget for Icon {
         .into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        Self::draw(self.symbol, painter, rect, self.color);
+        Self::draw(self.source.clone(), painter, rect, self.color);
     }
 
     fn paint_fingerprint(&self) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.symbol.hash(&mut hasher);
+        match &self.source {
+            IconSource::Symbol(symbol) => symbol.hash(&mut hasher),
+            IconSource::Image(image) => {
+                (Rc::as_ptr(&image.rgba) as *const u8 as usize).hash(&mut hasher);
+                image.width.hash(&mut hasher);
+                image.height.hash(&mut hasher);
+                image.monochrome.hash(&mut hasher);
+            }
+            IconSource::Initial {
+                letter,
+                background,
+                text_color,
+            } => {
+                letter.hash(&mut hasher);
+                background.hash(&mut hasher);
+                text_color.hash(&mut hasher);
+            }
+        }
         self.color.hash(&mut hasher);
         self.size.to_bits().hash(&mut hasher);
         Some(hasher.finish())
@@ -283,7 +376,7 @@ impl Widget for Surface {
 /// Navigation with real symbols and a quiet, accent-tinted selection.
 pub struct NavigationItem {
     theme: Theme,
-    symbol: Symbol,
+    icon: IconSource,
     label: String,
     active: bool,
     click: Rc<dyn Fn()>,
@@ -292,7 +385,7 @@ pub struct NavigationItem {
 impl_styled_field!(NavigationItem);
 impl NavigationItem {
     pub fn new(
-        symbol: Symbol,
+        icon: impl Into<IconSource>,
         label: impl Into<String>,
         active: bool,
         click: impl Fn() + 'static,
@@ -300,7 +393,7 @@ impl NavigationItem {
         let theme = use_theme();
         Self {
             theme,
-            symbol,
+            icon: icon.into(),
             label: label.into(),
             active,
             click: Rc::new(click),
@@ -350,7 +443,7 @@ impl Widget for NavigationItem {
             t.text_secondary
         };
         Icon::draw(
-            self.symbol,
+            self.icon.clone(),
             painter,
             Rect {
                 x: rect.x + 11.,

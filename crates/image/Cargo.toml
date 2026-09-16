@@ -16,10 +16,10 @@ default = ["png"]
 png = ["image-rs/png"]
 jpeg = ["image-rs/jpeg"]
 webp = ["image-rs/webp"]
+svg = ["dep:resvg", "png"]
 
 [dependencies]
 creamui-core = { workspace = true }
-image-rs = { package = "image", version = "0.25.10", default-features = false }
-
-[dev-dependencies]
 creamui-theme = { workspace = true }
+image-rs = { package = "image", version = "0.25.10", default-features = false }
+resvg = { version = "0.45.1", optional = true }

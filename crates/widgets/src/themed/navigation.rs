@@ -638,7 +638,9 @@ impl<T> SidebarNode<T> {
 /// describes the whole hierarchy, `nav` (an app-owned
 /// [`SidebarNavController`]) tracks which category is currently entered,
 /// and clicking a node with children replaces the visible level with those
-/// children plus a back item, while clicking a leaf calls `on_select`.
+/// children plus a back item and calls `on_enter`, while clicking a leaf calls
+/// `on_select`. `on_enter` lets the host select the category's default leaf
+/// at the same time as the visible level changes.
 /// Unstyled itself — like a native app's sidebar rail, it's meant to sit
 /// directly on the window's canvas color, so `style` only needs to set its
 /// width/padding.
@@ -648,6 +650,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
     nav: &SidebarNavController<T>,
     active: Option<&T>,
     on_select: impl Fn(T) + 'static,
+    on_enter: impl Fn(T) + 'static,
 ) -> BoxedWidget {
     let path = nav.path();
     let mut level = tree;
@@ -659,6 +662,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
     }
 
     let on_select: Rc<dyn Fn(T)> = Rc::new(on_select);
+    let on_enter: Rc<dyn Fn(T)> = Rc::new(on_enter);
     let mut items: Vec<BoxedWidget> = Vec::with_capacity(level.len() + 1);
     if !path.is_empty() {
         let back = nav.clone();
@@ -691,6 +695,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
                 let is_active = is_leaf && active == Some(&id);
                 let nav = nav.clone();
                 let on_select = on_select.clone();
+                let on_enter = on_enter.clone();
                 let label = child.label.clone();
                 let icon = child.icon.clone();
                 items.push(Box::new(crate::NavigationItem::new(
@@ -702,6 +707,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
                             on_select(id.clone());
                         } else {
                             nav.enter(id.clone());
+                            on_enter(id.clone());
                         }
                     },
                 )));
@@ -713,6 +719,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
         let is_active = is_leaf && active == Some(&id);
         let nav = nav.clone();
         let on_select = on_select.clone();
+        let on_enter = on_enter.clone();
         items.push(Box::new(crate::NavigationItem::new(
             node.icon.clone(),
             node.label.clone(),
@@ -722,6 +729,7 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
                     on_select(id.clone());
                 } else {
                     nav.enter(id.clone());
+                    on_enter(id.clone());
                 }
             },
         )));

@@ -479,9 +479,15 @@ fn create_layer_window(
         None,
         if desktop { Layer::Bottom } else { Layer::Top },
         if desktop {
-            "creamshell.desktop".to_owned()
+            // KWin (layershellv1window.cpp) maps this namespace to
+            // NET::Desktop, which excludes the window from "Show
+            // Desktop"/minimize-all. Any other string is treated as a
+            // plain Normal window and gets minimized like everything else.
+            "desktop".to_owned()
         } else {
-            "creamshell".to_owned()
+            // Likewise "dock" maps to NET::Dock, keeping the bar/overlay
+            // windows visible when Show Desktop is triggered.
+            "dock".to_owned()
         },
         queue_handle,
         (),

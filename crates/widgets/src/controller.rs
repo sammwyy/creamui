@@ -239,6 +239,8 @@ pub struct TabController {
 pub struct SelectController {
     selected: Signal<usize>,
     open: Signal<bool>,
+    query: TextController,
+    scroll: ScrollController,
 }
 
 impl SelectController {
@@ -246,6 +248,8 @@ impl SelectController {
         Self {
             selected: Signal::new(selected),
             open: Signal::new(false),
+            query: TextController::default(),
+            scroll: ScrollController::default(),
         }
     }
 
@@ -279,6 +283,9 @@ impl SelectController {
     pub fn toggle(&self) {
         self.open.update(|open| *open = !*open);
     }
+
+    pub fn query(&self) -> TextController { self.query.clone() }
+    pub fn scroll(&self) -> ScrollController { self.scroll.clone() }
 }
 
 impl Default for SelectController {

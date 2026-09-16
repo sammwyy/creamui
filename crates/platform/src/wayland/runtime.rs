@@ -1,6 +1,6 @@
 use crate::{
-    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, MouseButton,
-    MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
+    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
+    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
     PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId, WindowLevel,
     WindowRole,
 };
@@ -875,16 +875,33 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
                 fd,
-                ..
+                size,
             } => {
+                // This fd is meant to be mmap'd: its read offset is shared
+                // with the compositor's own fd for the same open file
+                // description, which is left sitting at EOF after the
+                // compositor wrote the keymap — seek back to the start
+                // before reading. `size` bytes also excludes any page
+                // padding after the NUL-terminated keymap text that
+                // `Keymap::new_from_file`'s EOF-based read would otherwise
+                // hand to `CString::new`, breaking it.
+                use std::io::{Read, Seek, SeekFrom};
+                let mut bytes = vec![0u8; size as usize];
                 let mut file = std::fs::File::from(fd);
-                runtime.xkb_state = xkb::Keymap::new_from_file(
-                    &runtime.xkb_context,
-                    &mut file,
-                    xkb::KEYMAP_FORMAT_TEXT_V1,
-                    xkb::COMPILE_NO_FLAGS,
-                )
-                .map(|keymap| xkb::State::new(&keymap));
+                if file.seek(SeekFrom::Start(0)).is_ok() && file.read_exact(&mut bytes).is_ok() {
+                    while bytes.last() == Some(&0) {
+                        bytes.pop();
+                    }
+                    if let Ok(text) = String::from_utf8(bytes) {
+                        runtime.xkb_state = xkb::Keymap::new_from_string(
+                            &runtime.xkb_context,
+                            text,
+                            xkb::KEYMAP_FORMAT_TEXT_V1,
+                            xkb::COMPILE_NO_FLAGS,
+                        )
+                        .map(|keymap| xkb::State::new(&keymap));
+                    }
+                }
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 if let Some(id) = runtime.id_for_surface(&surface) {
@@ -924,8 +941,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                 group,
                 ..
             } => {
+                let keyboard_focus = runtime.keyboard_focus;
                 if let Some(state) = runtime.xkb_state.as_mut() {
                     state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                    let modifiers = Modifiers {
+                        ctrl: state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE),
+                        shift: state
+                            .mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE),
+                    };
+                    if let Some(id) = keyboard_focus {
+                        runtime
+                            .events
+                            .push((id, WindowEvent::ModifiersChanged(modifiers)));
+                    }
                 }
             }
             _ => {}
@@ -1245,25 +1273,39 @@ fn cursor_shape(icon: CursorIcon) -> Shape {
 }
 
 fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
+    // Structural keys always win: xkb's own UTF-8 mapping for e.g.
+    // Backspace/Tab/Enter is a control character rather than empty, which
+    // would otherwise smuggle it in as literal inserted text below.
+    let structural = match key {
+        1 => Some(Key::Escape),
+        14 => Some(Key::Backspace),
+        15 => Some(Key::Tab),
+        28 => Some(Key::Enter),
+        57 => Some(Key::Space),
+        102 => Some(Key::Home),
+        103 => Some(Key::Up),
+        105 => Some(Key::Left),
+        106 => Some(Key::Right),
+        107 => Some(Key::End),
+        108 => Some(Key::Down),
+        111 => Some(Key::Delete),
+        _ => None,
+    };
+    if let Some(key) = structural {
+        return key;
+    }
+    // `key_get_utf8` replicates XLookupString's Ctrl-stripping (Ctrl+A
+    // becomes 0x01), which is exactly wrong for us: widgets already get
+    // `modifiers.ctrl` separately and expect the plain letter alongside it.
+    // `key_get_one_sym` + `keysym_to_utf8` gives that plain letter (Shift
+    // still applies) without the Ctrl transform.
     if let Some(character) = xkb_state
-        .map(|state| state.key_get_utf8(xkb::Keycode::new(key + 8)))
+        .map(|state| xkb::keysym_to_utf8(state.key_get_one_sym(xkb::Keycode::new(key + 8))))
         .filter(|character| !character.is_empty())
     {
         return Key::Character(character);
     }
     match key {
-        1 => Key::Escape,
-        14 => Key::Backspace,
-        15 => Key::Tab,
-        28 => Key::Enter,
-        57 => Key::Space,
-        102 => Key::Home,
-        103 => Key::Up,
-        105 => Key::Left,
-        106 => Key::Right,
-        107 => Key::End,
-        108 => Key::Down,
-        111 => Key::Delete,
         61 => Key::F3,
         _ => Key::Other,
     }

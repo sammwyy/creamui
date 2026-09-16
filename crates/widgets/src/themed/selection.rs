@@ -12,6 +12,8 @@ pub struct Select {
     options: Vec<String>,
     controller: crate::SelectController,
     style: creamui_core::Style,
+    on_select: Option<Rc<dyn Fn(usize)>>,
+    searchable: bool,
 }
 impl_styled_field!(Select);
 
@@ -23,7 +25,19 @@ impl Select {
             options: options.iter().map(|option| (*option).to_owned()).collect(),
             controller,
             style: Self::default_style().into(),
+            on_select: None,
+            searchable: false,
         }
+    }
+
+    pub fn on_select(mut self, callback: impl Fn(usize) + 'static) -> Self {
+        self.on_select = Some(Rc::new(callback));
+        self
+    }
+
+    pub fn searchable(mut self) -> Self {
+        self.searchable = true;
+        self
     }
 
     pub fn default_style() -> Style {
@@ -116,6 +130,12 @@ impl Widget for Select {
             return Vec::new();
         }
         let option_height = 34.0;
+        let query_controller = self.controller.query();
+        let query = query_controller.value().to_ascii_lowercase();
+        let matching: Vec<_> = self.options.iter().enumerate()
+            .filter(|(_, label)| query.is_empty() || label.to_ascii_lowercase().contains(&query))
+            .collect();
+        let list_height = (matching.len() as f32 * option_height).min(204.0);
         let popup_style = padding(
             Style {
                 position: Position::Absolute,
@@ -132,16 +152,21 @@ impl Widget for Select {
                     },
                     // Keep the popup's opaque surface and hit region
                     // deterministic across absolute-layout parents.
-                    height: Dimension::Length(self.options.len() as f32 * option_height + 6.0),
+                    height: Dimension::Length(list_height + if self.searchable { 46.0 } else { 6.0 }),
                 },
                 ..column(2.0)
             },
             3.0,
         );
         let mut popup = Popover::new(popup_style);
-        for (index, label) in self.options.iter().enumerate() {
+        if self.searchable {
+            popup = popup.child(Box::new(TextInput::controlled(&query_controller).placeholder("Search…").layout(Style { size: fixed(220.0, 36.0), ..Default::default() })));
+        }
+        let mut options = RawView::new(Style { flex_direction: creamui_core::layout::FlexDirection::Column, ..Default::default() });
+        for (index, label) in matching {
             let selected = self.controller.selected() == index;
             let controller = self.controller.clone();
+            let on_select = self.on_select.clone();
             let label = label.clone();
             let item_style = Style {
                 size: creamui_core::layout::Size {
@@ -167,7 +192,10 @@ impl Widget for Select {
             } else {
                 self.theme.text_primary
             };
-            let mut item = RawButton::new(item_style, move || controller.select(index))
+            let mut item = RawButton::new(item_style, move || {
+                controller.select(index);
+                if let Some(callback) = &on_select { callback(index); }
+            })
                 .background(background)
                 .corner_radius(self.theme.menu_item_radius)
                 .child(Box::new(
@@ -181,8 +209,10 @@ impl Widget for Select {
                     self.theme.surface_hover
                 }))
                 .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0));
-            popup = popup.child(Box::new(item));
+            options = options.child(Box::new(item));
         }
+        let list_style = Style { size: fixed(220.0, list_height), ..Default::default() };
+        popup = popup.child(Box::new(RawScrollView::controlled(list_style, self.controller.scroll()).child(Box::new(options))));
         let dismiss = self.controller.clone();
         vec![
             super::portal_dismiss_layer(move || dismiss.set_open(false)),

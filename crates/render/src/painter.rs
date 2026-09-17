@@ -520,7 +520,7 @@ impl Painter for SkiaPainter {
             cached.as_ref(),
             &composite,
             Transform::identity(),
-            None,
+            self.clip_stack.last(),
         );
         true
     }

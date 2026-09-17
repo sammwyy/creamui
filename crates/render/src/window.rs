@@ -2725,7 +2725,11 @@ mod tests {
             button: MouseButton::Left,
             serial: None,
         });
-        assert_eq!(calls.borrow().len(), 1, "the initial press dispatches immediately");
+        assert_eq!(
+            calls.borrow().len(),
+            1,
+            "the initial press dispatches immediately"
+        );
 
         // Once a real drag starts, the compositor stops sending CursorMoved
         // and sends these instead.
@@ -2737,7 +2741,11 @@ mod tests {
         assert_eq!(calls.borrow()[1], Point { x: 40.0, y: 40.0 });
 
         harness.send(WindowEvent::DragDropped);
-        assert_eq!(end_calls.get(), 1, "a drop must end the drag like releasing the mouse does");
+        assert_eq!(
+            end_calls.get(),
+            1,
+            "a drop must end the drag like releasing the mouse does"
+        );
     }
 
     struct HoverCountingWidget {

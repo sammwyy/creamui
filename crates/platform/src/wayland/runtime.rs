@@ -37,7 +37,6 @@ use smithay_client_toolkit::{
         },
     },
     seat::pointer::cursor_shape::CursorShapeManager,
-    shm::{slot::SlotPool, Shm, ShmHandler},
     shell::{
         xdg::{
             popup::{Popup, PopupConfigure, PopupHandler},
@@ -46,6 +45,7 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
+    shm::{slot::SlotPool, Shm, ShmHandler},
 };
 use std::{
     cell::RefCell,
@@ -1183,7 +1183,13 @@ impl DataDeviceHandler for DispatchState {
             ));
         }
     }
-    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_device::WlDataDevice) {}
+    fn selection(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_device::WlDataDevice,
+    ) {
+    }
     fn drop_performed(
         &mut self,
         _: &Connection,
@@ -1234,12 +1240,27 @@ impl DataSourceHandler for DispatchState {
         _: WritePipe,
     ) {
     }
-    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+    fn cancelled(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+    ) {
         self.runtime.borrow_mut().active_drag = None;
     }
-    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+    fn dnd_dropped(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+    ) {
     }
-    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+    fn dnd_finished(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+    ) {
         self.runtime.borrow_mut().active_drag = None;
     }
     fn action(

@@ -24,10 +24,9 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
+      - name: Test workspace (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum cargo test --workspace
       - name: Test workspace
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run --auto-servernum cargo test --workspace
-          else
-            cargo test --workspace
-          fi
+        if: runner.os != 'Linux'
+        run: cargo test --workspace

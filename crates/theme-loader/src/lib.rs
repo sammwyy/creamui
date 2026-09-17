@@ -13,6 +13,7 @@ use std::str::FromStr;
 #[derive(Debug)]
 pub enum ThemeLoadError {
     Io(std::io::Error),
+    ConfigurationPathUnavailable,
     InvalidAppearance(toml::de::Error),
     InvalidTheme {
         path: PathBuf,
@@ -34,6 +35,9 @@ impl fmt::Display for ThemeLoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(f, "theme I/O failed: {error}"),
+            Self::ConfigurationPathUnavailable => {
+                f.write_str("system appearance configuration path is unavailable")
+            }
             Self::InvalidAppearance(error) => {
                 write!(f, "invalid appearance configuration: {error}")
             }
@@ -131,6 +135,56 @@ impl SystemThemeLoader {
 
 pub fn builtin_theme() -> ThemeDefinition {
     ThemeDefinition::builtin_default()
+}
+
+pub fn list_themes() -> Result<Vec<ThemeDefinition>, ThemeLoadError> {
+    let mut themes = BTreeMap::new();
+    for root in data_dirs() {
+        let directory = root.join("themes");
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(id) = entry.file_name().into_string() else {
+                continue;
+            };
+            if themes.contains_key(&id) {
+                continue;
+            }
+            if let Ok(mut theme) = find_theme(&id, std::slice::from_ref(&root)) {
+                theme.id = id.clone();
+                themes.insert(id, theme);
+            }
+        }
+    }
+    themes
+        .entry("default".to_owned())
+        .or_insert_with(ThemeDefinition::builtin_default);
+    Ok(themes.into_values().collect())
+}
+
+pub fn write_system_appearance(selection: &AppearanceSelection) -> Result<(), ThemeLoadError> {
+    let path = config_path().ok_or(ThemeLoadError::ConfigurationPathUnavailable)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(ThemeLoadError::Io)?;
+    }
+    let mut contents = String::new();
+    if let Some(theme) = &selection.theme {
+        contents.push_str(&format!("theme = {}\n", toml::Value::String(theme.clone())));
+    }
+    if let Some(variant) = &selection.variant {
+        contents.push_str(&format!(
+            "variant = {}\n",
+            toml::Value::String(variant.clone())
+        ));
+    }
+    if let Some(accent) = selection.accent {
+        contents.push_str(&format!(
+            "accent = \"#{:02x}{:02x}{:02x}{:02x}\"\n",
+            accent.r, accent.g, accent.b, accent.a
+        ));
+    }
+    fs::write(path, contents).map_err(ThemeLoadError::Io)
 }
 
 pub fn config_path() -> Option<PathBuf> {

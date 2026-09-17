@@ -18,11 +18,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Test workspace
-        run: cargo test --workspace
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run --auto-servernum cargo test --workspace
+          else
+            cargo test --workspace
+          fi

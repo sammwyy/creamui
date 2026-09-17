@@ -34,6 +34,8 @@ pub struct KeyInput {
 pub struct Modifiers {
     pub ctrl: bool,
     pub shift: bool,
+    pub alt: bool,
+    pub logo: bool,
 }
 
 /// A widget's intrinsic-size function, used by `taffy`'s layout algorithm

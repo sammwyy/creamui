@@ -109,6 +109,8 @@ pub enum MouseScrollDelta {
 pub struct Modifiers {
     pub ctrl: bool,
     pub shift: bool,
+    pub alt: bool,
+    pub logo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

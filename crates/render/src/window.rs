@@ -1474,6 +1474,8 @@ impl WindowState {
                     modifiers: Modifiers {
                         ctrl: self.modifiers.ctrl,
                         shift: self.modifiers.shift,
+                        alt: self.modifiers.alt,
+                        logo: self.modifiers.logo,
                     },
                 });
             }

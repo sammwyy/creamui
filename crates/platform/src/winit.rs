@@ -518,6 +518,8 @@ fn from_winit_modifiers(modifiers: ModifiersState) -> Modifiers {
     Modifiers {
         ctrl: modifiers.control_key(),
         shift: modifiers.shift_key(),
+        alt: modifiers.alt_key(),
+        logo: modifiers.super_key(),
     }
 }
 fn from_winit_mouse_button(button: WinitMouseButton) -> MouseButton {

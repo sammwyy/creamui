@@ -1112,6 +1112,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                             .mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE),
                         shift: state
                             .mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE),
+                        alt: state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE),
+                        logo: state
+                            .mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE),
                     };
                     if let Some(id) = keyboard_focus {
                         runtime

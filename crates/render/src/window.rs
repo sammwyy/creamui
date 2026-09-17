@@ -799,6 +799,13 @@ struct WindowSpec {
     dirty: Rc<Cell<bool>>,
     scene_dirty: Rc<Cell<bool>>,
     animated_damage: Rc<RefCell<Vec<Rect>>>,
+    /// Rects hinting where a hover/local-scroll change landed, consumed by
+    /// `repaint_scene` to clear+repaint just that region instead of the
+    /// whole window.
+    light_damage: Rc<RefCell<Vec<Rect>>>,
+    /// Whether the last `repaint_scene` call was scoped to `light_damage`
+    /// (partial present) rather than a full clear+repaint.
+    scene_repaint_partial: Rc<Cell<bool>>,
     _effect: Effect,
     viewport: Signal<Size>,
     scale_factor: Signal<f64>,
@@ -1011,6 +1018,8 @@ struct WindowState {
     /// Window-space rects painted by the last `repaint_animated`, consumed
     /// by `RedrawRequested` for a partial GPU texture upload.
     animated_damage: Rc<RefCell<Vec<Rect>>>,
+    light_damage: Rc<RefCell<Vec<Rect>>>,
+    scene_repaint_partial: Rc<Cell<bool>>,
     _effect: Effect,
     t_run: Instant,
     first_present_logged: bool,
@@ -1175,12 +1184,15 @@ impl WindowState {
                     (&self.hovered, &next_hover),
                     (Some((current_rect, _)), Some((next_rect, _))) if current_rect == next_rect
                 );
+                let mut hover_damage: Option<Rect> = None;
                 if !unchanged {
-                    if let Some((_, current)) = self.hovered.take() {
+                    if let Some((old_rect, current)) = self.hovered.take() {
                         current(false);
+                        hover_damage = Some(old_rect);
                     }
                     if let Some((rect, next)) = next_hover {
                         next(true);
+                        hover_damage = Some(hover_damage.map_or(rect, |d| d.union(rect)));
                         self.hovered = Some((rect, next));
                     }
                 }
@@ -1204,6 +1216,9 @@ impl WindowState {
                         }
                     }
                 } else if !unchanged {
+                    if let Some(rect) = hover_damage {
+                        self.light_damage.borrow_mut().push(rect);
+                    }
                     (self.repaint_light)();
                 }
             }
@@ -1352,13 +1367,17 @@ impl WindowState {
                     (
                         scene.on_scroll_at(index).cloned(),
                         scene.scroll_is_local_at(index),
+                        scene.scroll_rect_at(index),
                     )
                 });
                 drop(frame);
 
-                if let Some((Some(handler), local)) = handler {
+                if let Some((Some(handler), local, rect)) = handler {
                     handler(delta_y);
                     if local {
+                        if let Some(rect) = rect {
+                            self.light_damage.borrow_mut().push(rect);
+                        }
                         (self.repaint_light)();
                     }
                 }
@@ -1401,10 +1420,13 @@ impl WindowState {
                     self.flush_pending_viewport();
                     (self.render)();
                     // `render` already repaints the scene, so a pending
-                    // `scene_dirty` from earlier in the same event is moot.
+                    // `scene_dirty` from earlier in the same event is moot,
+                    // and any queued `light_damage` hint is stale.
                     self.scene_dirty.set(false);
+                    self.light_damage.borrow_mut().clear();
                 } else if self.scene_dirty.replace(false) {
                     (self.repaint_scene)();
+                    full_repaint = !self.scene_repaint_partial.replace(false);
                 } else {
                     full_repaint = false;
                 }
@@ -1648,6 +1670,8 @@ impl AppHandler {
                 dirty: spec.dirty,
                 scene_dirty: spec.scene_dirty,
                 animated_damage: spec.animated_damage,
+                light_damage: spec.light_damage,
+                scene_repaint_partial: spec.scene_repaint_partial,
                 _effect: spec._effect,
                 t_run: t0,
                 first_present_logged: false,
@@ -2138,6 +2162,10 @@ fn build_window_spec(
         }
     });
 
+    let light_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
+    let scene_repaint_partial = Rc::new(Cell::new(false));
+    let animated_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
+
     let repaint_scene: Rc<dyn Fn()> = Rc::new({
         let viewport = viewport.clone();
         let scale_factor = scale_factor.clone();
@@ -2147,6 +2175,9 @@ fn build_window_spec(
         let caret_visible = caret_visible.clone();
         let theme_provider = theme_provider.clone();
         let window_drag = window_drag.clone();
+        let light_damage = light_damage.clone();
+        let scene_repaint_partial = scene_repaint_partial.clone();
+        let animated_damage = animated_damage.clone();
         move || {
             with_theme_scope(&theme_provider, &window_drag, || {
                 let logical_size = viewport.peek();
@@ -2157,20 +2188,59 @@ fn build_window_spec(
                 frame.painter.set_scale(scale as f32);
                 frame.painter.set_color_scheme(theme_provider.get().colors);
                 frame.painter.resize(physical_width, physical_height);
-                frame.painter.clear(clear_color);
-                let FrameState {
-                    painter, renderer, ..
-                } = &mut *frame;
-                if let Some(scene) =
-                    renderer.repaint_focused(painter, focused.get(), caret_visible.get())
-                {
-                    frame.scene = Some(scene);
-                }
-                let FrameState {
-                    painter, devtools, ..
-                } = &mut *frame;
-                if let Some(devtools) = devtools.as_ref() {
-                    devtools.repaint_overlay(painter, logical_size);
+
+                // If the pending damage is a small, non-empty hint (a hover
+                // or local-scroll change), clear+repaint just that region
+                // instead of the whole window. Otherwise (nothing queued, or
+                // `merge_damage_default` gave up and collapsed it to the
+                // full viewport) fall back to a normal full repaint.
+                let pending = std::mem::take(&mut *light_damage.borrow_mut());
+                let merged = creamui_core::merge_damage_default(&pending, logical_size);
+                let full_viewport_rect = Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: logical_size.width,
+                    height: logical_size.height,
+                };
+                let scoped_clip = match merged.split_first() {
+                    Some((first, rest)) if !(rest.is_empty() && *first == full_viewport_rect) => {
+                        Some(rest.iter().fold(*first, |acc, r| acc.union(*r)))
+                    }
+                    _ => None,
+                };
+
+                if let Some(clip) = scoped_clip {
+                    let FrameState {
+                        painter, renderer, ..
+                    } = &mut *frame;
+                    if let Some(scene) = renderer.repaint_region(
+                        painter,
+                        focused.get(),
+                        caret_visible.get(),
+                        clip,
+                        clear_color,
+                    ) {
+                        frame.scene = Some(scene);
+                    }
+                    scene_repaint_partial.set(true);
+                    animated_damage.borrow_mut().push(clip);
+                } else {
+                    frame.painter.clear(clear_color);
+                    let FrameState {
+                        painter, renderer, ..
+                    } = &mut *frame;
+                    if let Some(scene) =
+                        renderer.repaint_focused(painter, focused.get(), caret_visible.get())
+                    {
+                        frame.scene = Some(scene);
+                    }
+                    scene_repaint_partial.set(false);
+                    let FrameState {
+                        painter, devtools, ..
+                    } = &mut *frame;
+                    if let Some(devtools) = devtools.as_ref() {
+                        devtools.repaint_overlay(painter, logical_size);
+                    }
                 }
                 drop(frame);
                 if let Some(window) = window.borrow().as_ref() {
@@ -2179,8 +2249,6 @@ fn build_window_spec(
             })
         }
     });
-
-    let animated_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Driven by `about_to_wait`'s animation tick: repaints only whatever
     // widgets are currently promoted to their own layer, with no rebuild,
@@ -2281,6 +2349,8 @@ fn build_window_spec(
         dirty,
         scene_dirty,
         animated_damage,
+        light_damage,
+        scene_repaint_partial,
         _effect: effect,
         viewport,
         scale_factor,
@@ -2357,6 +2427,8 @@ mod tests {
                     dirty: spec.dirty,
                     scene_dirty: spec.scene_dirty,
                     animated_damage: spec.animated_damage,
+                    light_damage: spec.light_damage,
+                    scene_repaint_partial: spec.scene_repaint_partial,
                     _effect: spec._effect,
                     t_run: Instant::now(),
                     first_present_logged: false,
@@ -2627,6 +2699,86 @@ mod tests {
             paint_calls.get(),
             after_enter,
             "moving within the same hover region must not trigger another repaint"
+        );
+    }
+
+    struct SmallHoverWidget {
+        paint_calls: Rc<Cell<usize>>,
+    }
+
+    impl creamui_core::Widget for SmallHoverWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(20.0),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {
+            self.paint_calls.set(self.paint_calls.get() + 1);
+        }
+
+        fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
+            Some(Rc::new(|_| {}))
+        }
+    }
+
+    struct SmallHoverRoot {
+        paint_calls: Rc<Cell<usize>>,
+    }
+
+    impl creamui_core::Widget for SmallHoverRoot {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(100.0),
+                    height: creamui_core::layout::Dimension::Length(100.0),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            vec![Box::new(SmallHoverWidget {
+                paint_calls: self.paint_calls.clone(),
+            })]
+        }
+    }
+
+    #[test]
+    fn hovering_a_small_region_queues_a_scoped_damage_rect() {
+        let paint_calls = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let paint_calls = paint_calls.clone();
+            move |_| {
+                Box::new(SmallHoverRoot {
+                    paint_calls: paint_calls.clone(),
+                })
+            }
+        });
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+
+        assert!(paint_calls.get() > 0, "entering the region must repaint it");
+        assert!(
+            harness.state.scene_repaint_partial.get(),
+            "a hover region smaller than the window must scope the repaint"
+        );
+        let damage = harness.state.animated_damage.borrow();
+        assert_eq!(damage.len(), 1);
+        assert!(
+            damage[0].width < 100.0 && damage[0].height < 100.0,
+            "the queued damage rect must not cover the full window: {:?}",
+            *damage
         );
     }
 

@@ -718,6 +718,32 @@ impl Painter for SkiaPainter {
         }
     }
 
+    fn clear_rect(&mut self, rect: Rect, color: Color) {
+        let rect = self.local(rect);
+        let scaled = scale_rect(rect, self.scale);
+        let Some(path) = Self::rounded_rect_path(scaled, 0.0) else {
+            return;
+        };
+        let [r, g, b, a] = color.to_f32();
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8,
+            (a * 255.0) as u8,
+        );
+        // Replace, don't blend, so a translucent `color` doesn't blend over
+        // stale pixels.
+        paint.blend_mode = tiny_skia::BlendMode::Source;
+        self.pixmap.fill_path(
+            &path,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            Transform::identity(),
+            self.clip_stack.last(),
+        );
+    }
+
     fn fill_text(
         &mut self,
         rect: Rect,

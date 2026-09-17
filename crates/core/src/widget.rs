@@ -315,6 +315,11 @@ pub trait Painter {
     /// Removes the most recently pushed clip. Must be paired 1:1 with
     /// [`Painter::push_clip`] calls. Default: a no-op.
     fn pop_clip(&mut self) {}
+
+    /// Hard-replaces `rect`'s pixels with `color` (unlike `fill_rect`, which
+    /// blends). Used by a scoped repaint that only wipes a small region.
+    /// Default: no-op.
+    fn clear_rect(&mut self, _rect: Rect, _color: creamui_theme::Color) {}
 }
 
 /// A node in a CreamUI widget tree.

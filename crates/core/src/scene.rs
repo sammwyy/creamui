@@ -822,6 +822,11 @@ impl Scene {
             .is_some_and(|(_, _, local)| *local)
     }
 
+    /// The visible rect at `index`, if it still exists this render.
+    pub fn scroll_rect_at(&self, index: usize) -> Option<Rect> {
+        self.scrollables.get(index).map(|(rect, _, _)| *rect)
+    }
+
     /// Returns the cursor icon of the topmost widget with a cursor
     /// preference containing `point`, if any.
     pub fn cursor_hit_test(&self, point: Point) -> Option<CursorIcon> {
@@ -1015,6 +1020,66 @@ impl Renderer {
             Point::default(),
             clip,
             clip,
+            &mut focus,
+            &mut out,
+            PaintMode::Absolute,
+            false,
+        );
+        painter.pop_clip();
+        Some(Scene {
+            hits: out.hits,
+            hits_at: out.hits_at,
+            focusables: out.focusables,
+            draggables: out.draggables,
+            drag_starts: out.drag_starts,
+            scrollables: out.scrollables,
+            cursors: out.cursors,
+            hovers: out.hovers,
+        })
+    }
+
+    /// Like [`Renderer::repaint_focused`], but clears and clips drawing to
+    /// `clip` instead of the whole viewport — for a hover/scroll change
+    /// known to only affect that region. Hit-test metadata still covers the
+    /// whole tree (it's derived from layout, not from what got drawn).
+    pub fn repaint_region(
+        &mut self,
+        painter: &mut dyn Painter,
+        focused_index: Option<usize>,
+        caret_visible: bool,
+        clip: Rect,
+        clear_color: creamui_theme::Color,
+    ) -> Option<Scene> {
+        let instance = self.root.as_mut()?;
+        let viewport = viewport_rect(self.viewport);
+        let clip = clip.intersect(viewport)?;
+        painter.push_clip(clip);
+        painter.clear_rect(clip, clear_color);
+        let mut out = PaintOutputs::default();
+        let mut focus = FocusContext {
+            focused_index,
+            caret_visible,
+            counter: 0,
+        };
+        paint_instance(
+            &self.tree,
+            instance,
+            painter,
+            Point::default(),
+            viewport,
+            viewport,
+            &mut focus,
+            &mut out,
+            PaintMode::Flow,
+            false,
+        );
+        paint_instance(
+            &self.tree,
+            instance,
+            painter,
+            Point::default(),
+            viewport,
+            viewport,
             &mut focus,
             &mut out,
             PaintMode::Absolute,

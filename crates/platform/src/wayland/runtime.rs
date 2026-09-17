@@ -1,8 +1,8 @@
 use crate::{
-    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
-    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
-    PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId, WindowLevel,
-    WindowRole,
+    BackendKind, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition, LogicalSize,
+    Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend,
+    PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId,
+    WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -10,13 +10,20 @@ use raw_window_handle::{
 };
 use smithay_client_toolkit::{
     compositor::{CompositorState, Surface, SurfaceData},
+    data_device_manager::{
+        data_device::{DataDevice, DataDeviceHandler},
+        data_offer::{DataOfferHandler, DragOffer},
+        data_source::{DataSourceHandler, DragSource},
+        DataDeviceManagerState, WritePipe,
+    },
     globals::GlobalData,
     reexports::{
         client::{
             globals::{registry_queue_init, GlobalListContents},
             protocol::{
-                wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_region, wl_registry,
-                wl_seat, wl_surface,
+                wl_compositor, wl_data_device, wl_data_device_manager::DndAction, wl_data_source,
+                wl_display, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
+                wl_surface,
             },
             Connection, Dispatch, Proxy, QueueHandle, WEnum,
         },
@@ -30,6 +37,7 @@ use smithay_client_toolkit::{
         },
     },
     seat::pointer::cursor_shape::CursorShapeManager,
+    shm::{slot::SlotPool, Shm, ShmHandler},
     shell::{
         xdg::{
             popup::{Popup, PopupConfigure, PopupHandler},
@@ -129,7 +137,16 @@ impl<T: 'static> EventLoop<T> {
             XdgShell::bind(&globals, &queue_handle).map_err(|error| error.to_string())?;
         let cursor_shape_manager = CursorShapeManager::bind(&globals, &queue_handle).ok();
         let layer_shell = globals.bind(&queue_handle, 1..=5, ()).ok();
-        let seat = globals.bind(&queue_handle, 1..=9, ()).ok();
+        let seat: Option<wl_seat::WlSeat> = globals.bind(&queue_handle, 1..=9, ()).ok();
+        let data_device_manager = DataDeviceManagerState::bind(&globals, &queue_handle).ok();
+        let data_device = data_device_manager
+            .as_ref()
+            .zip(seat.as_ref())
+            .map(|(manager, seat)| manager.get_data_device(&queue_handle, seat));
+        let shm = Shm::bind(&globals, &queue_handle).map_err(|error| error.to_string())?;
+        // Big enough for most drag icons without a mid-drag pool grow;
+        // `SlotPool` reuses freed slots across drags either way.
+        let icon_pool = SlotPool::new(256 * 256 * 4, &shm).map_err(|error| error.to_string())?;
         let runtime = Runtime::new(
             compositor,
             xdg_shell,
@@ -137,9 +154,13 @@ impl<T: 'static> EventLoop<T> {
             seat,
             cursor_shape_manager,
             layer_shell,
+            data_device_manager,
+            data_device,
+            icon_pool,
         );
         let mut dispatch = DispatchState {
             runtime: runtime.clone(),
+            shm,
         };
         let active = ActiveEventLoop {
             runtime: &runtime,
@@ -160,6 +181,7 @@ impl<T: 'static> EventLoop<T> {
             }
             runtime.borrow_mut().close_requested();
             runtime.borrow_mut().apply_cursor_requests();
+            runtime.borrow_mut().apply_drag_requests(&queue_handle);
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
@@ -248,6 +270,7 @@ impl ActiveEventLoop<'_> {
             runtime.display.clone(),
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
+            runtime.drag_requests.clone(),
             attributes.size,
             false,
         ));
@@ -304,6 +327,7 @@ impl ActiveEventLoop<'_> {
             runtime.display.clone(),
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
+            runtime.drag_requests.clone(),
             attributes.size,
             false,
         ));
@@ -374,9 +398,27 @@ struct Runtime {
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     windows: HashMap<WindowId, NativeWindow>,
     events: Vec<(WindowId, WindowEvent)>,
+    data_device_manager: Option<DataDeviceManagerState>,
+    data_device: Option<DataDevice>,
+    /// Dropping a [`DragSource`] cancels it, so this stays alive until the
+    /// compositor reports the drag cancelled or finished.
+    active_drag: Option<DragSource>,
+    /// Window currently under the drag pointer, if any.
+    drag_target: Option<WindowId>,
+    drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+    icon_pool: SlotPool,
+}
+
+/// Queued by [`Window::start_drag`], drained by [`Runtime::apply_drag_requests`].
+struct DragRequest {
+    window_id: WindowId,
+    serial: u32,
+    mime_types: Vec<String>,
+    icon: Option<DragIcon>,
 }
 
 impl Runtime {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         compositor: CompositorState,
         xdg_shell: XdgShell,
@@ -384,6 +426,9 @@ impl Runtime {
         seat: Option<wl_seat::WlSeat>,
         cursor_shape_manager: Option<CursorShapeManager>,
         layer_shell: Option<ZwlrLayerShellV1>,
+        data_device_manager: Option<DataDeviceManagerState>,
+        data_device: Option<DataDevice>,
+        icon_pool: SlotPool,
     ) -> RcRuntime {
         std::rc::Rc::new(RefCell::new(Self {
             compositor,
@@ -406,6 +451,12 @@ impl Runtime {
             cursor_requests: Arc::new(Mutex::new(Vec::new())),
             windows: HashMap::new(),
             events: Vec::new(),
+            data_device_manager,
+            data_device,
+            active_drag: None,
+            drag_target: None,
+            drag_requests: Arc::new(Mutex::new(Vec::new())),
+            icon_pool,
         }))
     }
 
@@ -470,6 +521,68 @@ impl Runtime {
                 device.set_shape(serial, cursor_shape(icon));
             }
         }
+    }
+
+    /// Starts a real Wayland drag for each queued [`DragRequest`]. No icon
+    /// surface yet — a drag with no icon is valid Wayland, just plain.
+    fn apply_drag_requests(&mut self, qh: &QueueHandle<DispatchState>) {
+        let requests = std::mem::take(
+            &mut *self
+                .drag_requests
+                .lock()
+                .expect("drag request lock poisoned"),
+        );
+        if self.data_device_manager.is_none() || self.data_device.is_none() {
+            return;
+        }
+        for request in requests {
+            let Some(origin) = self
+                .windows
+                .get(&request.window_id)
+                .map(|window| window.surface().clone())
+            else {
+                continue;
+            };
+            // Built before borrowing `manager`/`device` below — it needs
+            // `&mut self` for the icon pool.
+            let icon = request
+                .icon
+                .as_ref()
+                .and_then(|icon| self.create_icon_surface(qh, icon));
+            let manager = self.data_device_manager.as_ref().expect("checked above");
+            let device = self.data_device.as_ref().expect("checked above");
+            let source = manager.create_drag_and_drop_source(
+                qh,
+                request.mime_types.iter().cloned(),
+                DndAction::Copy,
+            );
+            source.start_drag(device, &origin, icon.as_ref(), request.serial);
+            self.active_drag = Some(source);
+        }
+    }
+
+    /// Renders `icon` into a fresh `wl_surface` to hand to `start_drag`.
+    fn create_icon_surface(
+        &mut self,
+        qh: &QueueHandle<DispatchState>,
+        icon: &DragIcon,
+    ) -> Option<wl_surface::WlSurface> {
+        let (width, height) = (icon.width as i32, icon.height as i32);
+        let stride = width * 4;
+        let (buffer, canvas) = self
+            .icon_pool
+            .create_buffer(width, height, stride, wl_shm::Format::Argb8888)
+            .ok()?;
+        // Argb8888 is defined as a little-endian 32-bit word bit-packed
+        // A:R:G:B — regardless of host endianness, that's B,G,R,A in memory.
+        for (dst, src) in canvas.chunks_exact_mut(4).zip(icon.pixels.chunks_exact(4)) {
+            dst.copy_from_slice(&[src[2], src[1], src[0], src[3]]);
+        }
+        let surface = self.compositor.create_surface(qh);
+        buffer.attach_to(&surface).ok()?;
+        surface.damage_buffer(0, 0, width, height);
+        surface.commit();
+        Some(surface)
     }
 }
 
@@ -558,6 +671,7 @@ fn create_layer_window(
         runtime.display.clone(),
         runtime.close_requests.clone(),
         runtime.cursor_requests.clone(),
+        runtime.drag_requests.clone(),
         attributes.size,
         overlay,
     ));
@@ -638,7 +752,16 @@ fn create_layer_popup(
 
 struct DispatchState {
     runtime: RcRuntime,
+    shm: Shm,
 }
+
+impl ShmHandler for DispatchState {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
+
+smithay_client_toolkit::delegate_shm!(DispatchState);
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for DispatchState {
     fn event(
@@ -1014,6 +1137,121 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for DispatchState {
     }
 }
 
+impl DataDeviceHandler for DispatchState {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
+        wl_surface: &wl_surface::WlSurface,
+    ) {
+        let mut runtime = self.runtime.borrow_mut();
+        let Some(id) = runtime.id_for_surface(wl_surface) else {
+            return;
+        };
+        runtime.drag_target = Some(id);
+        runtime.events.push((
+            id,
+            WindowEvent::DragEntered {
+                position: PhysicalPosition { x, y },
+            },
+        ));
+    }
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_device::WlDataDevice) {
+        let mut runtime = self.runtime.borrow_mut();
+        if let Some(id) = runtime.drag_target.take() {
+            runtime.events.push((id, WindowEvent::DragLeft));
+        }
+    }
+    fn motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_device::WlDataDevice,
+        x: f64,
+        y: f64,
+    ) {
+        let mut runtime = self.runtime.borrow_mut();
+        if let Some(id) = runtime.drag_target {
+            runtime.events.push((
+                id,
+                WindowEvent::DragMoved {
+                    position: PhysicalPosition { x, y },
+                },
+            ));
+        }
+    }
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_device::WlDataDevice) {}
+    fn drop_performed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_device::WlDataDevice,
+    ) {
+        let mut runtime = self.runtime.borrow_mut();
+        if let Some(id) = runtime.drag_target.take() {
+            runtime.events.push((id, WindowEvent::DragDropped));
+        }
+    }
+}
+
+impl DataOfferHandler for DispatchState {
+    fn source_actions(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &mut DragOffer,
+        _: DndAction,
+    ) {
+    }
+    fn selected_action(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &mut DragOffer,
+        _: DndAction,
+    ) {
+    }
+}
+
+impl DataSourceHandler for DispatchState {
+    fn accept_mime(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+        _: Option<String>,
+    ) {
+    }
+    fn send_request(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+        _: String,
+        _: WritePipe,
+    ) {
+    }
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+        self.runtime.borrow_mut().active_drag = None;
+    }
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+    }
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_data_source::WlDataSource) {
+        self.runtime.borrow_mut().active_drag = None;
+    }
+    fn action(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_data_source::WlDataSource,
+        _: DndAction,
+    ) {
+    }
+}
+
 impl WindowHandler for DispatchState {
     fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, window: &XdgWindow) {
         let mut runtime = self.runtime.borrow_mut();
@@ -1091,6 +1329,7 @@ impl PopupHandler for DispatchState {
 smithay_client_toolkit::delegate_xdg_shell!(DispatchState);
 smithay_client_toolkit::delegate_xdg_window!(DispatchState);
 smithay_client_toolkit::delegate_xdg_popup!(DispatchState);
+smithay_client_toolkit::delegate_data_device!(DispatchState);
 
 pub struct Window {
     id: WindowId,
@@ -1103,16 +1342,19 @@ pub struct Window {
     visible: AtomicBool,
     close_requests: Arc<Mutex<Vec<WindowId>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
+    drag_requests: Arc<Mutex<Vec<DragRequest>>>,
     pointer_passthrough: bool,
 }
 
 impl Window {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: WindowId,
         surface: wl_surface::WlSurface,
         display: wl_display::WlDisplay,
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
+        drag_requests: Arc<Mutex<Vec<DragRequest>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1130,6 +1372,7 @@ impl Window {
             visible: AtomicBool::new(false),
             close_requests,
             cursor_requests,
+            drag_requests,
             pointer_passthrough,
         }
     }
@@ -1232,6 +1475,23 @@ impl PlatformWindow for Window {
         requests.push((self.id, icon));
     }
     fn focus(&self) {}
+    fn start_drag(
+        &self,
+        serial: crate::InputSerial,
+        mime_types: &[String],
+        icon: Option<DragIcon>,
+    ) -> Result<(), String> {
+        self.drag_requests
+            .lock()
+            .map_err(|_| "drag request lock poisoned".to_owned())?
+            .push(DragRequest {
+                window_id: self.id,
+                serial: serial.0,
+                mime_types: mime_types.to_vec(),
+                icon,
+            });
+        Ok(())
+    }
 }
 
 fn dispatch_redraws(runtime: &RcRuntime) {

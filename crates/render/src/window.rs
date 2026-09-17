@@ -30,8 +30,8 @@ use creamui_core::{
     WindowDragHandle,
 };
 use creamui_platform::{
-    ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, EventLoop,
-    EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
+    ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, DragIcon,
+    EventLoop, EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
     Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta, PlatformWindow,
     PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection,
     WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
@@ -703,6 +703,22 @@ impl WindowHandle {
         }
     }
 
+    /// Starts a real drag-and-drop grab, tracked/rendered by the
+    /// compositor across every surface on the output. Uses the input
+    /// serial of this window's most recent pointer-button-press, per the
+    /// platform's requirement that a drag must originate from one.
+    pub fn start_drag(&self, mime_types: &[String], icon: Option<DragIcon>) -> Result<(), String> {
+        let serial = self
+            .last_input_serial
+            .get()
+            .ok_or_else(|| "no pointer press to start a drag from".to_owned())?;
+        let window = self.window.borrow();
+        let window = window
+            .as_ref()
+            .ok_or_else(|| "window not yet created".to_owned())?;
+        window.start_drag(serial, mime_types, icon)
+    }
+
     /// Registers a callback invoked when the native window loses focus.
     /// Registering a new callback replaces the previous one.
     pub fn on_focus_lost(&self, handler: impl Fn() + 'static) {
@@ -1056,6 +1072,29 @@ impl WindowState {
         }
     }
 
+    /// Recomputes `pending_drag` for the widget at `self.dragging` from the
+    /// current `pointer_pos`, requesting a redraw if it's still draggable.
+    fn refresh_pending_drag(&mut self) {
+        let Some(index) = self.dragging else { return };
+        let frame = self.frame.borrow();
+        let pending = frame.scene.as_ref().and_then(|scene| {
+            scene.draggable_at(index).map(|(rect, handler)| {
+                let local = Point {
+                    x: self.pointer_pos.x - rect.x,
+                    y: self.pointer_pos.y - rect.y,
+                };
+                (local, rect, handler.clone())
+            })
+        });
+        drop(frame);
+        if pending.is_some() {
+            self.pending_drag = pending;
+            if let Some(window) = self.window.borrow().as_ref() {
+                window.request_redraw();
+            }
+        }
+    }
+
     fn viewport_from_window(&self) -> Size {
         let Some(window) = self.window.borrow().as_ref().cloned() else {
             return self.viewport.peek();
@@ -1197,30 +1236,37 @@ impl WindowState {
                     }
                 }
 
-                if let Some(index) = self.dragging {
-                    let frame = self.frame.borrow();
-                    let pending = frame.scene.as_ref().and_then(|scene| {
-                        scene.draggable_at(index).map(|(rect, handler)| {
-                            let local = Point {
-                                x: self.pointer_pos.x - rect.x,
-                                y: self.pointer_pos.y - rect.y,
-                            };
-                            (local, rect, handler.clone())
-                        })
-                    });
-                    drop(frame);
-                    if pending.is_some() {
-                        self.pending_drag = pending;
-                        if let Some(window) = self.window.borrow().as_ref() {
-                            window.request_redraw();
-                        }
-                    }
+                if self.dragging.is_some() {
+                    self.refresh_pending_drag();
                 } else if !unchanged {
                     if let Some(rect) = hover_damage {
                         self.light_damage.borrow_mut().push(rect);
                     }
                     (self.repaint_light)();
                 }
+            }
+            // Real Wayland drag-and-drop suppresses normal pointer motion
+            // for the duration of the grab — these are how a drag started
+            // via `PlatformWindow::start_drag` gets tracked instead,
+            // driving the same `on_drag`/`on_drag_end` widget callbacks as
+            // a plain in-window drag.
+            WindowEvent::DragEntered { position } | WindowEvent::DragMoved { position } => {
+                let scale = self.scale_factor.peek();
+                self.pointer_pos = Point {
+                    x: (position.x / scale) as f32,
+                    y: (position.y / scale) as f32,
+                };
+                if self.dragging.is_some() {
+                    self.refresh_pending_drag();
+                }
+            }
+            WindowEvent::DragLeft | WindowEvent::DragDropped => {
+                self.dragging = None;
+                self.pending_drag = None;
+                if let Some(handler) = self.drag_end.take() {
+                    handler();
+                }
+                (self.repaint_light)();
             }
             WindowEvent::MouseInput {
                 pressed: true,
@@ -1605,7 +1651,9 @@ impl AppHandler {
                     spec.options.transparent,
                 ))
             }
-            RenderBackend::Cpu => Presenter::Cpu(CpuState::new(window.clone())),
+            RenderBackend::Cpu => {
+                Presenter::Cpu(CpuState::new(window.clone(), spec.options.transparent))
+            }
         };
         #[cfg(target_arch = "wasm32")]
         let mut presenter = Presenter::Web(WebState::new(window.clone()));
@@ -2576,6 +2624,7 @@ mod tests {
 
     struct DraggableWidget {
         calls: Rc<RefCell<Vec<Point>>>,
+        end_calls: Rc<Cell<u32>>,
     }
 
     impl creamui_core::Widget for DraggableWidget {
@@ -2596,16 +2645,24 @@ mod tests {
             let calls = self.calls.clone();
             Some(Rc::new(move |local, _rect| calls.borrow_mut().push(local)))
         }
+
+        fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
+            let end_calls = self.end_calls.clone();
+            Some(Rc::new(move || end_calls.set(end_calls.get() + 1)))
+        }
     }
 
     #[test]
     fn cursor_moved_during_a_drag_coalesces_to_the_latest_position_per_redraw() {
         let calls: Rc<RefCell<Vec<Point>>> = Rc::new(RefCell::new(Vec::new()));
+        let end_calls = Rc::new(Cell::new(0));
         let mut harness = WindowEventHarness::new({
             let calls = calls.clone();
+            let end_calls = end_calls.clone();
             move |_| {
                 Box::new(DraggableWidget {
                     calls: calls.clone(),
+                    end_calls: end_calls.clone(),
                 })
             }
         });
@@ -2643,6 +2700,44 @@ mod tests {
             "a redraw flushes exactly one call, for the latest queued position"
         );
         assert_eq!(calls.borrow()[1], Point { x: 30.0, y: 30.0 });
+    }
+
+    #[test]
+    fn real_wayland_drag_events_drive_the_same_on_drag_callbacks() {
+        let calls: Rc<RefCell<Vec<Point>>> = Rc::new(RefCell::new(Vec::new()));
+        let end_calls = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let calls = calls.clone();
+            let end_calls = end_calls.clone();
+            move |_| {
+                Box::new(DraggableWidget {
+                    calls: calls.clone(),
+                    end_calls: end_calls.clone(),
+                })
+            }
+        });
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        assert_eq!(calls.borrow().len(), 1, "the initial press dispatches immediately");
+
+        // Once a real drag starts, the compositor stops sending CursorMoved
+        // and sends these instead.
+        harness.send(WindowEvent::DragMoved {
+            position: creamui_platform::PhysicalPosition { x: 40.0, y: 40.0 },
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(calls.borrow().len(), 2);
+        assert_eq!(calls.borrow()[1], Point { x: 40.0, y: 40.0 });
+
+        harness.send(WindowEvent::DragDropped);
+        assert_eq!(end_calls.get(), 1, "a drop must end the drag like releasing the mouse does");
     }
 
     struct HoverCountingWidget {

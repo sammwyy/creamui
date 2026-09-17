@@ -140,6 +140,15 @@ pub struct KeyEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputSerial(pub u32);
 
+/// A bitmap shown next to the cursor for [`crate::PlatformWindow::start_drag`].
+#[derive(Debug, Clone)]
+pub struct DragIcon {
+    /// Straight (non-premultiplied) RGBA8, `width * height * 4` bytes.
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupPlacement {
     Above,
@@ -212,6 +221,16 @@ pub enum WindowEvent {
     ModifiersChanged(Modifiers),
     PopupDone,
     RedrawRequested,
+    /// Drag-and-drop tracking (replaces normal pointer motion during a
+    /// [`crate::PlatformWindow::start_drag`] grab).
+    DragEntered {
+        position: PhysicalPosition,
+    },
+    DragMoved {
+        position: PhysicalPosition,
+    },
+    DragLeft,
+    DragDropped,
     Other,
 }
 

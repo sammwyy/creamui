@@ -4,15 +4,24 @@
 //! tray menu to create it again, increment its reactive counter while no
 //! window exists, or exit the process.
 
+#[cfg(target_os = "linux")]
 use creamui_core::{BoxedWidget, Size};
+#[cfg(target_os = "linux")]
 use creamui_reactive::Signal;
+#[cfg(target_os = "linux")]
 use creamui_render::{AppBuilder, AppHandle, TrayBuilder, TrayIcon, WindowHandle, WindowOptions};
+#[cfg(target_os = "linux")]
 use creamui_theme::{use_theme, Theme};
+#[cfg(target_os = "linux")]
 use creamui_widgets::layout::{Align, Flex, Justify};
+#[cfg(target_os = "linux")]
 use creamui_widgets::{Button, Text};
+#[cfg(target_os = "linux")]
 use std::cell::RefCell;
+#[cfg(target_os = "linux")]
 use std::rc::Rc;
 
+#[cfg(target_os = "linux")]
 fn main() {
     let count = Signal::new(0_i32);
     let window = Rc::new(RefCell::new(None::<WindowHandle>));
@@ -54,6 +63,12 @@ fn main() {
         .run();
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("the tray example is only supported on Linux");
+}
+
+#[cfg(target_os = "linux")]
 fn open_window(app: &AppHandle, count: Signal<i32>, window: Rc<RefCell<Option<WindowHandle>>>) {
     let ready_window = window.clone();
     let count_for_ui = count.clone();
@@ -95,6 +110,7 @@ fn open_window(app: &AppHandle, count: Signal<i32>, window: Rc<RefCell<Option<Wi
 }
 
 /// A tiny dependency-free 32×32 RGBA icon: CreamUI purple with a white C.
+#[cfg(target_os = "linux")]
 fn tray_icon() -> TrayIcon {
     const SIZE: u32 = 32;
     let mut rgba = vec![0_u8; (SIZE * SIZE * 4) as usize];
@@ -115,4 +131,5 @@ fn tray_icon() -> TrayIcon {
     }
     TrayIcon::from_rgba(rgba, SIZE, SIZE).expect("the generated tray icon is valid RGBA")
 }
+#[cfg(target_os = "linux")]
 use creamui_core::Styled as _;

@@ -176,8 +176,13 @@ mod tests {
     fn bootstraps_lists_and_switches_themes() {
         let tmp = std::env::temp_dir().join(format!("creamui-theme-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
+        #[cfg(target_os = "windows")]
+        let config_home = "APPDATA";
+        #[cfg(not(target_os = "windows"))]
+        let config_home = "XDG_CONFIG_HOME";
+        let previous_config_home = std::env::var_os(config_home);
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &tmp);
+            std::env::set_var(config_home, &tmp);
         }
         let dir = tmp.join("cream");
 
@@ -211,7 +216,11 @@ mod tests {
         assert_eq!(active_theme_id(), "light");
 
         unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
+            if let Some(value) = previous_config_home {
+                std::env::set_var(config_home, value);
+            } else {
+                std::env::remove_var(config_home);
+            }
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }

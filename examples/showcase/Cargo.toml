@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 creamui-core = { workspace = true }
+creamui-devtools = { workspace = true, features = ["perf-metrics"] }
 creamui-image = { path = "../../crates/image", features = ["jpeg", "webp"] }
 creamui-jsx = { workspace = true }
 creamui-macros = { workspace = true }

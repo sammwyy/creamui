@@ -124,6 +124,9 @@ impl PlatformWindow for Window {
     fn request_redraw(&self) {
         self.request_redraw();
     }
+    fn pre_present_notify(&self) {
+        self.inner.pre_present_notify();
+    }
     fn close(&self) {}
     fn request_inner_size(&self, size: LogicalSize) {
         self.request_inner_size(size);

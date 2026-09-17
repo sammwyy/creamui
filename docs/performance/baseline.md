@@ -775,3 +775,39 @@ child-list rebuild (see `TODO.md`), not anything FFI-related.
   event handlers, no way to read a node's computed rect back.
 - `creamui-dynamic` doesn't consume ABI-v2 yet — still ABI-v1 only.
 - No window/present path reachable from ABI-v2.
+
+## Display-list renderer (2026-09-17)
+
+The live path no longer rasterizes through per-widget pixel layers.
+Widgets record into a `DisplayList`, consecutive lists are diffed into
+damage, and the frame is drawn either by the instanced `wgpu` pipeline
+(`crates/render/src/gpu.rs`) or by replaying only the damaged regions with
+`tiny-skia` (`crates/render/src/raster.rs`). Same machine as above, now
+with a Wayland session available; `cargo bench -p creamui-bench -- --quick`.
+
+| Benchmark | Before | After |
+|---|---|---|
+| `paint` `wide_tree` first frame, 1,000 nodes | 483 ms | 2.39 ms |
+| `paint` `wide_tree` first frame, 10,000 nodes | 3.85 s | 30.2 ms |
+| `paint` `wide_tree` first frame, 50,000 nodes | 3.76 s | 121 ms |
+| `paint` `dashboard` first frame (1440x900) | 27.5 ms | 2.34 ms |
+| `paint` `dashboard` first frame at 2x (2880x1800) | — | 9.32 ms |
+| animation tick, 5,000 static + 1 / 10 / 100 animated | 0.82 / 0.82 / 1.75 ms | 0.45 / 0.45 / 0.46 ms |
+| hover transition, 1,000 / 10,000 rows | 390 ms / 3.51 s | 0.37 / 1.54 ms |
+| unchanged frame (record + diff), 1,000 / 10,000 messages | 9.57 / 16.6 ms (full repaint) | 0.059 / 0.57 ms |
+| one message's text changed, 1,000 / 10,000 messages (800x600) | — | 1.53 / 33.4 ms |
+| text layout cache miss / hit (any cache size) | — | 1.46 µs / 128 ns |
+| GPU frame (offscreen, RADV), `dashboard` / 100x100 grid | — | 1.70 / 1.98 ms |
+| peak RSS, 50,000-node first frame loop | 303 MB | 168 MB |
+
+The animation tick re-records all 5,000 leaves and still costs less than
+the old layer-promotion path, because recording is cheap and only the
+animated leaves are rasterized. The 10,000-message text change is now
+dominated by rebuilding and reconciling the widget tree, not painting.
+
+`cargo run -p creamui-bench --release --example frame_report` prints a
+per-stage table (layout, record, CPU full/idle/hover frames, GPU frame)
+for every scene; `CUI_GPU_FALLBACK=1` runs the GPU column on a software
+adapter such as llvmpipe. In a running app, `creamui_devtools::init()`
+plus F3 shows the same stages live, and `CUI_FRAME_LOG=1` prints one line
+per presented frame.

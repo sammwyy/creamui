@@ -114,8 +114,8 @@ impl WindowDragHandle {
 
 /// Backend-agnostic drawing surface a [`Widget`] paints itself onto.
 ///
-/// Implemented once per rendering backend (e.g. the `tiny-skia` + `wgpu`
-/// backend in `creamui-render`); widgets never depend on a specific backend.
+/// Implemented by `creamui-render`'s display-list recorder and by test
+/// doubles; widgets never depend on a specific backend.
 pub trait Painter {
     /// Color scheme used to resolve semantic [`crate::ColorToken`] values.
     fn color_scheme(&self) -> creamui_theme::ColorScheme {
@@ -134,62 +134,6 @@ pub trait Painter {
         0.0
     }
 
-    /// Reports and resets whether [`Painter::animation_time`] was called
-    /// since the last call to this method. Used by the renderer to attribute
-    /// animation to the one widget that requested it, not the whole frame.
-    fn take_animated(&mut self) -> bool {
-        false
-    }
-
-    /// Redirects subsequent paint calls into an offscreen surface reserved
-    /// for `id`, sized and positioned at `rect`. Backends without layer
-    /// support no-op, so paint calls keep targeting whatever surface was
-    /// already active.
-    ///
-    /// `fresh` marks a full (non-animation-only) paint pass, where the
-    /// surface must be reseeded from whatever is currently behind `rect` —
-    /// otherwise a backend that seeds from a cached backdrop (to avoid
-    /// re-deriving it on every animation tick) must keep reusing the one
-    /// captured the last time `fresh` was true, since the destination isn't
-    /// repainted from scratch in between.
-    ///
-    /// `opaque` is `false` only for a widget declaring
-    /// [`Widget::paints_transparently`] — see there for what that changes.
-    fn push_layer(&mut self, _id: u64, _rect: Rect, _fresh: bool, _opaque: bool) {}
-
-    /// Ends the redirect started by [`Painter::push_layer`], compositing the
-    /// offscreen surface onto the surface that was active before the
-    /// matching `push_layer`.
-    fn pop_layer(&mut self) {}
-
-    /// Releases whatever a backend cached for `id` across `push_layer`
-    /// calls. Called once a widget stops being promoted to its own layer,
-    /// so a backdrop/surface cache doesn't outlive the animation it was for.
-    fn forget_layer(&mut self, _id: u64) {}
-
-    /// Composites the layer last painted under `id` (by a `push_layer`/
-    /// `pop_layer` pair) onto the current target at `rect`, without
-    /// repainting it. Returns `false` (compositing nothing) if there's no
-    /// cached layer for `id`, or its cached size doesn't match `rect`'s
-    /// physical size — the caller must fall back to a normal
-    /// `push_layer`/paint/`pop_layer` pass in that case.
-    fn composite_cached_layer(&mut self, _id: u64, _rect: Rect) -> bool {
-        false
-    }
-
-    /// Drains the window-space rects composited by [`Painter::pop_layer`]
-    /// since the last call to this method.
-    fn take_damage(&mut self) -> Vec<Rect> {
-        Vec::new()
-    }
-
-    /// Resets whatever [`Painter::animation_time`] set for the *previous*
-    /// frame, mirroring what a full-window `clear()` does for the normal
-    /// render path. Called once before a [`crate::Renderer::repaint_animated`]
-    /// pass, which never clears, so a widget that stopped animating is
-    /// correctly observed as such instead of leaving the redraw scheduler
-    /// polling forever.
-    fn begin_animated_frame(&mut self) {}
     fn stroke_line(&mut self, from: Point, to: Point, color: creamui_theme::Color, width: f32) {
         let steps = ((to.x - from.x).abs().max((to.y - from.y).abs()) * 2.0)
             .ceil()
@@ -257,8 +201,15 @@ pub trait Painter {
         align: TextAlign,
     );
 
-    /// Draws premultiplied RGBA8 pixels into `rect`.
-    fn draw_rgba_image(&mut self, _rect: Rect, _pixels: &[u8], _width: u32, _height: u32) {}
+    /// Draws `image` stretched into `rect`. With `tint`, only the image's
+    /// alpha is kept and every visible pixel takes the tint color.
+    fn draw_image(
+        &mut self,
+        _rect: Rect,
+        _image: &crate::RgbaImage,
+        _tint: Option<creamui_theme::Color>,
+    ) {
+    }
 
     /// Draws a text run whose glyph layout stays intact while a byte range
     /// receives a different foreground color. Backends that do not support
@@ -317,11 +268,6 @@ pub trait Painter {
     /// Removes the most recently pushed clip. Must be paired 1:1 with
     /// [`Painter::push_clip`] calls. Default: a no-op.
     fn pop_clip(&mut self) {}
-
-    /// Hard-replaces `rect`'s pixels with `color` (unlike `fill_rect`, which
-    /// blends). Used by a scoped repaint that only wipes a small region.
-    /// Default: no-op.
-    fn clear_rect(&mut self, _rect: Rect, _color: creamui_theme::Color) {}
 }
 
 /// A node in a CreamUI widget tree.
@@ -347,38 +293,6 @@ pub trait Widget {
     /// the parent's coordinate space). The renderer paints the common
     /// background, border, radius, and outline first. Does not paint children.
     fn paint(&self, painter: &mut dyn Painter, rect: Rect);
-
-    /// A cheap, stable hash of everything that affects this widget's own
-    /// paint output (not its children's) — e.g. text + color + font size
-    /// for a text widget. `None` (the default) opts out of content
-    /// caching: always safe, just earns no benefit. Must not depend on
-    /// anything that legitimately changes every frame — a widget that
-    /// calls [`Painter::animation_time`] should leave this `None` rather
-    /// than hashing something time-derived, since that would just
-    /// silently disable the cache every frame rather than corrupt
-    /// anything, and there's no reason to bother.
-    fn paint_fingerprint(&self) -> Option<u64> {
-        None
-    }
-
-    /// Whether this widget's own paint leaves every pixel it doesn't itself
-    /// cover truly untouched, on any frame where it resolves no background
-    /// of its own — no partial/animated shape that can shrink between
-    /// paints (text, icons, and images qualify; a custom widget painting
-    /// such a shape via raw fill/stroke calls in its own
-    /// [`Widget::paint`] does not). Only meaningful together with
-    /// [`Widget::paint_fingerprint`]: a cached layer for a widget like this
-    /// can safely start transparent and blend back onto whatever is
-    /// currently there, rather than snapshotting a backdrop — a snapshot
-    /// can go stale relative to a sibling's hover/press-driven repaint,
-    /// which nothing in this widget's own fingerprint or interaction state
-    /// would ever notice, and get composited back over the fresh paint. A
-    /// frame where this widget *does* resolve a background always uses the
-    /// snapshot path regardless, so this only needs to be accurate about
-    /// the gaps. Default `false`.
-    fn paints_transparently(&self) -> bool {
-        false
-    }
 
     /// This widget's fundamental content, for [`crate::runtime::mount_legacy_widget`]
     /// to classify as [`crate::runtime::NodeKind::Text`]/[`crate::runtime::NodeKind::Image`]

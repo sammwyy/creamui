@@ -7,6 +7,7 @@
 
 mod damage;
 mod geometry;
+mod image;
 pub mod metrics;
 pub mod runtime;
 mod scene;
@@ -16,6 +17,7 @@ mod widget;
 
 pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT_MAX_RECTS};
 pub use geometry::{Point, Rect, Size};
+pub use image::RgbaImage;
 pub use scene::{render_frame, Renderer, Scene};
 pub use style::{
     Border, ColorToken, ColorValue, InteractionState, InteractionStyles, LengthValue, PaintStyle,

@@ -15,13 +15,6 @@ enum PaintMode {
     Absolute,
 }
 
-/// Consecutive full-paint observations of `animation_time()` being called
-/// (or not) needed to promote a node to its own layer, or fully decay back
-/// out of one. Promotion is quick (2 frames) since a false positive only
-/// costs one extra offscreen buffer; demotion is slower (must decay to 0)
-/// so a briefly-paused animation doesn't thrash the layer pool every frame.
-const LAYER_PROMOTE_STREAK: u8 = 2;
-
 struct Instance {
     widget: BoxedWidget,
     /// Compared field-by-field (specifically `style.layout`) against next
@@ -45,50 +38,15 @@ struct Instance {
     key: Option<WidgetKey>,
     children: Vec<Instance>,
     node_id: taffy::NodeId,
-    layer_id: u64,
-    animating_streak: u8,
-    is_layer: bool,
-    /// `is_layer`, or true for any descendant — refreshed bottom-up on every
-    /// full (non-`animated_only`) paint. Lets an animated-only tick prune a
-    /// whole subtree with nothing promoted in it before even computing its
-    /// layout, instead of walking every static node just to find nothing.
-    has_animated_descendant: bool,
-    /// The [`crate::Widget::paint_fingerprint`] the cached layer under
-    /// `layer_id` was last painted against, if the widget opts in.
-    content_fingerprint: Option<u64>,
-    /// The resolved hover/press/focus/disabled state in effect when
-    /// `content_fingerprint` was last refreshed. A fingerprint match alone
-    /// isn't enough to reuse the cache — the widget's *resolved* appearance
-    /// can depend on this live interaction state too (e.g. a hover
-    /// highlight), so both must match.
-    cached_states: Option<crate::StyleState>,
-    /// The ambient clip rect in effect the last time this layer was freshly
-    /// painted. A clipping ancestor (e.g. a `ScrollView`) restricts what
-    /// actually gets rasterized into the cached layer — pixels outside that
-    /// clip are never drawn, not merely hidden — so a later reuse under a
-    /// *wider* clip must not composite a buffer that was never painted that
-    /// far in the first place.
-    cached_clip: Option<Rect>,
-    /// Window-space bounds used to capture the cached layer — `rect`
-    /// expanded for any border/outline overflow, not `rect` itself. A
-    /// cached layer includes its original backdrop, so it must be
-    /// repainted when a scrolling ancestor translates it to a different
-    /// position.
-    cached_rect: Option<Rect>,
-    /// The [`Painter::color_scheme`] in effect when this layer was last
-    /// freshly painted. A background/border/outline resolved from a
-    /// [`crate::ColorToken`] renders differently under a different scheme
-    /// even when nothing else about the widget changed, so a scheme change
-    /// must invalidate the cache the same way a hover/press/focus change
-    /// already does.
-    cached_colors: Option<creamui_theme::ColorScheme>,
+    /// The largest border/outline overflow across every interaction state,
+    /// cached here because clipping ancestors need it on every paint.
+    paint_overflow: f32,
 }
 
-fn remove_instance(tree: &mut Tree, instance: Instance, painter: &mut dyn Painter) {
+fn remove_instance(tree: &mut Tree, instance: Instance) {
     for child in instance.children {
-        remove_instance(tree, child, painter);
+        remove_instance(tree, child);
     }
-    painter.forget_layer(instance.layer_id);
     let _ = tree.remove(instance.node_id);
 }
 
@@ -105,13 +63,7 @@ fn remove_instance(tree: &mut Tree, instance: Instance, painter: &mut dyn Painte
 /// common case where a re-render only changes leaf styles/content, not the
 /// tree shape — and, for a matched node, every `taffy` write is skipped
 /// unless the value being written actually changed.
-fn reconcile(
-    tree: &mut Tree,
-    existing: Option<Instance>,
-    mut widget: BoxedWidget,
-    next_layer_id: &mut u64,
-    painter: &mut dyn Painter,
-) -> Instance {
+fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidget) -> Instance {
     #[cfg(feature = "perf-metrics")]
     crate::metrics::record(|m| {
         m.reconcile_visits += 1;
@@ -130,7 +82,7 @@ fn reconcile(
         let mut child_ids = Vec::with_capacity(new_child_widgets.len());
         let mut children = Vec::with_capacity(new_child_widgets.len());
         for child_widget in new_child_widgets {
-            let child = reconcile(tree, None, child_widget, next_layer_id, painter);
+            let child = reconcile(tree, None, child_widget);
             child_ids.push(child.node_id);
             children.push(child);
         }
@@ -145,28 +97,24 @@ fn reconcile(
             m.taffy_children_writes += 1;
             m.taffy_context_writes += 1;
         });
-        let layer_id = *next_layer_id;
-        *next_layer_id += 1;
         return Instance {
             widget,
+            paint_overflow: max_paint_overflow(&new_style),
             style: new_style,
             has_measure: new_has_measure,
             measure_fingerprint: new_measure_fingerprint,
             key: new_key,
             children,
             node_id,
-            layer_id,
-            animating_streak: 0,
-            is_layer: false,
-            has_animated_descendant: false,
-            content_fingerprint: None,
-            cached_states: None,
-            cached_clip: None,
-            cached_rect: None,
-            cached_colors: None,
         };
     };
 
+    let paint_overflow =
+        if old.style.paint == new_style.paint && old.style.states == new_style.states {
+            old.paint_overflow
+        } else {
+            max_paint_overflow(&new_style)
+        };
     if old.style.layout != new_style.layout {
         tree.set_style(old.node_id, constrain_inflow(new_style.layout.clone()))
             .expect("updating the style of an existing node should not fail");
@@ -189,13 +137,7 @@ fn reconcile(
     }
 
     let old_child_ids: Vec<taffy::NodeId> = old.children.iter().map(|c| c.node_id).collect();
-    let new_children = reconcile_children(
-        tree,
-        &mut old.children,
-        new_child_widgets,
-        next_layer_id,
-        painter,
-    );
+    let new_children = reconcile_children(tree, &mut old.children, new_child_widgets);
 
     let child_ids: Vec<_> = new_children.iter().map(|c| c.node_id).collect();
     if child_ids != old_child_ids {
@@ -213,15 +155,7 @@ fn reconcile(
         key: new_key,
         children: new_children,
         node_id: old.node_id,
-        layer_id: old.layer_id,
-        animating_streak: old.animating_streak,
-        is_layer: old.is_layer,
-        has_animated_descendant: old.has_animated_descendant,
-        content_fingerprint: old.content_fingerprint,
-        cached_states: old.cached_states,
-        cached_clip: old.cached_clip,
-        cached_rect: old.cached_rect,
-        cached_colors: old.cached_colors,
+        paint_overflow,
     }
 }
 
@@ -234,8 +168,6 @@ fn reconcile_children(
     tree: &mut Tree,
     old_children: &mut Vec<Instance>,
     new_child_widgets: Vec<BoxedWidget>,
-    next_layer_id: &mut u64,
-    painter: &mut dyn Painter,
 ) -> Vec<Instance> {
     let mut new_children = Vec::with_capacity(new_child_widgets.len());
 
@@ -255,33 +187,21 @@ fn reconcile_children(
                 Some(key) => by_key.remove(&key),
                 None => unkeyed.pop_front(),
             };
-            new_children.push(reconcile(
-                tree,
-                matched,
-                child_widget,
-                next_layer_id,
-                painter,
-            ));
+            new_children.push(reconcile(tree, matched, child_widget));
         }
         for leftover in by_key.into_values() {
-            remove_instance(tree, leftover, painter);
+            remove_instance(tree, leftover);
         }
         for leftover in unkeyed {
-            remove_instance(tree, leftover, painter);
+            remove_instance(tree, leftover);
         }
     } else {
         let mut old = old_children.drain(..);
         for child_widget in new_child_widgets {
-            new_children.push(reconcile(
-                tree,
-                old.next(),
-                child_widget,
-                next_layer_id,
-                painter,
-            ));
+            new_children.push(reconcile(tree, old.next(), child_widget));
         }
         for leftover in old {
-            remove_instance(tree, leftover, painter);
+            remove_instance(tree, leftover);
         }
     }
 
@@ -319,7 +239,9 @@ fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
 struct PaintOutputs {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
-    focusables: Vec<(Rect, Rc<dyn Fn(KeyInput)>)>,
+    /// Every focusable widget in tab order, with its visible rect if any
+    /// part of it is on screen, so indices stay stable while scrolling.
+    focusables: Vec<(Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
     /// `(visible_rect, full_rect, handler)` — hit-testing uses the
     /// clip-visible portion, but the handler is called with the widget's
     /// full (unclipped) rect so e.g. a slider can divide by its own real
@@ -378,7 +300,7 @@ fn max_paint_overflow(style: &crate::Style) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn paint_instance(
     tree: &Tree,
-    instance: &mut Instance,
+    instance: &Instance,
     painter: &mut dyn Painter,
     parent_origin: Point,
     clip: Rect,
@@ -386,18 +308,12 @@ fn paint_instance(
     focus: &mut FocusContext,
     out: &mut PaintOutputs,
     mode: PaintMode,
-    animated_only: bool,
 ) {
     #[cfg(test)]
     PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
     #[cfg(feature = "perf-metrics")]
     crate::metrics::record(|m| m.paint_nodes_visited += 1);
 
-    // Nothing here or below is promoted, so an animated-only tick has no
-    // work in this subtree — skip it before even computing layout.
-    if animated_only && !instance.is_layer && !instance.has_animated_descendant {
-        return;
-    }
     let layout = tree
         .layout(instance.node_id)
         .expect("layout was computed for every instantiated node");
@@ -408,30 +324,22 @@ fn paint_instance(
         height: layout.size.height,
     };
 
-    let absolute = tree
-        .style(instance.node_id)
-        .map(|style| style.position == taffy::style::Position::Absolute)
-        .unwrap_or(false);
-    // Absolute layers are portals.
+    let absolute = instance.style.layout.position == Position::Absolute;
+    if mode == PaintMode::Flow && absolute {
+        return;
+    }
     let effective_clip = if mode == PaintMode::Absolute && absolute {
         viewport
     } else {
         clip
     };
-    if mode == PaintMode::Flow && absolute {
-        // Absolute layers are rendered in a second pass, above all flow
-        // siblings. Their subtree is skipped here as one complete layer.
-        return;
-    }
 
-    // During the absolute pass, ordinary ancestors are traversal-only nodes;
-    // an absolute node and its complete subtree are painted normally. In an
-    // animated-only pass, non-layer nodes contribute nothing (their pixels
-    // are already sitting in the target buffer from the last full paint),
-    // so only a promoted node still runs its paint-self block.
-    let paint_self = (mode == PaintMode::Flow || absolute) && (!animated_only || instance.is_layer);
-    let mut layer_active = false;
-    if paint_self {
+    let paint_self = mode == PaintMode::Flow || absolute;
+    if paint_self
+        && rect
+            .inflate(instance.paint_overflow)
+            .overlaps(effective_clip)
+    {
         let focusable = instance.widget.focusable() && instance.widget.on_key().is_some();
         let states = instance
             .widget
@@ -439,130 +347,45 @@ fn paint_instance(
             .with_hovered(painter.hovered(rect))
             .with_pressed(painter.pressed(rect))
             .with_focused(focusable && focus.focused_index == Some(focus.counter));
-
-        let fingerprint = instance.widget.paint_fingerprint();
         let colors = painter.color_scheme();
-        // Resolved up front (not just on a cache miss) because a border or
-        // focus outline paints centered on / outside `rect` — the layer
-        // buffer and damage rect this node's cache is tracked against must
-        // cover that overflow too, on both the miss path (about to paint
-        // it) and the hit path (about to composite a layer sized for it).
         let resolved = instance.style.resolve(states);
-        let overflow = paint_overflow(&resolved.paint);
-        let layer_rect = if overflow > 0.0 {
-            Rect {
-                x: rect.x - overflow,
-                y: rect.y - overflow,
-                width: rect.width + overflow * 2.0,
-                height: rect.height + overflow * 2.0,
-            }
-        } else {
-            rect
-        };
-        // A fingerprint match alone doesn't prove the cached pixels are
-        // still correct — the widget's *resolved* appearance can also
-        // depend on live hover/press/focus state that has nothing to do
-        // with its own fingerprint (see `cached_states`'s doc comment), or
-        // on the active color scheme (see `cached_colors`'s doc comment).
-        // A clipping ancestor restricts what actually gets rasterized into
-        // the cached layer, not just what's visible when compositing it —
-        // pixels outside that clip were never painted at all. A fingerprint
-        // and state match alone can't tell a layer cached under a narrower
-        // clip from one cached with nothing cut off, so the ambient clip in
-        // effect at capture time must match too.
-        let cached_clip_covers = instance.cached_clip.is_some_and(|cached| {
-            cached.x <= effective_clip.x
-                && cached.y <= effective_clip.y
-                && cached.x + cached.width >= effective_clip.x + effective_clip.width
-                && cached.y + cached.height >= effective_clip.y + effective_clip.height
-        });
-        let cache_hit = fingerprint.is_some()
-            && fingerprint == instance.content_fingerprint
-            && instance.cached_states == Some(states)
-            && instance.cached_colors == Some(colors)
-            && cached_clip_covers
-            && instance.cached_rect == Some(layer_rect)
-            && painter.composite_cached_layer(instance.layer_id, layer_rect);
-
-        if !cache_hit {
-            let radius = resolved.paint.corner_radius.unwrap_or(0.0);
-            // A not-yet-promoted node is only ever visited on a full (non-
-            // `animated_only`) pass — see the pruning check above — so one call
-            // early is always a full pass too, with `clear()` already behind
-            // it. Waiting until `is_layer` itself flips would mean the *actual*
-            // first `push_layer` could land on a later animated-only tick
-            // instead, capturing a backdrop still contaminated by this widget's
-            // own last direct paint rather than the clean ambient background.
-            // A fingerprinted widget is promoted unconditionally, on the same
-            // reasoning — its first paint must seed the cache a fresh pass
-            // reads back on the next unrelated rebuild.
-            layer_active = instance.is_layer
-                || instance.animating_streak.saturating_add(1) >= LAYER_PROMOTE_STREAK
-                || fingerprint.is_some();
-            if layer_active {
-                painter.push_layer(
-                    instance.layer_id,
-                    layer_rect,
-                    !animated_only,
-                    resolved.paint.background.is_some() || !instance.widget.paints_transparently(),
-                );
-            }
-            if let Some(background) = resolved.paint.background {
-                painter.fill_rect(rect, background.resolve(&colors), radius);
-            }
-            instance.widget.paint(painter, rect);
-            #[cfg(feature = "perf-metrics")]
-            crate::metrics::record(|m| m.paint_nodes_recorded += 1);
-            if painter.take_animated() {
-                instance.animating_streak = instance.animating_streak.saturating_add(1);
-                if instance.animating_streak >= LAYER_PROMOTE_STREAK {
-                    instance.is_layer = true;
-                }
-            } else {
-                instance.animating_streak = instance.animating_streak.saturating_sub(1);
-                if instance.animating_streak == 0 {
-                    instance.is_layer = false;
-                    // A fingerprinted widget never calls `animation_time()`,
-                    // so this branch runs on every one of its paints —
-                    // forgetting its layer here would evict the cache this
-                    // same paint just seeded.
-                    if fingerprint.is_none() {
-                        painter.forget_layer(instance.layer_id);
-                    }
-                }
-            }
-            // Borders and outlines sit over component-specific content, matching
-            // CSS box painting and preventing edge-to-edge content from hiding
-            // the common decoration.
-            if let Some(border) = resolved.paint.border {
-                painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
-            }
-            if let Some(outline) = resolved.paint.outline {
-                painter.stroke_rect(
-                    Rect {
-                        x: rect.x - outline.width,
-                        y: rect.y - outline.width,
-                        width: rect.width + outline.width * 2.0,
-                        height: rect.height + outline.width * 2.0,
-                    },
-                    outline.color.resolve(&colors),
-                    outline.width,
-                    radius + outline.width,
-                );
-            }
-            instance.content_fingerprint = fingerprint;
-            instance.cached_states = fingerprint.map(|_| states);
-            instance.cached_clip = fingerprint.map(|_| effective_clip);
-            instance.cached_rect = fingerprint.map(|_| layer_rect);
-            instance.cached_colors = fingerprint.map(|_| colors);
-            if layer_active && fingerprint.is_some() {
-                painter.pop_layer();
-                layer_active = false;
-            }
+        let radius = resolved.paint.corner_radius.unwrap_or(0.0);
+        if let Some(background) = resolved.paint.background {
+            painter.fill_rect(rect, background.resolve(&colors), radius);
+        }
+        instance.widget.paint(painter, rect);
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::record(|m| m.paint_nodes_recorded += 1);
+        // Borders and outlines sit over component-specific content, matching
+        // CSS box painting and preventing edge-to-edge content from hiding
+        // the common decoration.
+        if let Some(border) = resolved.paint.border {
+            painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
+        }
+        if let Some(outline) = resolved.paint.outline {
+            painter.stroke_rect(
+                rect.inflate(outline.width),
+                outline.color.resolve(&colors),
+                outline.width,
+                radius + outline.width,
+            );
         }
     }
 
-    if paint_self && !animated_only {
+    if paint_self && instance.widget.focusable() {
+        if let Some(on_key) = instance.widget.on_key() {
+            let visible = rect.intersect(effective_clip);
+            if visible.is_some() && focus.focused_index == Some(focus.counter) {
+                instance
+                    .widget
+                    .paint_focused_overlay(painter, rect, focus.caret_visible);
+            }
+            focus.counter += 1;
+            out.focusables.push((visible, on_key));
+        }
+    }
+
+    if paint_self {
         if let Some(visible) = rect.intersect(effective_clip) {
             #[cfg(feature = "perf-metrics")]
             crate::metrics::record(|m| m.hit_nodes_updated += 1);
@@ -571,17 +394,6 @@ fn paint_instance(
             }
             if let Some(handler) = instance.widget.on_click_at() {
                 out.hits_at.push((visible, handler));
-            }
-            if instance.widget.focusable() {
-                if let Some(on_key) = instance.widget.on_key() {
-                    if focus.focused_index == Some(focus.counter) {
-                        instance
-                            .widget
-                            .paint_focused_overlay(painter, rect, focus.caret_visible);
-                    }
-                    focus.counter += 1;
-                    out.focusables.push((visible, on_key));
-                }
             }
             if let Some(on_drag) = instance.widget.on_drag() {
                 out.draggables
@@ -638,27 +450,11 @@ fn paint_instance(
         let margin = instance
             .children
             .iter()
-            .map(|child| max_paint_overflow(&child.style))
+            .map(|child| child.paint_overflow)
             .fold(0.0f32, f32::max);
-        let clip_rect = if margin > 0.0 {
-            Rect {
-                x: rect.x - margin,
-                y: rect.y - margin,
-                width: rect.width + margin * 2.0,
-                height: rect.height + margin * 2.0,
-            }
-        } else {
-            rect
-        };
-        match clip_rect.intersect(effective_clip) {
+        match rect.inflate(margin).intersect(effective_clip) {
             Some(c) => c,
-            None => {
-                // fully clipped away: nothing inside could be visible either
-                if layer_active {
-                    painter.pop_layer();
-                }
-                return;
-            }
+            None => return,
         }
     } else {
         effective_clip
@@ -672,7 +468,7 @@ fn paint_instance(
     } else {
         mode
     };
-    for child in instance.children.iter_mut() {
+    for child in &instance.children {
         paint_instance(
             tree,
             child,
@@ -683,18 +479,10 @@ fn paint_instance(
             focus,
             out,
             child_mode,
-            animated_only,
         );
     }
     if clips {
         painter.pop_clip();
-    }
-    if !animated_only {
-        instance.has_animated_descendant =
-            instance.is_layer || instance.children.iter().any(|c| c.has_animated_descendant);
-    }
-    if layer_active {
-        painter.pop_layer();
     }
 }
 
@@ -711,7 +499,9 @@ fn paint_instance(
 pub struct Scene {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
-    focusables: Vec<(Rect, Rc<dyn Fn(KeyInput)>)>,
+    /// Every focusable widget in tab order, with its visible rect if any
+    /// part of it is on screen, so indices stay stable while scrolling.
+    focusables: Vec<(Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
@@ -759,7 +549,7 @@ impl Scene {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (rect, _))| rect.contains(point))
+            .find(|(_, (rect, _))| rect.is_some_and(|rect| rect.contains(point)))
             .map(|(index, _)| index)
     }
 
@@ -855,7 +645,6 @@ impl Scene {
 pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
-    next_layer_id: u64,
     viewport: Size,
 }
 
@@ -864,7 +653,6 @@ impl Renderer {
         Renderer {
             tree: TaffyTree::new(),
             root: None,
-            next_layer_id: 0,
             viewport: Size::default(),
         }
     }
@@ -895,20 +683,22 @@ impl Renderer {
         focused_index: Option<usize>,
         caret_visible: bool,
     ) -> Scene {
+        self.update(root, viewport);
+        self.paint(painter, focused_index, caret_visible)
+            .expect("update always leaves a root to paint")
+    }
+
+    /// Reconciles `root` against the retained tree and recomputes layout,
+    /// without painting.
+    pub fn update(&mut self, root: BoxedWidget, viewport: Size) {
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.root_builds += 1);
 
         let previous = self.root.take();
-        let mut instance = {
+        let instance = {
             #[cfg(feature = "perf-metrics")]
             let _span = tracing::info_span!("reconcile").entered();
-            reconcile(
-                &mut self.tree,
-                previous,
-                root,
-                &mut self.next_layer_id,
-                painter,
-            )
+            reconcile(&mut self.tree, previous, root)
         };
 
         #[cfg(feature = "perf-metrics")]
@@ -932,99 +722,43 @@ impl Renderer {
                 },
             )
             .expect("layout computation should not fail for a well-formed tree");
-
         self.viewport = viewport;
-        let clip = viewport_rect(viewport);
-        painter.push_clip(clip);
-        let mut out = PaintOutputs::default();
-        let mut focus = FocusContext {
-            focused_index,
-            caret_visible,
-            counter: 0,
-        };
-        {
-            #[cfg(feature = "perf-metrics")]
-            let _span = tracing::info_span!("paint_traversal").entered();
-            paint_instance(
-                &self.tree,
-                &mut instance,
-                painter,
-                Point::default(),
-                clip,
-                clip,
-                &mut focus,
-                &mut out,
-                PaintMode::Flow,
-                false,
-            );
-            paint_instance(
-                &self.tree,
-                &mut instance,
-                painter,
-                Point::default(),
-                clip,
-                clip,
-                &mut focus,
-                &mut out,
-                PaintMode::Absolute,
-                false,
-            );
-        }
-        painter.pop_clip();
         self.root = Some(instance);
-        Scene {
-            hits: out.hits,
-            hits_at: out.hits_at,
-            focusables: out.focusables,
-            draggables: out.draggables,
-            drag_starts: out.drag_starts,
-            scrollables: out.scrollables,
-            cursors: out.cursors,
-            hovers: out.hovers,
+    }
+
+    /// Paints the retained tree without rebuilding widgets or recomputing
+    /// layout, returning its hit regions. `None` before the first
+    /// [`Renderer::update`].
+    pub fn paint(
+        &self,
+        painter: &mut dyn Painter,
+        focused_index: Option<usize>,
+        caret_visible: bool,
+    ) -> Option<Scene> {
+        let instance = self.root.as_ref()?;
+        #[cfg(feature = "perf-metrics")]
+        let _span = tracing::info_span!("paint_traversal").entered();
+        let clip = viewport_rect(self.viewport);
+        painter.push_clip(clip);
+        let mut out = PaintOutputs::default();
+        let mut focus = FocusContext {
+            focused_index,
+            caret_visible,
+            counter: 0,
+        };
+        for mode in [PaintMode::Flow, PaintMode::Absolute] {
+            paint_instance(
+                &self.tree,
+                instance,
+                painter,
+                Point::default(),
+                clip,
+                clip,
+                &mut focus,
+                &mut out,
+                mode,
+            );
         }
-    }
-
-    /// Repaints the retained tree without rebuilding widgets or recomputing
-    /// layout. Used for local interaction state such as controlled scrolling.
-    pub fn repaint_focused(
-        &mut self,
-        painter: &mut dyn Painter,
-        focused_index: Option<usize>,
-        caret_visible: bool,
-    ) -> Option<Scene> {
-        let instance = self.root.as_mut()?;
-        let clip = viewport_rect(self.viewport);
-        painter.push_clip(clip);
-        let mut out = PaintOutputs::default();
-        let mut focus = FocusContext {
-            focused_index,
-            caret_visible,
-            counter: 0,
-        };
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Flow,
-            false,
-        );
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Absolute,
-            false,
-        );
         painter.pop_clip();
         Some(Scene {
             hits: out.hits,
@@ -1038,119 +772,9 @@ impl Renderer {
         })
     }
 
-    /// Like [`Renderer::repaint_focused`], but clears and clips drawing to
-    /// `clip` instead of the whole viewport — for a hover/scroll change
-    /// known to only affect that region. Hit-test metadata still covers the
-    /// whole tree (it's derived from layout, not from what got drawn).
-    pub fn repaint_region(
-        &mut self,
-        painter: &mut dyn Painter,
-        focused_index: Option<usize>,
-        caret_visible: bool,
-        clip: Rect,
-        clear_color: creamui_theme::Color,
-    ) -> Option<Scene> {
-        let instance = self.root.as_mut()?;
-        let viewport = viewport_rect(self.viewport);
-        let clip = clip.intersect(viewport)?;
-        painter.push_clip(clip);
-        painter.clear_rect(clip, clear_color);
-        let mut out = PaintOutputs::default();
-        let mut focus = FocusContext {
-            focused_index,
-            caret_visible,
-            counter: 0,
-        };
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            viewport,
-            viewport,
-            &mut focus,
-            &mut out,
-            PaintMode::Flow,
-            false,
-        );
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            viewport,
-            viewport,
-            &mut focus,
-            &mut out,
-            PaintMode::Absolute,
-            false,
-        );
-        painter.pop_clip();
-        Some(Scene {
-            hits: out.hits,
-            hits_at: out.hits_at,
-            focusables: out.focusables,
-            draggables: out.draggables,
-            drag_starts: out.drag_starts,
-            scrollables: out.scrollables,
-            cursors: out.cursors,
-            hovers: out.hovers,
-        })
-    }
-
-    /// Repaints only the subtrees currently promoted to their own layer
-    /// (see [`Painter::push_layer`]) — no rebuild, no layout, and no work
-    /// for any other node, whose pixels already sit in `painter`'s target
-    /// from the last full [`Renderer::render_focused`]/[`Renderer::repaint_focused`].
-    /// Returns the window-space rects that were repainted, or an empty
-    /// `Vec` if nothing is currently promoted (e.g. hysteresis just demoted
-    /// the last animating widget). The stale [`Scene`] from the last full
-    /// paint remains valid, since a pure animation tick changes no
-    /// interactive geometry.
-    pub fn repaint_animated(
-        &mut self,
-        painter: &mut dyn Painter,
-        focused_index: Option<usize>,
-        caret_visible: bool,
-    ) -> Vec<Rect> {
-        let Some(instance) = self.root.as_mut() else {
-            return Vec::new();
-        };
-        painter.begin_animated_frame();
-        let clip = viewport_rect(self.viewport);
-        painter.push_clip(clip);
-        let mut out = PaintOutputs::default();
-        let mut focus = FocusContext {
-            focused_index,
-            caret_visible,
-            counter: 0,
-        };
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Flow,
-            true,
-        );
-        paint_instance(
-            &self.tree,
-            instance,
-            painter,
-            Point::default(),
-            clip,
-            clip,
-            &mut focus,
-            &mut out,
-            PaintMode::Absolute,
-            true,
-        );
-        painter.pop_clip();
-        painter.take_damage()
+    /// The viewport passed to the last [`Renderer::update`].
+    pub fn viewport(&self) -> Size {
+        self.viewport
     }
 }
 
@@ -1339,31 +963,15 @@ mod tests {
         }
     }
 
-    struct AnimPainter {
-        node_animated: bool,
-        push_layer_calls: usize,
-        cached_layers: std::collections::HashSet<u64>,
-        color_scheme: creamui_theme::ColorScheme,
-        last_push_layer_rect: Option<Rect>,
+    #[derive(Default)]
+    struct ClipRecorder {
         last_push_clip_rect: Option<Rect>,
+        filled: Vec<Rect>,
     }
-    impl AnimPainter {
-        fn new() -> Self {
-            AnimPainter {
-                node_animated: false,
-                push_layer_calls: 0,
-                cached_layers: std::collections::HashSet::new(),
-                color_scheme: creamui_theme::ColorScheme::default(),
-                last_push_layer_rect: None,
-                last_push_clip_rect: None,
-            }
+    impl Painter for ClipRecorder {
+        fn fill_rect(&mut self, rect: Rect, _color: Color, _corner_radius: f32) {
+            self.filled.push(rect);
         }
-    }
-    impl Painter for AnimPainter {
-        fn color_scheme(&self) -> creamui_theme::ColorScheme {
-            self.color_scheme
-        }
-        fn fill_rect(&mut self, _rect: Rect, _color: Color, _corner_radius: f32) {}
         fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32, _corner_radius: f32) {}
         fn fill_text(
             &mut self,
@@ -1374,24 +982,6 @@ mod tests {
             _align: TextAlign,
         ) {
         }
-        fn animation_time(&mut self) -> f32 {
-            self.node_animated = true;
-            0.0
-        }
-        fn take_animated(&mut self) -> bool {
-            std::mem::take(&mut self.node_animated)
-        }
-        fn push_layer(&mut self, id: u64, rect: Rect, _fresh: bool, _opaque: bool) {
-            self.push_layer_calls += 1;
-            self.cached_layers.insert(id);
-            self.last_push_layer_rect = Some(rect);
-        }
-        fn composite_cached_layer(&mut self, id: u64, _rect: Rect) -> bool {
-            self.cached_layers.contains(&id)
-        }
-        fn forget_layer(&mut self, id: u64) {
-            self.cached_layers.remove(&id);
-        }
         fn push_clip_rounded(&mut self, rect: Rect, _corner_radius: f32) {
             self.last_push_clip_rect = Some(rect);
         }
@@ -1399,17 +989,13 @@ mod tests {
 
     struct CountingWidget {
         count: Rc<std::cell::Cell<usize>>,
-        animate: bool,
     }
     impl crate::widget::Widget for CountingWidget {
         fn style(&self) -> crate::Style {
             taffy::style::Style::default().into()
         }
-        fn paint(&self, painter: &mut dyn Painter, _rect: Rect) {
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {
             self.count.set(self.count.get() + 1);
-            if self.animate {
-                painter.animation_time();
-            }
         }
     }
 
@@ -1426,100 +1012,10 @@ mod tests {
         }
     }
 
-    struct FingerprintWidget {
-        count: Rc<std::cell::Cell<usize>>,
-        fingerprint: u64,
-    }
-    impl crate::widget::Widget for FingerprintWidget {
-        fn style(&self) -> crate::Style {
-            taffy::style::Style::default().into()
-        }
-        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {
-            self.count.set(self.count.get() + 1);
-        }
-        fn paint_fingerprint(&self) -> Option<u64> {
-            Some(self.fingerprint)
-        }
-    }
-
-    struct ScrollWrapper {
-        offset: Rc<std::cell::Cell<f32>>,
-        child: Option<BoxedWidget>,
-    }
-    impl crate::widget::Widget for ScrollWrapper {
-        fn style(&self) -> crate::Style {
-            taffy::style::Style::default().into()
-        }
-        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
-        fn children(&mut self) -> Vec<BoxedWidget> {
-            self.child.take().into_iter().collect()
-        }
-        fn scroll_offset(&self) -> Point {
-            Point {
-                x: 0.0,
-                y: self.offset.get(),
-            }
-        }
-    }
-
-    #[test]
-    fn fingerprint_cache_skips_repaint_when_content_is_unchanged() {
-        let count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
-        assert_eq!(count.get(), 1);
-
-        // A second render with an identical fingerprint simulates an
-        // unrelated sibling triggering a rebuild — this widget's own
-        // content never changed, so it should reuse its cached layer.
-        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
-        assert_eq!(
-            count.get(),
-            1,
-            "an unrelated rebuild with an unchanged fingerprint should not repaint"
-        );
-    }
-
-    #[test]
-    fn fingerprint_cache_repaints_when_the_color_scheme_changes() {
-        let count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-        painter.color_scheme = creamui_theme::ColorScheme::dark();
-
-        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
-        assert_eq!(count.get(), 1);
-
-        // Same fingerprint, same hover/press/focus state — only the active
-        // scheme changed, e.g. a theme toggle elsewhere in the tree.
-        painter.color_scheme = creamui_theme::ColorScheme::light();
-        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
-        assert_eq!(
-            count.get(),
-            2,
-            "a color scheme change must repaint even with an unchanged fingerprint"
-        );
-    }
-
-    struct BorderedFingerprintWidget {
-        fingerprint: u64,
+    struct BorderedWidget {
         border_width: f32,
     }
-    impl crate::widget::Widget for BorderedFingerprintWidget {
+    impl crate::widget::Widget for BorderedWidget {
         fn style(&self) -> crate::Style {
             crate::Style {
                 layout: taffy::style::Style {
@@ -1534,9 +1030,6 @@ mod tests {
             .border(Color::rgb(0, 0, 0), self.border_width)
         }
         fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
-        fn paint_fingerprint(&self) -> Option<u64> {
-            Some(self.fingerprint)
-        }
     }
 
     struct ClippingRoot {
@@ -1557,20 +1050,17 @@ mod tests {
 
     #[test]
     fn a_clipping_containers_child_clip_covers_the_childs_border_overflow() {
-        let build = || -> BoxedWidget {
+        let mut renderer = Renderer::new();
+        let mut painter = ClipRecorder::default();
+        renderer.render(
             Box::new(Root {
                 children: vec![Box::new(ClippingRoot {
-                    child: Some(Box::new(BorderedFingerprintWidget {
-                        fingerprint: 1,
-                        border_width: 8.0,
-                    })),
+                    child: Some(Box::new(BorderedWidget { border_width: 8.0 })),
                 })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-        renderer.render(build(), VIEWPORT, &mut painter);
+            }),
+            VIEWPORT,
+            &mut painter,
+        );
 
         // The container shrinks to fit its 10x10 child exactly, so its own
         // edge sits flush against the child's — a naive clip there would cut
@@ -1584,159 +1074,104 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_promoted_layer_covers_its_own_border_overflow() {
-        let build = |fingerprint: u64| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![Box::new(BorderedFingerprintWidget {
-                    fingerprint,
-                    border_width: 8.0,
-                })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-        renderer.render(build(1), VIEWPORT, &mut painter);
-
-        // A `stroke_rect` border is centered on the widget's edge, so a
-        // width-8 border overflows 4px past a 10x10 widget on every side —
-        // the pushed layer must be big enough to hold that, not just the
-        // widget's own 10x10 box.
-        let layer_rect = painter
-            .last_push_layer_rect
-            .expect("a fingerprinted widget always pushes a layer");
-        assert!(
-            layer_rect.width > 10.0 && layer_rect.height > 10.0,
-            "layer rect {layer_rect:?} must be expanded past the widget's 10x10 box for its border"
-        );
+    struct ScrollWrapper {
+        offset: f32,
+        children: Vec<BoxedWidget>,
     }
-
-    #[test]
-    fn fingerprint_cache_repaints_when_content_changes() {
-        let count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |count: Rc<std::cell::Cell<usize>>, fingerprint: u64| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![Box::new(FingerprintWidget { count, fingerprint })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(build(count.clone(), 1), VIEWPORT, &mut painter);
-        renderer.render(build(count.clone(), 2), VIEWPORT, &mut painter);
-        assert_eq!(count.get(), 2, "a changed fingerprint must repaint");
-    }
-
-    #[test]
-    fn fingerprint_cache_repaints_when_a_scroll_ancestor_moves_the_widget() {
-        let count = Rc::new(std::cell::Cell::new(0usize));
-        let offset = Rc::new(std::cell::Cell::new(0.0));
-        let root = Box::new(ScrollWrapper {
-            offset: offset.clone(),
-            child: Some(Box::new(FingerprintWidget {
-                count: count.clone(),
-                fingerprint: 1,
-            })),
-        });
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(root, VIEWPORT, &mut painter);
-        offset.set(20.0);
-        renderer.repaint_focused(&mut painter, None, false);
-
-        assert_eq!(
-            count.get(),
-            2,
-            "a cached layer must repaint at its new scroll position"
-        );
-    }
-
-    #[test]
-    fn removing_a_promoted_instance_forgets_its_cached_layer() {
-        let count = Rc::new(std::cell::Cell::new(0usize));
-        let with_child = |count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![Box::new(FingerprintWidget {
-                    count,
-                    fingerprint: 1,
-                })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(with_child(count.clone()), VIEWPORT, &mut painter);
-        assert_eq!(
-            painter.cached_layers.len(),
-            1,
-            "a fingerprinted widget is promoted unconditionally"
-        );
-
-        renderer.render(Box::new(Root { children: vec![] }), VIEWPORT, &mut painter);
-        assert!(
-            painter.cached_layers.is_empty(),
-            "removing a promoted instance must release its cached layer"
-        );
-    }
-
-    #[test]
-    fn repaint_animated_only_repaints_promoted_layers() {
-        let animated_count = Rc::new(std::cell::Cell::new(0usize));
-        let static_count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |animated_count: Rc<std::cell::Cell<usize>>,
-                     static_count: Rc<std::cell::Cell<usize>>|
-         -> BoxedWidget {
-            Box::new(Root {
-                children: vec![
-                    Box::new(CountingWidget {
-                        count: animated_count,
-                        animate: true,
-                    }),
-                    Box::new(CountingWidget {
-                        count: static_count,
-                        animate: false,
-                    }),
-                ],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        // Two full renders: the animated child's streak crosses
-        // `LAYER_PROMOTE_STREAK` and it gets promoted to a layer.
-        renderer.render(
-            build(animated_count.clone(), static_count.clone()),
-            VIEWPORT,
-            &mut painter,
-        );
-        renderer.render(
-            build(animated_count.clone(), static_count.clone()),
-            VIEWPORT,
-            &mut painter,
-        );
-        assert_eq!(animated_count.get(), 2);
-        assert_eq!(static_count.get(), 2);
-
-        for _ in 0..3 {
-            renderer.repaint_animated(&mut painter, None, false);
+    impl crate::widget::Widget for ScrollWrapper {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(20.0),
+                    height: Dimension::Length(20.0),
+                },
+                flex_direction: taffy::style::FlexDirection::Column,
+                ..Default::default()
+            }
+            .into()
         }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+        fn clips_children(&self) -> bool {
+            true
+        }
+        fn scroll_offset(&self) -> Point {
+            Point {
+                x: 0.0,
+                y: self.offset,
+            }
+        }
+    }
 
-        assert_eq!(
-            animated_count.get(),
-            5,
-            "the promoted widget should keep repainting on every animated-only pass"
+    #[test]
+    fn nodes_scrolled_outside_their_clip_are_not_painted() {
+        let visible = Rc::new(std::cell::Cell::new(0usize));
+        let hidden = Rc::new(std::cell::Cell::new(0usize));
+        let row = |count: &Rc<std::cell::Cell<usize>>| -> BoxedWidget {
+            Box::new(SizedRow {
+                count: count.clone(),
+            })
+        };
+        let mut renderer = Renderer::new();
+        renderer.render(
+            Box::new(ScrollWrapper {
+                offset: 0.0,
+                children: vec![row(&visible), row(&hidden), row(&hidden), row(&hidden)],
+            }),
+            VIEWPORT,
+            &mut NoopPainter,
         );
+        assert_eq!(visible.get(), 1);
         assert_eq!(
-            static_count.get(),
-            2,
-            "a non-animating sibling should not repaint outside a full render"
+            hidden.get(),
+            1,
+            "only the row touching the clip edge paints"
         );
-        assert!(painter.push_layer_calls > 0);
+    }
+
+    struct SizedRow {
+        count: Rc<std::cell::Cell<usize>>,
+    }
+    impl crate::widget::Widget for SizedRow {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(20.0),
+                    height: Dimension::Length(20.0),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {
+            self.count.set(self.count.get() + 1);
+        }
+    }
+
+    #[test]
+    fn paint_without_update_reuses_layout() {
+        let count = Rc::new(std::cell::Cell::new(0usize));
+        let mut renderer = Renderer::new();
+        assert!(renderer.paint(&mut NoopPainter, None, false).is_none());
+        renderer.update(
+            Box::new(Root {
+                children: vec![Box::new(CountingWidget {
+                    count: count.clone(),
+                })],
+            }),
+            VIEWPORT,
+        );
+        assert_eq!(count.get(), 0);
+        for _ in 0..3 {
+            renderer.paint(&mut NoopPainter, None, false).unwrap();
+        }
+        assert_eq!(count.get(), 3);
+        PAINT_INSTANCE_VISITS.with(|c| c.set(0));
+        renderer.paint(&mut NoopPainter, None, false).unwrap();
+        assert_eq!(PAINT_INSTANCE_VISITS.with(|c| c.get()), 4);
     }
 
     struct AbsoluteWrapper {
@@ -1756,74 +1191,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn repaint_animated_prunes_subtrees_without_any_layer() {
-        let animated_count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |animated_count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
-            Box::new(Root {
-                children: vec![
-                    Box::new(CountingWidget {
-                        count: animated_count,
-                        animate: true,
-                    }),
-                    // A large, entirely static subtree with nothing promoted
-                    // anywhere inside it.
-                    Box::new(Branch { child_count: 200 }),
-                ],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
-        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
-        assert_eq!(animated_count.get(), 2);
-
-        PAINT_INSTANCE_VISITS.with(|c| c.set(0));
-        renderer.repaint_animated(&mut painter, None, false);
-
-        let visits = PAINT_INSTANCE_VISITS.with(|c| c.get());
-        assert!(
-            visits < 20,
-            "an animated-only pass should prune the 200-node static subtree \
-             entirely instead of walking it looking for nothing; visited {visits} nodes"
-        );
-        assert_eq!(
-            animated_count.get(),
-            3,
-            "the promoted widget must still repaint despite the pruning"
-        );
+    struct Filled {
+        size: f32,
+    }
+    impl crate::widget::Widget for Filled {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(self.size),
+                    height: Dimension::Length(self.size),
+                },
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            painter.fill_rect(rect, Color::rgb(0, 0, 0), 0.0);
+        }
     }
 
     #[test]
-    fn repaint_animated_reaches_promoted_layer_under_absolute_ancestor() {
-        let animated_count = Rc::new(std::cell::Cell::new(0usize));
-        let build = |animated_count: Rc<std::cell::Cell<usize>>| -> BoxedWidget {
+    fn absolute_subtrees_paint_after_flow_siblings() {
+        let mut painter = ClipRecorder::default();
+        let colored = |size: f32| -> BoxedWidget { Box::new(Filled { size }) };
+        render_frame(
             Box::new(Root {
-                children: vec![Box::new(AbsoluteWrapper {
-                    child: Some(Box::new(CountingWidget {
-                        count: animated_count,
-                        animate: true,
-                    })),
-                })],
-            })
-        };
-
-        let mut renderer = Renderer::new();
-        let mut painter = AnimPainter::new();
-
-        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
-        renderer.render(build(animated_count.clone()), VIEWPORT, &mut painter);
-        assert_eq!(animated_count.get(), 2);
-
-        renderer.repaint_animated(&mut painter, None, false);
-        assert_eq!(
-            animated_count.get(),
-            3,
-            "a promoted layer nested under an absolute ancestor — skipped by \
-             the Flow pass — must still be reached and repainted by the Absolute pass"
+                children: vec![
+                    Box::new(AbsoluteWrapper {
+                        child: Some(colored(5.0)),
+                    }),
+                    colored(7.0),
+                ],
+            }),
+            VIEWPORT,
+            &mut painter,
         );
+        let widths: Vec<f32> = painter.filled.iter().map(|r| r.width).collect();
+        assert_eq!(widths, vec![7.0, 5.0]);
     }
 
     struct SizedClick {
@@ -1872,6 +1276,88 @@ mod tests {
         fn children(&mut self) -> Vec<BoxedWidget> {
             std::mem::take(&mut self.children)
         }
+    }
+
+    struct FocusRow {
+        keys: Rc<std::cell::Cell<usize>>,
+        overlays: Rc<std::cell::Cell<usize>>,
+    }
+    impl crate::widget::Widget for FocusRow {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                size: taffy::geometry::Size {
+                    width: Dimension::Length(20.0),
+                    height: Dimension::Length(20.0),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn focusable(&self) -> bool {
+            true
+        }
+        fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+            let keys = self.keys.clone();
+            Some(Rc::new(move |_| keys.set(keys.get() + 1)))
+        }
+        fn paint_focused_overlay(&self, _painter: &mut dyn Painter, _rect: Rect, _caret: bool) {
+            self.overlays.set(self.overlays.get() + 1);
+        }
+    }
+
+    #[test]
+    fn focus_indices_survive_scrolling_a_focusable_out_of_view() {
+        let keys: Vec<_> = (0..3).map(|_| Rc::new(std::cell::Cell::new(0))).collect();
+        let overlays: Vec<_> = (0..3).map(|_| Rc::new(std::cell::Cell::new(0))).collect();
+        let build = |offset: f32| -> BoxedWidget {
+            Box::new(ScrollWrapper {
+                offset,
+                children: (0..3)
+                    .map(|i| {
+                        Box::new(FocusRow {
+                            keys: keys[i].clone(),
+                            overlays: overlays[i].clone(),
+                        }) as BoxedWidget
+                    })
+                    .collect(),
+            })
+        };
+        let mut renderer = Renderer::new();
+        let scene = renderer.render_focused(build(0.0), VIEWPORT, &mut NoopPainter, Some(1), true);
+        scene.on_key_at(1).unwrap()(KeyInput {
+            key: crate::widget::Key::Enter,
+            modifiers: Default::default(),
+        });
+        assert_eq!(keys[1].get(), 1);
+
+        let scene = renderer.render_focused(build(30.0), VIEWPORT, &mut NoopPainter, Some(1), true);
+        scene.on_key_at(1).unwrap()(KeyInput {
+            key: crate::widget::Key::Enter,
+            modifiers: Default::default(),
+        });
+        assert_eq!(keys[1].get(), 2, "index 1 still targets the second row");
+        assert_eq!(keys[2].get(), 0);
+        assert_eq!(scene.focus_hit_test(Point { x: 5.0, y: 5.0 }), Some(1));
+        assert_eq!(scene.focus_hit_test(Point { x: 5.0, y: 15.0 }), Some(2));
+        assert_eq!(
+            overlays[1].get(),
+            1,
+            "painted only once it scrolled into view"
+        );
+        assert_eq!(overlays[2].get(), 0);
+
+        let scene = renderer.render_focused(build(30.0), VIEWPORT, &mut NoopPainter, Some(0), true);
+        assert!(
+            scene.on_key_at(0).is_some(),
+            "the hidden first row keeps its slot"
+        );
+        assert_eq!(
+            overlays[0].get(),
+            0,
+            "a hidden widget paints no focus overlay"
+        );
     }
 
     #[test]

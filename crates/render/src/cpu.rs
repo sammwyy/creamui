@@ -1,75 +1,190 @@
-//! CPU presentation: blits the CPU-rasterized RGBA buffer straight to the
-//! window surface via `softbuffer`, with no GPU instance/adapter/device
-//! involved.
+//! Software presentation of the CPU-rasterized frame, uploading only the
+//! damaged regions.
+//!
+//! Wayland goes through [`wayland_shm`], which uses an `Argb8888` buffer so
+//! transparent windows keep per-pixel alpha. Other platforms use
+//! `softbuffer`, fed premultiplied `0xAARRGGBB` pixels (X11 honors the alpha
+//! byte on 32-bit visuals).
 
+#[cfg(target_os = "linux")]
+mod wayland_shm;
+
+use crate::display_list::Bounds;
 use creamui_platform::PlatformWindow;
+use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use tiny_skia::Pixmap;
 
-pub struct CpuState {
+pub enum SoftwareSurface {
+    #[cfg(target_os = "linux")]
+    Wayland(wayland_shm::ShmSurface),
+    Softbuffer(SoftbufferSurface),
+}
+
+impl SoftwareSurface {
+    pub fn new(window: Arc<dyn PlatformWindow>) -> Result<Self, String> {
+        let is_wayland = matches!(
+            window.display_handle().map(|h| h.as_raw()),
+            Ok(RawDisplayHandle::Wayland(_))
+        );
+        #[cfg(target_os = "linux")]
+        if is_wayland {
+            return wayland_shm::ShmSurface::new(window).map(SoftwareSurface::Wayland);
+        }
+        let _ = is_wayland;
+        SoftbufferSurface::new(window).map(SoftwareSurface::Softbuffer)
+    }
+
+    /// Presents `frame`, copying only `regions` when the platform buffer
+    /// already holds the rest of it.
+    pub fn present(&mut self, frame: &Pixmap, regions: &[Bounds]) {
+        match self {
+            #[cfg(target_os = "linux")]
+            SoftwareSurface::Wayland(surface) => surface.present(frame, regions),
+            SoftwareSurface::Softbuffer(surface) => surface.present(frame, regions),
+        }
+    }
+}
+
+/// Converts premultiplied RGBA bytes into native-endian `0xAARRGGBB`.
+pub(crate) fn argb(rgba: &[u8]) -> u32 {
+    u32::from_be_bytes([rgba[3], rgba[0], rgba[1], rgba[2]])
+}
+
+pub(crate) fn span(region: &Bounds, width: u32, height: u32) -> (usize, usize, usize, usize) {
+    let clamp = |v: f32, max: u32| (v.max(0.0) as u32).min(max) as usize;
+    (
+        clamp(region.x0, width),
+        clamp(region.y0, height),
+        clamp(region.x1, width),
+        clamp(region.y1, height),
+    )
+}
+
+/// Tracks which frame regions each swapchain buffer is missing.
+pub(crate) struct BufferHistory {
+    previous: Vec<Bounds>,
+}
+
+impl BufferHistory {
+    pub fn new() -> Self {
+        BufferHistory {
+            previous: Vec::new(),
+        }
+    }
+
+    /// Regions to copy into a buffer last written `age` presents ago, or
+    /// `None` when the whole frame must be copied.
+    pub fn regions_for_age(&mut self, age: u8, current: &[Bounds]) -> Option<Vec<Bounds>> {
+        let regions = match age {
+            1 => Some(current.to_vec()),
+            2 => Some(current.iter().chain(&self.previous).copied().collect()),
+            _ => None,
+        };
+        self.previous = current.to_vec();
+        regions
+    }
+}
+
+pub struct SoftbufferSurface {
     surface: softbuffer::Surface<Arc<dyn PlatformWindow>, Arc<dyn PlatformWindow>>,
     width: u32,
     height: u32,
-    transparent: bool,
+    history: BufferHistory,
 }
 
-impl CpuState {
-    pub fn new(window: Arc<dyn PlatformWindow>, transparent: bool) -> Self {
-        let context =
-            softbuffer::Context::new(window.clone()).expect("failed to create softbuffer context");
-        let surface = softbuffer::Surface::new(&context, window)
-            .expect("failed to create softbuffer surface");
-        CpuState {
+impl SoftbufferSurface {
+    fn new(window: Arc<dyn PlatformWindow>) -> Result<Self, String> {
+        let context = softbuffer::Context::new(window.clone()).map_err(|e| e.to_string())?;
+        let surface = softbuffer::Surface::new(&context, window).map_err(|e| e.to_string())?;
+        Ok(SoftbufferSurface {
             surface,
             width: 0,
             height: 0,
-            transparent,
-        }
+            history: BufferHistory::new(),
+        })
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
-        let (width, height) = (width.max(1), height.max(1));
-        self.surface
-            .resize(
-                NonZeroU32::new(width).unwrap(),
-                NonZeroU32::new(height).unwrap(),
-            )
-            .expect("failed to resize softbuffer surface");
-        self.width = width;
-        self.height = height;
+    fn present(&mut self, frame: &Pixmap, regions: &[Bounds]) {
+        let (width, height) = (frame.width(), frame.height());
+        if (width, height) != (self.width, self.height) {
+            if let Err(err) = self.surface.resize(
+                NonZeroU32::new(width).expect("pixmap width is non-zero"),
+                NonZeroU32::new(height).expect("pixmap height is non-zero"),
+            ) {
+                log::error!("creamui-render: softbuffer resize failed: {err}");
+                return;
+            }
+            self.width = width;
+            self.height = height;
+        }
+        let mut buffer = match self.surface.buffer_mut() {
+            Ok(buffer) => buffer,
+            Err(err) => {
+                log::error!("creamui-render: softbuffer buffer unavailable: {err}");
+                return;
+            }
+        };
+        let full = [Bounds::new(0.0, 0.0, width as f32, height as f32)];
+        let copy = self
+            .history
+            .regions_for_age(buffer.age(), regions)
+            .unwrap_or_else(|| full.to_vec());
+        let data = frame.data();
+        for region in &copy {
+            let (x0, y0, x1, y1) = span(region, width, height);
+            for y in y0..y1 {
+                let row = y * width as usize;
+                for (dst, src) in buffer[row + x0..row + x1]
+                    .iter_mut()
+                    .zip(data[(row + x0) * 4..(row + x1) * 4].chunks_exact(4))
+                {
+                    *dst = argb(src);
+                }
+            }
+        }
+        let damage: Vec<softbuffer::Rect> = regions
+            .iter()
+            .filter_map(|region| {
+                let (x0, y0, x1, y1) = span(region, width, height);
+                Some(softbuffer::Rect {
+                    x: x0 as u32,
+                    y: y0 as u32,
+                    width: NonZeroU32::new((x1 - x0) as u32)?,
+                    height: NonZeroU32::new((y1 - y0) as u32)?,
+                })
+            })
+            .collect();
+        if let Err(err) = buffer.present_with_damage(&damage) {
+            log::error!("creamui-render: softbuffer present failed: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn argb_keeps_alpha() {
+        assert_eq!(argb(&[0x11, 0x22, 0x33, 0x80]), 0x8011_2233);
     }
 
-    /// Uploads `rgba` (straight RGBA8, `width * height * 4` bytes) and
-    /// presents it to the window surface.
-    ///
-    /// `softbuffer`'s Wayland backend always allocates an alpha-less
-    /// `Xrgb8888` buffer, so a transparent window can't be blended
-    /// per-pixel here the way the GPU backend does — a `0RGB` write over a
-    /// fully transparent frame would show up as solid black, hiding
-    /// whatever is behind it. A `transparent` window whose frame is
-    /// entirely empty (alpha 0 everywhere, e.g. an idle overlay with
-    /// nothing to show) skips presenting instead, so the surface is never
-    /// mapped/committed and stays truly invisible. A transparent window
-    /// with any opaque content still blits opaque `0RGB` as before — CPU
-    /// backend just can't make part of that frame see-through.
-    pub fn present(&mut self, rgba: &[u8], width: u32, height: u32) {
-        if self.transparent && rgba.chunks_exact(4).all(|chunk| chunk[3] == 0) {
-            return;
-        }
-        if width != self.width || height != self.height {
-            self.resize(width, height);
-        }
+    #[test]
+    fn buffer_age_selects_the_regions_to_copy() {
+        let a = [Bounds::new(0.0, 0.0, 1.0, 1.0)];
+        let b = [Bounds::new(5.0, 5.0, 6.0, 6.0)];
+        let mut history = BufferHistory::new();
+        assert_eq!(history.regions_for_age(0, &a), None);
+        assert_eq!(history.regions_for_age(2, &b), Some(vec![b[0], a[0]]));
+        assert_eq!(history.regions_for_age(1, &a), Some(vec![a[0]]));
+        assert_eq!(history.regions_for_age(3, &a), None);
+    }
 
-        let mut buffer = self
-            .surface
-            .buffer_mut()
-            .expect("failed to acquire softbuffer buffer");
-        for (px, chunk) in buffer.iter_mut().zip(rgba.chunks_exact(4)) {
-            let [r, g, b, _a] = [chunk[0], chunk[1], chunk[2], chunk[3]];
-            *px = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
-        }
-        buffer
-            .present()
-            .expect("failed to present softbuffer buffer");
+    #[test]
+    fn spans_are_clamped_to_the_frame() {
+        let region = Bounds::new(-4.0, 2.0, 50.0, 8.0);
+        assert_eq!(span(&region, 20, 5), (0, 2, 20, 5));
     }
 }

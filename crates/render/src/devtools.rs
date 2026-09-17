@@ -10,26 +10,54 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+/// What one presented frame cost, stage by stage.
+#[derive(Debug, Clone, Default)]
+pub struct FrameReport {
+    /// `"gpu"`, `"cpu"` or `"web"`.
+    pub backend: &'static str,
+    /// The GPU adapter in use, if any.
+    pub adapter: Option<Rc<str>>,
+    /// Whether widgets were rebuilt and laid out for this frame, rather than
+    /// only repainted.
+    pub rebuilt: bool,
+    pub build: Duration,
+    pub layout: Duration,
+    pub record: Duration,
+    /// CPU rasterization, or GPU instance preparation and command encoding.
+    pub raster: Duration,
+    /// Handing the frame to the compositor.
+    pub present: Duration,
+    pub display_items: usize,
+    pub damaged_regions: usize,
+    pub damaged_pixels: u64,
+    pub frame_pixels: u64,
+    pub cached_text_layouts: usize,
+    pub cached_glyphs: usize,
+    /// Engine counters for this frame — zeroed unless `creamui-core`'s
+    /// `perf-metrics` feature is enabled.
+    pub metrics: FrameMetrics,
+}
+
+impl FrameReport {
+    pub fn total(&self) -> Duration {
+        self.build + self.layout + self.record + self.raster + self.present
+    }
+}
+
 /// Development tooling attached to one live CreamUI window.
 ///
 /// Implementations are created by a [`Devtools`] factory, rather than shared
 /// between windows, because frame state and visibility are window-local.
 pub trait WindowDevtools {
-    /// Called after a full layout and paint pass, while the frame's painter is
-    /// still available. `paint_duration` covers the application UI only.
-    /// `metrics` is the engine counter snapshot for this frame — zeroed
-    /// unless `creamui-core`'s `perf-metrics` feature is enabled.
-    fn after_paint(
-        &mut self,
-        painter: &mut dyn Painter,
-        viewport: Size,
-        paint_duration: Duration,
-        metrics: FrameMetrics,
-    );
+    /// Called after every presented frame.
+    fn frame_presented(&mut self, report: &FrameReport);
 
-    /// Called after a paint-only pass so tools can restore anything the pass
-    /// cleared without doing another layout.
-    fn repaint_overlay(&self, painter: &mut dyn Painter, viewport: Size);
+    /// Paints the overlay on top of the frame being recorded.
+    fn paint_overlay(&self, painter: &mut dyn Painter, viewport: Size);
+
+    /// How often the overlay needs repainting to stay current, or `None`
+    /// while hidden.
+    fn refresh_interval(&self) -> Option<Duration>;
 
     /// Handles F3 for this window. Return `true` when its visible output
     /// changed and CreamUI should schedule a paint-only repaint.

@@ -1,7 +1,7 @@
 //! Reproducible synthetic scenes for benchmarking reconcile/layout/paint
 //! work.
 
-use creamui_core::{BoxedWidget, Painter, Rect, Style, Styled, Widget};
+use creamui_core::{BoxedWidget, PaintStyle, Painter, Rect, StateStyle, Style, Styled, Widget};
 use creamui_theme::Color;
 use creamui_widgets::layout::{Flex, Wrap};
 use creamui_widgets::raw::{RawText, RawView};
@@ -216,4 +216,33 @@ pub fn animated_cards(static_count: usize, animated_count: usize) -> BoxedWidget
     let mut children: Vec<BoxedWidget> = (0..static_count).map(leaf).collect();
     children.extend((0..animated_count).map(|_| Box::new(AnimatedLeaf) as BoxedWidget));
     Box::new(Flex::row().wrap(Wrap::Wrap).with_children(children))
+}
+
+/// `count` full-width rows that change background while hovered.
+pub fn hover_list(count: usize) -> BoxedWidget {
+    let rows = (0..count)
+        .map(|i| {
+            Box::new(
+                RawView::new(
+                    Style::new()
+                        .width(800.0)
+                        .height(24.0)
+                        .background(leaf_color(i))
+                        .hover(StateStyle {
+                            paint: PaintStyle {
+                                background: Some(Color::rgb(255, 255, 255).into()),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }),
+                )
+                .child(Box::new(RawText::new(
+                    format!("row {i}"),
+                    Color::rgb(20, 20, 20),
+                    13.0,
+                ))),
+            ) as BoxedWidget
+        })
+        .collect();
+    Box::new(Flex::column().full_width().with_children(rows))
 }

@@ -1,9 +1,7 @@
-//! Cost of a scroll-offset-triggered repaint. There is no transform-only
-//! scroll path: a scroll offset change repaints the whole scrollable
-//! subtree via [`Renderer::repaint_focused`], so this measures how that
-//! cost scales with content size.
+//! Cost of a frame whose output did not change (e.g. a redundant redraw):
+//! the tree is re-recorded and diffed, but nothing is rasterized.
 
-use creamui_bench::painter::raster_painter;
+use creamui_bench::painter::FramePipeline;
 use creamui_bench::scenes;
 use creamui_core::{Renderer, Size};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -13,20 +11,19 @@ const VIEWPORT: Size = Size {
     height: 1000.0,
 };
 
-fn bench_scroll_triggered_repaint(c: &mut Criterion) {
-    let mut group = c.benchmark_group("scroll/repaint_after_scroll_offset_change");
+fn bench_unchanged_frame(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scroll/unchanged_frame");
     for &count in &[1_000usize, 10_000] {
         let mut renderer = Renderer::new();
-        let mut painter = raster_painter(800, 1000);
-        renderer.render(scenes::chat(count), VIEWPORT, &mut painter);
+        let mut frames = FramePipeline::new(800, 1000, 1.0);
+        renderer.update(scenes::chat(count), VIEWPORT);
+        frames.frame(&renderer);
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            b.iter(|| {
-                renderer.repaint_focused(&mut painter, None, false);
-            });
+            b.iter(|| frames.frame(&renderer));
         });
     }
     group.finish();
 }
 
-criterion_group!(benches, bench_scroll_triggered_repaint);
+criterion_group!(benches, bench_unchanged_frame);
 criterion_main!(benches);

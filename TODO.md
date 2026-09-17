@@ -1,14 +1,5 @@
 # TODO
 
-- GPU upload/draw-call counters (`crates/render/src/gpu.rs`, `perf-metrics`
-  feature) are wired but unverified against a live `wgpu` surface — the
-  Phase 0 baseline was recorded on a machine with no display server. Run
-  `crates/bench` on a machine with a GPU and display attached, then add a
-  windowed benchmark exercising `GpuState::present`/`present_partial`, and
-  append the results to `docs/performance/baseline.md`.
-- `damaged_rect_count` / `damaged_pixel_area` are only populated by the
-  windowed animation-damage path in `crates/render/src/window.rs`; no
-  headless benchmark exercises them yet.
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old
   reconcile path, reachable via `mount_legacy_widget`, `create_binding`,
@@ -110,23 +101,6 @@
   widgets) gets an empty fragment, since `mount_legacy_widget` drops the
   widget after translating it. `RecordingPainter` exists but nothing
   currently calls it post-layout with a still-alive widget.
-- REFACTOR.md 13.5: added `creamui_core::merge_damage`/`merge_damage_default`
-  (`crates/core/src/damage.rs`) — merges overlapping rects into their
-  union and collapses to one full-viewport rect above a rect-count or
-  damaged-area threshold. Wired into the one live consumer of raw damage
-  rects, `crates/render/src/window.rs`'s animation-tick partial-present
-  path (`animated_damage` → `present_partial`); a viewport-covering
-  collapse now routes through the existing full `present()` call instead
-  of a single full-size `present_partial` region. Not wired into
-  `Runtime::compute_layout`/`rebuild_paint`'s own raw per-node damage
-  output (`crates/core/src/runtime/mod.rs`), since neither is reachable
-  from `window.rs` yet (see the runtime-tree entry above) and their
-  existing tests assert exact `damage.len()` counts against the raw,
-  unmerged list. No headless test exercises the `window.rs` wiring
-  itself — `WindowEventHarness` constructs `presenter: None`, and
-  `animated_damage` is populated only via `repaint_animated`'s
-  cached-layer animation-tick path, which no existing test drives;
-  `merge_damage` itself has full unit coverage in isolation.
 - No retained clip/opacity grouping (REFACTOR.md 13.4) — `RuntimeNode`
   has no clip or opacity flag, so `PushClip`/`PopClip` aren't emitted for
   clipping containers and there is no opacity property node at all
@@ -135,69 +109,6 @@
   `PopTransform` still exist in the enum but nothing generates them:
   Phase 10 deliberately keeps `effective_transform` out of the `PaintOp`
   stream so a transform-only change never regenerates a paint fragment.
-- `crates/render/src/gpu_scene` (REFACTOR.md Phase 8) is not wired into
-  `Renderer`/`window.rs` — same "exists alongside, not selectable yet"
-  state as `crates/core/src/runtime`. There is no `RenderBackend::GpuScene`
-  variant and no caller ever constructs a `GpuSceneState`. Wiring it in
-  needs the runtime tree itself wired in first (`GpuSceneState::sync_node`
-  takes a `RuntimeNodeId` and `PaintFragment`, both currently reachable
-  only off the unwired `Runtime`).
-- `GpuSceneState` rasterizes `PaintPrimitive::Quad`/`Border` (via
-  `sync_node`) and `Text` (via `sync_text_node`, REFACTOR.md Phase 9);
-  `Image` primitives are still silently dropped, and `PushClip`/
-  `PushTransform` ops are ignored, so nested clipping/transforms don't
-  composite correctly yet. Shadows (14.8 step 6) aren't started.
-- `GpuSceneState`'s pipeline, shader, and sRGB decode path are unverified
-  against a live surface — same "no display server" constraint as the
-  `gpu.rs` counters above. Needs a windowed smoke test (a scene with a
-  handful of quads, compared visually or via `GpuState`'s CPU path) on a
-  machine with a GPU and display attached before this is trusted.
-- `resized_capacity` (`crates/render/src/gpu_scene/mod.rs`) now shrinks
-  the quad/glyph instance buffers once usage drops to a quarter of
-  capacity, not just growing past it — unit-tested in isolation; the
-  actual `wgpu::Buffer` recreation this drives is unverified against a
-  live surface, same constraint as the rest of `gpu_scene`.
-- `GlyphAtlas::grow` now doubles `size` without touching `placed`/cursor
-  state — the shelf packer only ever bin-packs into `[0, size)`, so
-  enlarging `size` can't invalidate an existing rect, it only gives
-  `place` more room. `GpuSceneState::grow_glyph_atlas` (private, called
-  from `sync_text_node` when `place` returns `None`) recreates the atlas
-  texture at the new size, copies the old texture's pixel content into it
-  via `copy_texture_to_texture` (the original texture is now created with
-  `COPY_SRC` too, for this), rebuilds the bind group, and rescales every
-  already-baked `GlyphInstance` in `glyph_store` (`GlyphStore::rescale_uv`)
-  by `old_size / new_size` — the pixel rects don't move, but a UV is a
-  fraction of the whole atlas, so it still needs rebaking. A glyph that's
-  larger than the doubled atlas (still `None` after one grow) is dropped,
-  same as before; growth isn't retried more than once per glyph. This
-  path is unverified against a live surface — same "no display server"
-  constraint as the rest of `gpu_scene` (see the entry above); the CPU
-  rebake math (`rescaled_uv`/`rescale_uv`) and `GlyphAtlas::grow`'s
-  placement-preserving behavior are unit-tested in isolation.
-- `ShapeCache`/`GpuSceneState::sync_text_node` are only reachable from the
-  unwired `gpu_scene` path — the live legacy renderer
-  (`crates/widgets/src/text_metrics.rs`, `crates/render/src/font.rs`)
-  still reshapes text on every measurement and every paint with no cache,
-  exactly the "Bad" pattern REFACTOR.md 15.5 describes. Sharing one
-  shaping cache between the legacy path and `gpu_scene` needs the legacy
-  callers reworked to shape at a canonical origin/alignment and apply
-  align/paint-position offsets afterward, the way `sync_text_node` does —
-  not attempted here to avoid risking the live rendering path with no way
-  to visually verify the change in this environment.
-- `TextPrimitive` now carries `underline`/`strikethrough` (populated from
-  `TypographyStyle` by `generate_fragment`; `RecordingPainter` always sets
-  both `false`, since the `Painter` trait has no such parameters to
-  source them from). `sync_text_node` renders each as its own quad in
-  `quad_store` (tracked per-node in `GpuSceneState::node_text_decorations`,
-  also kept in sync by `sync_transform`/`sync_opacity`/`sync_clip`).
-  Position/thickness (`gpu_scene::text::decoration_rect`) are approximated
-  from `font_size` ratios, not real font metrics (no ascent/descent
-  available here) — reasonable for the common single-line case, but a
-  wrapped multi-line run only gets one bar, at the first line's position,
-  since `ShapedRun` doesn't expose per-line extents. Text selection
-  highlighting, per-glyph color runs, and italic (the rest of the legacy
-  `Painter::fill_text_selected` surface) still have no `gpu_scene`
-  equivalent.
 - `RecordingPainter` (`crates/core/src/runtime/paint.rs`) now implements
   `fill_text_weight`/`fill_text_font` directly, so a legacy widget's
   family/bold choice reaches a recorded `TextPrimitive` instead of
@@ -209,30 +120,12 @@
   entry above, unchanged by this). `fill_text_selected`/
   `fill_text_selected_font` (selection highlighting) and `italic` still
   fall through the lossy default, since `TextPrimitive` has no field for
-  either — a larger change than this one, and already covered by the
-  `sync_text_node` entry below for the (also unwired) `gpu_scene` path.
-- `Runtime::rebuild_composite` (REFACTOR.md Phase 10) and
-  `GpuSceneState::sync_transform`/`sync_opacity`/`sync_clip` exist and
-  are tested/benchmarked in isolation, but nothing calls any of them from
-  a shared place — same "exists alongside, not wired into a caller"
-  state as the rest of the runtime tree and `gpu_scene`. A real caller
-  would run `rebuild_composite` after every transaction and, for each id
-  it returns, call `sync_transform(id, node.layout.effective_transform)`/
-  `sync_opacity(id, node.layout.effective_opacity)`/
-  `sync_clip(id, node.layout.effective_clip)`; `sync_node`/
-  `sync_text_node` also both now take `opacity`/`clip` parameters
-  (applied to fill/border/glyph alpha and to each instance's
-  `clip_min`/`clip_max` alongside the existing `transform` parameter)
-  that a caller deriving a fragment from scratch would pass
-  `effective_opacity`/`effective_clip` into. `sync_opacity`'s ratio-based
-  rescale can't recover a nonzero alpha for a node last synced at exactly
-  `0.0` opacity — that edge case needs a full `sync_node`/
-  `sync_text_node` call instead of the incremental path; not handled
-  here since nothing calls either function yet to hit it. `sync_clip`
-  has no such issue — a clip bound is absolute, not cumulative, so it's
-  always a plain overwrite. `Mutation::SetTransform`/`SetOpacity`/
-  `SetClipsChildren` also have no scroll-view/drag/fade caller yet — they
-  exist as plumbing, not wired to any interaction.
+  either.
+- `Runtime::rebuild_composite` (REFACTOR.md Phase 10) computes
+  `effective_transform`/`effective_opacity`/`effective_clip`, but nothing
+  consumes them: the runtime tree is not wired into `window.rs`, so the
+  display-list renderer never sees them. `Mutation::SetTransform`/
+  `SetOpacity`/`SetClipsChildren` have no scroll-view/drag/fade caller.
 - REFACTOR.md 16.1: `RuntimeNode` now also carries `opacity: f32`
   (`[0.0, 1.0]`, clamped in `Mutation::SetOpacity`'s handler) and
   `clips_children: bool`, and `LayoutState` grew `effective_opacity`
@@ -251,24 +144,8 @@
   can't see that a *parent's* rect moved. Only translation is modeled for
   transform still — no scale/rotate — and there is no compositor-owned
   layer-promotion policy or devtools layer-memory view (16.4/16.5's
-  remaining exit criteria). The existing paint-time layer promotion
-  heuristic in `crates/core/src/scene.rs` (the legacy reconcile path) is
-  untouched, and none of `effective_transform`/`effective_opacity`/
-  `effective_clip` are read from anywhere live yet — same "computed, not
-  consumed" state `effective_transform` was in before
-  `GpuSceneState::sync_transform` (itself still unwired — see the Phase 8
-  entries above). `GpuSceneState::sync_opacity`/`sync_clip` now exist
-  alongside `sync_transform` (see the entry above), in the same unwired
-  state. `sync_clip` and the `QuadInstance`/`GlyphInstance` `clip_min`/
-  `clip_max` fields it writes implement per-node clipping as a
-  per-fragment discard test in `quad.wgsl`/`glyph.wgsl` (a fragment
-  outside `[clip_min, clip_max]` in pixel space is discarded) rather than
-  a render-pass scissor rect, since a scissor is one rect for the whole
-  draw call and different nodes in the same batch can have different
-  clips. No corner-radius/rounded-clip concept — `effective_clip` is a
-  plain axis-aligned rect, unlike the legacy `Scene`'s
-  `push_clip_rounded`, so `clip_min`/`clip_max` only ever describe a
-  rectangle.
+  remaining exit criteria). None of `effective_transform`/
+  `effective_opacity`/`effective_clip` are read from anywhere live yet.
 - `Runtime::rebuild_composite`'s cascade can revisit the same node twice
   in one pass if a single transaction calls `Mutation::SetTransform`/
   `Mutation::SetOpacity`/`Mutation::SetClipsChildren` on both a node and
@@ -304,10 +181,9 @@
 - `creamui_image::BackgroundImageLoader` (REFACTOR.md 18.1) decodes off
   the UI thread and delivers a `ResourceReady` message, but stops there —
   nothing turns a `ResourceReady` into a runtime mutation or a
-  `gpu_scene` texture upload. `NodeKind::Image` only stores a `source:
+  rendered image. `NodeKind::Image` only stores a `source:
   Rc<str>`; there is no decoded-pixels field or side-table for a
-  `RuntimeNodeId` to receive one, and `gpu_scene` still has no image/
-  texture manager at all (the Phase 8 TODO entry above).
+  `RuntimeNodeId` to receive one.
 - `BackgroundImageLoader` spawns one OS thread per request with no pool
   and no cap — fine for a handful of images, but N simultaneous large
   requests spawn N threads. Revisit if that's ever a real workload.
@@ -351,21 +227,36 @@
   compare instead of a scan. The `Vec::contains` fallback stays only for
   the rare case where `touch` is called with an id that no longer
   resolves to a live node (nothing to stamp).
-- REFACTOR.md Phase 14 (20.3 only): `creamui-devtools`'s F3 overlay now
-  shows an "engine" panel of `creamui_core::metrics::FrameMetrics`
-  counters (reconcile visits, taffy writes, layout/measure calls, paint
-  visits/records, hit/composite updates, damage, GPU upload bytes, draw
-  calls) behind its own `perf-metrics` feature, and `crates/render/src/window.rs`
-  now resets/reads that thread-local once per full frame instead of
-  never — it was previously only exercised by tests. The rest of Phase
-  14 is not started: 20.1 (runtime tree inspector: `RuntimeNodeId`,
-  `NodeKind`, dirty flags, compositor layer, per-node) and 20.2
-  (`InvalidationReason` tracing, "why did this node repaint") both need
-  the persistent runtime tree wired into `window.rs` first (see the
-  `crates/core/src/runtime` entry above); 20.3's per-stage timings
-  (reactive flush / mutation commit / layout / paint recording / scene
-  upload / GPU as separate durations, not one lump `paint_duration`)
-  aren't instrumented — the legacy `render_focused` path has no stage
-  boundaries to time yet; 20.4 (repaint-damage/layout-invalidation/
-  compositor-layer/hit-region/clip-bounds/virtualized-range visual
-  overlay toggles) isn't started.
+- REFACTOR.md Phase 14: the F3 overlay and `CUI_FRAME_LOG=1` report
+  per-stage timings (build/layout/record/raster/present), display items,
+  damage and text-cache sizes per presented frame. Still missing: 20.1
+  (runtime tree inspector) and 20.2 (invalidation reasons) need the runtime
+  tree wired into `window.rs`; 20.4 (damage/layout/hit-region overlays) is
+  not started.
+- Scrolling moves every item of the scroll view, so the diff damages the
+  whole view and both backends redraw it. A retained scroll layer that
+  blits the old pixels and draws only newly exposed rows (REFACTOR.md 16.2)
+  would make it proportional to the scrolled distance.
+- The GPU backend redraws the whole frame whenever anything changed;
+  scissoring to the damage needs buffer-age-aware swapchain handling
+  (`wgpu` does not expose buffer age).
+- Only the innermost rounded clip is honored; an outer rounded clip
+  degrades to its bounding rect for primitives inside a nested clip.
+- Images are sampled without mipmaps on both backends, so heavily
+  downscaled pictures alias.
+- Software presentation keeps per-pixel alpha on Wayland (`wl_shm`
+  `Argb8888`) and X11 32-bit visuals. Windows and macOS software
+  presentation still ignore alpha (needs layered windows / a transparent
+  `CALayer`). The Wayland path was run on KDE Plasma but its composited
+  output was not captured.
+- `creamui-platform` does not compile for `wasm32-unknown-unknown`
+  (conflicting `ApplicationHandler` impls and `web_time::Instant` in
+  `crates/platform/src/winit.rs`), so the web presenter
+  (`crates/render/src/web.rs`) is unverified.
+- `creamui-fonts` parses both bundled faces eagerly on first use, which is
+  most of the first frame (~55 ms in release). Parse faces lazily.
+- `crates/widgets/src/text_metrics.rs` lays text out from scratch on every
+  measure call; it does not share `creamui-render`'s text layout cache.
+- Keyboard focus is a tab-order index into `Scene::focusables`, so
+  inserting or removing a focusable widget before the focused one moves
+  focus to a different widget.

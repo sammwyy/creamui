@@ -50,7 +50,7 @@ name = "runtime"
 harness = false
 
 [[bench]]
-name = "gpu_scene"
+name = "gpu"
 harness = false
 
 [[bench]]

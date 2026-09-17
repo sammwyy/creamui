@@ -30,6 +30,9 @@ pub enum BackendKind {
 pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn id(&self) -> WindowId;
     fn request_redraw(&self);
+    /// Called right before a frame is handed to the compositor, so the
+    /// platform can throttle redraws to the display.
+    fn pre_present_notify(&self) {}
     fn close(&self);
     fn request_inner_size(&self, size: LogicalSize);
     fn set_outer_position(&self, position: LogicalPosition);

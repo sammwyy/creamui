@@ -49,6 +49,25 @@ impl Rect {
         }
     }
 
+    /// Whether the closed rects share at least one point, so zero-sized rects
+    /// on or inside `other` still count.
+    pub fn overlaps(&self, other: Rect) -> bool {
+        self.x <= other.x + other.width
+            && other.x <= self.x + self.width
+            && self.y <= other.y + other.height
+            && other.y <= self.y + self.height
+    }
+
+    /// `self` grown by `amount` on every side.
+    pub fn inflate(&self, amount: f32) -> Rect {
+        Rect {
+            x: self.x - amount,
+            y: self.y - amount,
+            width: self.width + amount * 2.0,
+            height: self.height + amount * 2.0,
+        }
+    }
+
     /// The smallest rect containing both `self` and `other`.
     pub fn union(&self, other: Rect) -> Rect {
         let x1 = self.x.min(other.x);

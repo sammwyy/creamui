@@ -1,28 +1,24 @@
 //! Window creation and the reactive render loop.
 //!
 //! [`run`] opens one window; [`AppBuilder`] opens several, all sharing one
-//! platform event loop — e.g. a desktop-shell dock where
-//! each icon/panel is its own window but spawning a process per icon would
-//! multiply fixed per-process overhead (runtime, allocator, embedded font,
-//! and — for the GPU backend — the graphics driver) for no benefit. Every
+//! platform event loop and, for GPU windows, one `wgpu` instance. Every
 //! window keeps its own reactive state, so a signal change in one never
 //! touches another's frame.
 //!
-//! On startup, and again on the next compositor frame after a
-//! [`creamui_reactive::Signal`] read while building a window's UI changes,
-//! that window's widget tree is rebuilt, its layout recomputed, it's repainted via
-//! [`crate::painter::SkiaPainter`], and a redraw is requested; the actual
-//! `RedrawRequested` handler only uploads the already-painted buffer to that
-//! window's presenter (GPU or CPU — see [`crate::backend::RenderBackend`])
-//! and presents it.
+//! Signal writes and input only invalidate a window. On the next
+//! `RedrawRequested` the window rebuilds and lays out its widgets if needed,
+//! records a display list, diffs it against the frame on screen and hands
+//! only the changed regions to its presenter.
 
 use crate::backend::RenderBackend;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::cpu::CpuState;
-use crate::devtools::{devtools_for_new_window, WindowDevtools};
+use crate::cpu::SoftwareSurface;
+use crate::devtools::{devtools_for_new_window, FrameReport, WindowDevtools};
+use crate::display_list::{self, DisplayList};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::gpu::GpuState;
-use crate::painter::SkiaPainter;
+use crate::gpu::GpuSurface;
+use crate::raster::Rasterizer;
+use crate::recorder::SceneRecorder;
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
 use creamui_core::{
@@ -52,7 +48,7 @@ use web_time::Instant;
 /// How long the text-input caret stays in each visibility phase while
 /// blinking (on, then off, then on again).
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
-const RESIZE_SETTLE_DELAY: Duration = Duration::from_millis(100);
+const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 /// What happens when the user asks the window manager to close a window.
 ///
@@ -122,7 +118,7 @@ fn translate_key(key: &PlatformKey) -> Option<Key> {
 }
 
 /// Options for a window CreamUI opens, set once at startup. Transparent
-/// windows need an alpha clear color and the GPU backend.
+/// windows need a clear color with alpha.
 #[derive(Debug, Clone)]
 pub struct WindowOptions {
     pub title: String,
@@ -136,8 +132,8 @@ pub struct WindowOptions {
     pub role: WindowRole,
     /// How a close request from the window manager is handled.
     pub close_behavior: CloseBehavior,
-    /// Which backend composites the CPU-rasterized frame to the window:
-    /// GPU (`wgpu`, the default) or CPU-only (`softbuffer`). Can be
+    /// Which backend renders the window: GPU (`wgpu`, the default, falling
+    /// back to CPU when no adapter is usable) or CPU-only. Can be
     /// force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`
     /// regardless of what's set here — see [`RenderBackend::resolve`].
     pub backend: RenderBackend,
@@ -338,57 +334,324 @@ fn init_logging() {
     let _ = env_logger::try_init();
 }
 
-struct FrameState {
-    painter: SkiaPainter,
-    renderer: Renderer,
-    scene: Option<Scene>,
-    devtools: Option<Box<dyn WindowDevtools>>,
-}
-
-/// Whichever backend is actually composing frames for a window, picked once
-/// in `resumed` per [`WindowOptions::backend`] (as resolved by
-/// [`RenderBackend::resolve`]).
+/// Which backend turns a window's display lists into pixels, picked once
+/// per window per [`WindowOptions::backend`].
 enum Presenter {
     #[cfg(not(target_arch = "wasm32"))]
-    Gpu(GpuState),
+    Gpu(GpuSurface),
     #[cfg(not(target_arch = "wasm32"))]
-    Cpu(CpuState),
+    Software(SoftwareSurface),
     #[cfg(target_arch = "wasm32")]
     Web(WebState),
 }
 
 impl Presenter {
-    fn present(&mut self, rgba: &[u8], width: u32, height: u32) {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn new(
+        window: &Arc<dyn PlatformWindow>,
+        backend: RenderBackend,
+        transparent: bool,
+        gpu_instance: Option<&wgpu::Instance>,
+    ) -> Result<Self, String> {
+        if let (RenderBackend::Gpu, Some(instance)) = (backend, gpu_instance) {
+            match GpuSurface::new(window.clone(), instance, transparent) {
+                Ok(surface) => return Ok(Presenter::Gpu(surface)),
+                Err(err) => log::warn!(
+                    "creamui-render: GPU backend unavailable ({err}), falling back to CPU"
+                ),
+            }
+        }
+        SoftwareSurface::new(window.clone()).map(Presenter::Software)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn new(window: &Arc<dyn PlatformWindow>) -> Self {
+        Presenter::Web(WebState::new(window.clone()))
+    }
+
+    fn name(&self) -> &'static str {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Presenter::Gpu(gpu) => gpu.present(rgba, width, height),
+            Presenter::Gpu(_) => "gpu",
             #[cfg(not(target_arch = "wasm32"))]
-            Presenter::Cpu(cpu) => cpu.present(rgba, width, height),
+            Presenter::Software(_) => "cpu",
             #[cfg(target_arch = "wasm32")]
-            Presenter::Web(web) => web.present(rgba, width, height),
+            Presenter::Web(_) => "web",
         }
     }
 
-    /// Like [`Presenter::present`], but only re-uploads `dirty` (window-space
-    /// logical rects, scaled to physical pixels by `scale`) to the GPU
-    /// texture rather than the whole buffer. Backends with no partial-upload
-    /// path fall back to a full [`Presenter::present`].
-    fn present_partial(
-        &mut self,
-        rgba: &[u8],
-        width: u32,
-        height: u32,
-        dirty: &[Rect],
-        scale: f32,
-    ) {
+    fn adapter(&self) -> Option<Rc<str>> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Presenter::Gpu(gpu) => gpu.present_partial(rgba, width, height, dirty, scale),
-            #[cfg(not(target_arch = "wasm32"))]
-            Presenter::Cpu(cpu) => cpu.present(rgba, width, height),
-            #[cfg(target_arch = "wasm32")]
-            Presenter::Web(web) => web.present(rgba, width, height),
+            Presenter::Gpu(surface) => Some(surface.adapter_name().into()),
+            _ => None,
         }
+    }
+
+    fn needs_raster(&self) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Presenter::Gpu(_) => false,
+            _ => true,
+        }
+    }
+}
+
+struct FrameState {
+    recorder: SceneRecorder,
+    renderer: Renderer,
+    scene: Option<Scene>,
+    /// The newest recorded frame, not yet presented.
+    pending: Option<DisplayList>,
+    /// The frame currently on screen.
+    presented: Option<DisplayList>,
+    raster: Option<Rasterizer>,
+    devtools: Option<Box<dyn WindowDevtools>>,
+    report: FrameReport,
+    last_report: FrameReport,
+    adapter: Option<Rc<str>>,
+}
+
+/// Coalesces invalidations into at most one build, layout, record and
+/// present per compositor frame.
+struct Pipeline {
+    frame: RefCell<FrameState>,
+    viewport: Signal<Size>,
+    scale_factor: Signal<f64>,
+    window: SharedWindow,
+    build_ui: Rc<dyn Fn(Size) -> BoxedWidget>,
+    theme: ThemeProvider,
+    window_drag: WindowDragHandle,
+    clear_color: Color,
+    focused: Cell<Option<usize>>,
+    caret_visible: Cell<bool>,
+    pending_root: RefCell<Option<BoxedWidget>>,
+    needs_layout: Cell<bool>,
+    needs_paint: Cell<bool>,
+    dump_frame_path: Option<String>,
+}
+
+impl Pipeline {
+    fn with_scope<R>(&self, f: impl FnOnce() -> R) -> R {
+        with_theme_scope(&self.theme, &self.window_drag, f)
+    }
+
+    fn request_redraw(&self) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    /// Rebuilds the widget tree from `build_ui`. Runs inside the window's
+    /// reactive effect so it stays subscribed to whatever it reads; layout
+    /// and paint wait for the next frame.
+    fn build(&self) {
+        let started = Instant::now();
+        let root = self.with_scope(|| {
+            #[cfg(feature = "perf-metrics")]
+            let _span = tracing::info_span!("ui_build").entered();
+            build_ui_with_recovery(&self.build_ui, self.viewport.peek())
+        });
+        *self.pending_root.borrow_mut() = Some(root);
+        if let Ok(mut frame) = self.frame.try_borrow_mut() {
+            frame.report.build += started.elapsed();
+        }
+        self.invalidate_layout();
+    }
+
+    fn invalidate_layout(&self) {
+        self.needs_layout.set(true);
+        self.invalidate_paint();
+    }
+
+    fn invalidate_paint(&self) {
+        if !self.needs_paint.replace(true) {
+            self.request_redraw();
+        }
+    }
+
+    fn physical_size(&self) -> (Size, u32, u32, f64) {
+        let logical = self.viewport.peek();
+        let scale = self.scale_factor.peek();
+        let width = (logical.width as f64 * scale).round().max(1.0) as u32;
+        let height = (logical.height as f64 * scale).round().max(1.0) as u32;
+        (logical, width, height, scale)
+    }
+
+    /// Performs whatever layout and recording is outstanding. Returns whether
+    /// a new display list was recorded.
+    fn update(&self) -> bool {
+        if !self.needs_paint.get() {
+            return false;
+        }
+        self.with_scope(|| {
+            if self.needs_layout.replace(false) {
+                let root = self.pending_root.borrow_mut().take();
+                let root = root.unwrap_or_else(|| {
+                    let started = Instant::now();
+                    let root = build_ui_with_recovery(&self.build_ui, self.viewport.peek());
+                    self.frame.borrow_mut().report.build += started.elapsed();
+                    root
+                });
+                let mut frame = self.frame.borrow_mut();
+                let started = Instant::now();
+                frame.renderer.update(root, self.viewport.peek());
+                frame.report.layout += started.elapsed();
+                frame.report.rebuilt = true;
+            }
+            self.needs_paint.set(false);
+            self.record();
+        });
+        true
+    }
+
+    fn record(&self) {
+        let (logical, width, height, scale) = self.physical_size();
+        let colors = self.theme.get().colors;
+        let started = Instant::now();
+        let mut frame = self.frame.borrow_mut();
+        let FrameState {
+            recorder,
+            renderer,
+            scene,
+            pending,
+            devtools,
+            report,
+            ..
+        } = &mut *frame;
+        recorder.begin(width, height, scale as f32, self.clear_color, colors);
+        if let Some(next) = renderer.paint(recorder, self.focused.get(), self.caret_visible.get()) {
+            *scene = Some(next);
+        }
+        if let Some(devtools) = devtools.as_ref() {
+            devtools.paint_overlay(recorder, logical);
+        }
+        let list = recorder.finish();
+        report.display_items = list.items.len();
+        if let Some(stale) = pending.replace(list) {
+            recorder.recycle(stale);
+        }
+        report.record += started.elapsed();
+    }
+
+    /// Presents the pending display list, touching only what changed since
+    /// the last presented one.
+    fn present(&self, presenter: Option<&mut Presenter>) {
+        let mut frame = self.frame.borrow_mut();
+        let Some(list) = frame.pending.take() else {
+            return;
+        };
+        let damage = display_list::damage(frame.presented.as_ref(), &list);
+        if damage.is_none() {
+            frame.report = FrameReport::default();
+            frame.recorder.recycle(list);
+            return;
+        }
+        let viewport = list.viewport();
+        let needs_raster =
+            presenter.as_ref().is_none_or(|p| p.needs_raster()) || self.dump_frame_path.is_some();
+        let started = Instant::now();
+        let damage = if needs_raster {
+            frame
+                .raster
+                .get_or_insert_with(|| Rasterizer::new(list.width, list.height))
+                .render(&list, &damage)
+        } else {
+            damage
+        };
+        let regions = damage.regions(viewport);
+        frame.report.raster += started.elapsed();
+
+        let started = Instant::now();
+        if let Some(presenter) = presenter {
+            if let Some(window) = self.window.borrow().as_ref() {
+                window.pre_present_notify();
+            }
+            frame.report.backend = presenter.name();
+            let presented = match presenter {
+                #[cfg(not(target_arch = "wasm32"))]
+                Presenter::Gpu(surface) => surface.present(&list),
+                #[cfg(not(target_arch = "wasm32"))]
+                Presenter::Software(surface) => {
+                    let raster = frame
+                        .raster
+                        .as_ref()
+                        .expect("software frames are rasterized");
+                    surface.present(raster.pixmap(), &regions);
+                    true
+                }
+                #[cfg(target_arch = "wasm32")]
+                Presenter::Web(web) => {
+                    let raster = frame.raster.as_ref().expect("web frames are rasterized");
+                    web.present(raster.pixmap(), &regions);
+                    true
+                }
+            };
+            if !presented {
+                frame.pending = Some(list);
+                drop(frame);
+                self.request_redraw();
+                return;
+            }
+        }
+        frame.report.present += started.elapsed();
+
+        if let Some(path) = &self.dump_frame_path {
+            if let Some(raster) = frame.raster.as_ref() {
+                if let Err(err) = raster.pixmap().save_png(path) {
+                    log::warn!("creamui-render: failed to write CUI_DUMP_FRAME to {path}: {err}");
+                }
+            }
+        }
+
+        let FrameState {
+            recorder,
+            presented,
+            devtools,
+            report,
+            last_report,
+            adapter,
+            ..
+        } = &mut *frame;
+        report.adapter = adapter.clone();
+        report.damaged_regions = regions.len();
+        report.damaged_pixels = damage.area(viewport) as u64;
+        report.frame_pixels = (viewport.width() * viewport.height()) as u64;
+        report.cached_text_layouts = recorder.text().cached_layouts();
+        report.cached_glyphs = recorder.text().cached_glyphs();
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| {
+            m.damaged_rect_count += regions.len() as u64;
+            m.damaged_pixel_area += report.damaged_pixels;
+        });
+        report.metrics = creamui_core::metrics::frame_metrics();
+        creamui_core::metrics::reset_frame_metrics();
+        log::trace!(
+            "creamui-render: frame {} in {:?} ({} items, {} px damaged)",
+            report.backend,
+            report.total(),
+            report.display_items,
+            report.damaged_pixels
+        );
+        if let Some(devtools) = devtools.as_mut() {
+            devtools.frame_presented(report);
+        }
+        *last_report = std::mem::take(report);
+        if let Some(old) = presented.replace(list) {
+            recorder.recycle(old);
+        }
+    }
+
+    fn animated(&self) -> bool {
+        self.frame.borrow().recorder.animated()
+    }
+
+    fn devtools_refresh(&self) -> Option<Duration> {
+        self.frame
+            .borrow()
+            .devtools
+            .as_ref()
+            .and_then(|devtools| devtools.refresh_interval())
     }
 }
 
@@ -813,32 +1076,11 @@ struct WindowSpec {
     options: WindowOptions,
     popup: Option<PopupOptions>,
     on_window_ready: Box<dyn FnOnce(WindowHandle)>,
-    repaint: Rc<dyn Fn()>,
-    repaint_scene: Rc<dyn Fn()>,
-    repaint_light: Rc<dyn Fn()>,
-    repaint_animated: Rc<dyn Fn()>,
-    render: Rc<dyn Fn()>,
-    dirty: Rc<Cell<bool>>,
-    scene_dirty: Rc<Cell<bool>>,
-    animated_damage: Rc<RefCell<Vec<Rect>>>,
-    /// Rects hinting where a hover/local-scroll change landed, consumed by
-    /// `repaint_scene` to clear+repaint just that region instead of the
-    /// whole window.
-    light_damage: Rc<RefCell<Vec<Rect>>>,
-    /// Whether the last `repaint_scene` call was scoped to `light_damage`
-    /// (partial present) rather than a full clear+repaint.
-    scene_repaint_partial: Rc<Cell<bool>>,
+    pipeline: Rc<Pipeline>,
     _effect: Effect,
-    viewport: Signal<Size>,
-    scale_factor: Signal<f64>,
-    frame: Rc<RefCell<FrameState>>,
-    shared_window: SharedWindow,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
-    theme_provider: ThemeProvider,
-    focused: Rc<Cell<Option<usize>>>,
-    caret_visible: Rc<Cell<bool>>,
 }
 
 /// Builds and runs one or more CreamUI windows sharing a single process and
@@ -987,15 +1229,10 @@ impl Default for AppBuilder {
     }
 }
 
-/// Per-window state for a window that has actually been created (its platform
-/// [`Window`] exists and its presenter is ready). Lives in [`AppHandler`],
-/// keyed by [`WindowId`], from the moment `resumed` creates it until
-/// `CloseRequested` removes it.
+/// Per-window state for a window whose platform window and presenter exist.
+/// Lives in [`AppHandler`], keyed by [`WindowId`], until the window closes.
 struct WindowState {
-    viewport: Signal<Size>,
-    scale_factor: Signal<f64>,
-    frame: Rc<RefCell<FrameState>>,
-    window: SharedWindow,
+    pipeline: Rc<Pipeline>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -1004,59 +1241,24 @@ struct WindowState {
     presenter: Option<Presenter>,
     pointer_pos: Point,
     modifiers: PlatformModifiers,
-    /// Index into the current `Scene`'s focusables, if any widget has
-    /// keyboard focus. Only stable while the widget tree's shape doesn't
-    /// change — see `Scene`'s doc comment. Shared with `repaint` (below) so
-    /// each repaint knows which widget, if any, to paint a focus overlay
-    /// (e.g. a text input's caret) onto.
-    focused: Rc<Cell<Option<usize>>>,
-    /// The text-input caret's current blink phase, shared with `repaint`
-    /// the same way as `focused`.
-    caret_visible: Rc<Cell<bool>>,
-    /// When the caret should next toggle visibility (see `about_to_wait`).
     next_blink: Instant,
     next_animation: Instant,
-    next_resize_render: Instant,
-    resize_pending: bool,
+    next_devtools_refresh: Instant,
     pending_viewport: Option<Size>,
     /// The system cursor icon last set on the window, so `CursorMoved`
     /// only calls into the backend when it actually changes.
     current_cursor: CursorIcon,
     /// Callback for the widget currently under the pointer. Keeping the
     /// callback rather than a scene index makes it safe across re-renders.
-    hovered: Option<(creamui_core::Rect, Rc<dyn Fn(bool)>)>,
+    hovered: Option<(Rect, Rc<dyn Fn(bool)>)>,
     /// Index into the current `Scene`'s draggables while the left mouse
-    /// button is held down over one, `None` otherwise.
+    /// button is held down over one.
     dragging: Option<usize>,
     drag_end: Option<Rc<dyn Fn()>>,
     drag_click: Option<DragClick>,
-    /// Latest drag-handler call computed since the last flush, superseding
-    /// whatever `CursorMoved` queued it before — only the position current
-    /// at the next `RedrawRequested` is dispatched, not every raw event.
+    /// Latest drag-handler call since the last frame; only the position
+    /// current at the next `RedrawRequested` is dispatched.
     pending_drag: Option<(Point, Rect, Rc<dyn Fn(Point, Rect)>)>,
-    /// Invalidates this window. Signal changes and caret/focus updates are
-    /// coalesced until the next `RedrawRequested` frame.
-    repaint: Rc<dyn Fn()>,
-    repaint_scene: Rc<dyn Fn()>,
-    /// Paint-only refresh (no rebuild, no layout) for hover/press/focus-only
-    /// changes — cheap enough to call from every `CursorMoved`.
-    repaint_light: Rc<dyn Fn()>,
-    /// Repaints only the widgets currently promoted to their own layer (see
-    /// `Painter::push_layer`), driven by `about_to_wait`'s animation tick.
-    /// Populates `animated_damage` instead of touching `dirty`/`scene_dirty`,
-    /// since it never rebuilds, relayouts, or invalidates the `Scene`.
-    repaint_animated: Rc<dyn Fn()>,
-    /// Executes the deferred build/layout/paint pass. Signal writes only
-    /// schedule this; `RedrawRequested` performs it once per compositor
-    /// frame.
-    render: Rc<dyn Fn()>,
-    dirty: Rc<Cell<bool>>,
-    scene_dirty: Rc<Cell<bool>>,
-    /// Window-space rects painted by the last `repaint_animated`, consumed
-    /// by `RedrawRequested` for a partial GPU texture upload.
-    animated_damage: Rc<RefCell<Vec<Rect>>>,
-    light_damage: Rc<RefCell<Vec<Rect>>>,
-    scene_repaint_partial: Rc<Cell<bool>>,
     _effect: Effect,
     t_run: Instant,
     first_present_logged: bool,
@@ -1070,6 +1272,10 @@ struct DragClick {
 }
 
 impl WindowState {
+    fn scene<R>(&self, f: impl FnOnce(&Scene) -> Option<R>) -> Option<R> {
+        self.pipeline.frame.borrow().scene.as_ref().and_then(f)
+    }
+
     fn resize_direction(&self) -> Option<ResizeDirection> {
         if !self.frameless_resizable {
             return None;
@@ -1097,87 +1303,84 @@ impl WindowState {
     /// current `pointer_pos`, requesting a redraw if it's still draggable.
     fn refresh_pending_drag(&mut self) {
         let Some(index) = self.dragging else { return };
-        let frame = self.frame.borrow();
-        let pending = frame.scene.as_ref().and_then(|scene| {
+        let pointer = self.pointer_pos;
+        let pending = self.scene(|scene| {
             scene.draggable_at(index).map(|(rect, handler)| {
                 let local = Point {
-                    x: self.pointer_pos.x - rect.x,
-                    y: self.pointer_pos.y - rect.y,
+                    x: pointer.x - rect.x,
+                    y: pointer.y - rect.y,
                 };
                 (local, rect, handler.clone())
             })
         });
-        drop(frame);
         if pending.is_some() {
             self.pending_drag = pending;
-            if let Some(window) = self.window.borrow().as_ref() {
-                window.request_redraw();
-            }
+            self.pipeline.request_redraw();
         }
     }
 
     fn viewport_from_window(&self) -> Size {
-        let Some(window) = self.window.borrow().as_ref().cloned() else {
-            return self.viewport.peek();
+        let Some(window) = self.pipeline.window.borrow().as_ref().cloned() else {
+            return self.pipeline.viewport.peek();
         };
         let physical = window.inner_size();
-        let scale = self.scale_factor.peek();
+        let scale = self.pipeline.scale_factor.peek();
         Size {
             width: (physical.width as f64 / scale) as f32,
             height: (physical.height as f64 / scale) as f32,
         }
     }
 
-    fn schedule_resize_render(&mut self) {
-        self.next_resize_render = Instant::now() + RESIZE_SETTLE_DELAY;
-        self.resize_pending = true;
-    }
-
     fn queue_viewport(&mut self, viewport: Size) {
         if self
             .pending_viewport
-            .unwrap_or_else(|| self.viewport.peek())
+            .unwrap_or_else(|| self.pipeline.viewport.peek())
             != viewport
         {
             self.pending_viewport = Some(viewport);
-            self.schedule_resize_render();
+            self.pipeline.invalidate_layout();
         }
     }
 
     fn flush_pending_viewport(&mut self) {
         if let Some(viewport) = self.pending_viewport.take() {
-            self.viewport.set(viewport);
-            (self.repaint)();
+            if self.pipeline.viewport.peek() != viewport {
+                self.pipeline.viewport.set(viewport);
+                self.pipeline.build();
+            }
         }
+    }
+
+    fn restart_caret(&mut self) {
+        self.pipeline.caret_visible.set(true);
+        self.next_blink = Instant::now() + CARET_BLINK_INTERVAL;
+    }
+
+    fn set_pointer(&mut self, pointer: Option<Point>) {
+        self.pipeline.frame.borrow_mut().recorder.pointer = pointer;
+    }
+
+    fn set_press_origin(&mut self, origin: Option<Point>) {
+        self.pipeline.frame.borrow_mut().recorder.press_origin = origin;
     }
 
     fn handle_key_input(&mut self, key: KeyInput) {
         if key.key == Key::Tab {
-            let next = self
-                .frame
-                .borrow()
-                .scene
-                .as_ref()
-                .and_then(|scene| scene.next_focus(self.focused.get(), key.modifiers.shift));
-            self.focused.set(next);
-            (self.repaint_light)();
+            let current = self.pipeline.focused.get();
+            let next = self.scene(|scene| scene.next_focus(current, key.modifiers.shift));
+            self.pipeline.focused.set(next);
+            self.restart_caret();
+            self.pipeline.invalidate_paint();
             return;
         }
-        let Some(index) = self.focused.get() else {
+        let Some(index) = self.pipeline.focused.get() else {
             return;
         };
-
-        let handler = self
-            .frame
-            .borrow()
-            .scene
-            .as_ref()
-            .and_then(|scene| scene.on_key_at(index).cloned());
+        let handler = self.scene(|scene| scene.on_key_at(index).cloned());
         if let Some(handler) = handler {
-            self.caret_visible.set(true);
-            self.next_blink = Instant::now() + CARET_BLINK_INTERVAL;
+            self.restart_caret();
             handler(key);
-            (self.render)();
+            self.pipeline.invalidate_layout();
         }
     }
 
@@ -1187,72 +1390,57 @@ impl WindowState {
                 if new_size.width == 0 || new_size.height == 0 {
                     return;
                 }
-                let scale = self.scale_factor.peek();
-                let viewport = Size {
+                let scale = self.pipeline.scale_factor.peek();
+                self.queue_viewport(Size {
                     width: (new_size.width as f64 / scale) as f32,
                     height: (new_size.height as f64 / scale) as f32,
-                };
-                self.queue_viewport(viewport);
+                });
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 log::debug!("creamui-render: scale factor changed to {scale_factor}");
-                set_if_changed(&self.scale_factor, scale_factor);
+                set_if_changed(&self.pipeline.scale_factor, scale_factor);
                 let viewport = self.viewport_from_window();
                 self.queue_viewport(viewport);
+                self.pipeline.invalidate_layout();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let scale = self.scale_factor.peek();
+                let scale = self.pipeline.scale_factor.peek();
                 self.pointer_pos = Point {
                     x: (position.x / scale) as f32,
                     y: (position.y / scale) as f32,
                 };
-                self.frame.borrow_mut().painter.pointer = Some(self.pointer_pos);
+                self.set_pointer(Some(self.pointer_pos));
                 if let Some(drag_click) = self.drag_click.as_mut() {
                     let dx = self.pointer_pos.x - drag_click.origin.x;
                     let dy = self.pointer_pos.y - drag_click.origin.y;
                     drag_click.moved |= dx.hypot(dy) >= 4.0;
                 }
-                let hovered_cursor =
-                    self.resize_direction()
-                        .map(resize_cursor)
-                        .unwrap_or_else(|| {
-                            let frame = self.frame.borrow();
-                            frame
-                                .scene
-                                .as_ref()
-                                .and_then(|scene| scene.cursor_hit_test(self.pointer_pos))
-                                .unwrap_or(CursorIcon::Default)
-                        });
+                let pointer = self.pointer_pos;
+                let hovered_cursor = self
+                    .resize_direction()
+                    .map(resize_cursor)
+                    .or_else(|| self.scene(|scene| scene.cursor_hit_test(pointer)))
+                    .unwrap_or(CursorIcon::Default);
                 if hovered_cursor != self.current_cursor {
                     self.current_cursor = hovered_cursor;
-                    if let Some(window) = self.window.borrow().as_ref() {
+                    if let Some(window) = self.pipeline.window.borrow().as_ref() {
                         window.set_cursor(translate_cursor_icon(hovered_cursor));
                     }
                 }
 
-                let next_hover = self
-                    .frame
-                    .borrow()
-                    .scene
-                    .as_ref()
-                    .and_then(|scene| scene.hover_hit_test(self.pointer_pos));
-                // Widget descriptions are recreated on each reactive frame,
-                // so callback `Rc`s are not stable. The visible rect is: it
-                // prevents a stationary pointer from producing leave/enter
-                // churn after an unrelated redraw.
+                // Widgets are rebuilt on every reactive frame, so callback
+                // `Rc`s are not stable identities; the hovered rect is.
+                let next_hover = self.scene(|scene| scene.hover_hit_test(pointer));
                 let unchanged = matches!(
                     (&self.hovered, &next_hover),
-                    (Some((current_rect, _)), Some((next_rect, _))) if current_rect == next_rect
+                    (Some((current, _)), Some((next, _))) if current == next
                 );
-                let mut hover_damage: Option<Rect> = None;
                 if !unchanged {
-                    if let Some((old_rect, current)) = self.hovered.take() {
-                        current(false);
-                        hover_damage = Some(old_rect);
+                    if let Some((_, previous)) = self.hovered.take() {
+                        previous(false);
                     }
                     if let Some((rect, next)) = next_hover {
                         next(true);
-                        hover_damage = Some(hover_damage.map_or(rect, |d| d.union(rect)));
                         self.hovered = Some((rect, next));
                     }
                 }
@@ -1260,19 +1448,13 @@ impl WindowState {
                 if self.dragging.is_some() {
                     self.refresh_pending_drag();
                 } else if !unchanged {
-                    if let Some(rect) = hover_damage {
-                        self.light_damage.borrow_mut().push(rect);
-                    }
-                    (self.repaint_light)();
+                    self.pipeline.invalidate_paint();
                 }
             }
-            // Real Wayland drag-and-drop suppresses normal pointer motion
-            // for the duration of the grab — these are how a drag started
-            // via `PlatformWindow::start_drag` gets tracked instead,
-            // driving the same `on_drag`/`on_drag_end` widget callbacks as
-            // a plain in-window drag.
+            // A real Wayland drag-and-drop suppresses normal pointer motion
+            // for the duration of the grab; these drive the same callbacks.
             WindowEvent::DragEntered { position } | WindowEvent::DragMoved { position } => {
-                let scale = self.scale_factor.peek();
+                let scale = self.pipeline.scale_factor.peek();
                 self.pointer_pos = Point {
                     x: (position.x / scale) as f32,
                     y: (position.y / scale) as f32,
@@ -1287,7 +1469,7 @@ impl WindowState {
                 if let Some(handler) = self.drag_end.take() {
                     handler();
                 }
-                (self.repaint_light)();
+                self.pipeline.invalidate_paint();
             }
             WindowEvent::MouseInput {
                 pressed: true,
@@ -1295,56 +1477,51 @@ impl WindowState {
                 serial,
             } => {
                 self.last_input_serial.set(serial);
-                self.frame.borrow_mut().painter.press_origin = Some(self.pointer_pos);
-                (self.repaint_light)();
+                self.set_press_origin(Some(self.pointer_pos));
+                self.pipeline.invalidate_paint();
                 if let Some(direction) = self.resize_direction() {
-                    if let Some(window) = self.window.borrow().as_ref() {
+                    if let Some(window) = self.pipeline.window.borrow().as_ref() {
                         let _ = window.drag_resize_window(direction);
                     }
                     return;
                 }
-                let frame = self.frame.borrow();
-                let Some(scene) = frame.scene.as_ref() else {
+                let pointer = self.pointer_pos;
+                let Some((click, click_at, new_focus, drag_start, drag_anchor)) =
+                    self.scene(|scene| {
+                        let drag_start = scene.drag_hit_test(pointer).and_then(|index| {
+                            scene.draggable_at(index).map(|(rect, handler)| {
+                                (index, rect, handler.clone(), scene.drag_end_at(index))
+                            })
+                        });
+                        Some((
+                            scene.hit_test(pointer).cloned(),
+                            scene.hit_test_at(pointer).cloned(),
+                            scene.focus_hit_test(pointer),
+                            drag_start,
+                            scene.drag_start_at(pointer),
+                        ))
+                    })
+                else {
                     return;
                 };
 
-                let click_handler = scene.hit_test(self.pointer_pos).cloned();
-                let click_handler_at = scene.hit_test_at(self.pointer_pos).cloned();
-                let new_focus = scene.focus_hit_test(self.pointer_pos);
-                let focus_changed = new_focus != self.focused.get();
-                self.focused.set(new_focus);
-                let drag_start = scene.drag_hit_test(self.pointer_pos).and_then(|index| {
-                    scene.draggable_at(index).map(|(rect, handler)| {
-                        (index, rect, handler.clone(), scene.drag_end_at(index))
-                    })
-                });
-                let drag_anchor = scene.drag_start_at(self.pointer_pos);
-                drop(frame);
-
                 let has_drag = drag_start.is_some();
-                if has_drag && (click_handler.is_some() || click_handler_at.is_some()) {
+                if has_drag && (click.is_some() || click_at.is_some()) {
                     self.drag_click = Some(DragClick {
-                        origin: self.pointer_pos,
-                        on_click: click_handler.clone(),
-                        on_click_at: click_handler_at.clone(),
+                        origin: pointer,
+                        on_click: click.clone(),
+                        on_click_at: click_at.clone(),
                         moved: false,
                     });
                 }
-
-                if focus_changed {
-                    // Reset the blink phase so the caret appears solid the
-                    // instant a text input gains focus, rather than
-                    // possibly landing mid-blink.
-                    self.caret_visible.set(true);
-                    self.next_blink = Instant::now() + CARET_BLINK_INTERVAL;
-                    (self.repaint_light)();
+                if new_focus != self.pipeline.focused.replace(new_focus) {
+                    self.restart_caret();
                 }
-
                 if let Some((rect, handler)) = drag_anchor {
                     handler(
                         Point {
-                            x: self.pointer_pos.x - rect.x,
-                            y: self.pointer_pos.y - rect.y,
+                            x: pointer.x - rect.x,
+                            y: pointer.y - rect.y,
                         },
                         rect,
                     );
@@ -1352,23 +1529,24 @@ impl WindowState {
                 if let Some((index, rect, handler, drag_end)) = drag_start {
                     self.dragging = Some(index);
                     self.drag_end = drag_end;
-                    let local = Point {
-                        x: self.pointer_pos.x - rect.x,
-                        y: self.pointer_pos.y - rect.y,
-                    };
-                    handler(local, rect);
-                }
-                if has_drag {
+                    handler(
+                        Point {
+                            x: pointer.x - rect.x,
+                            y: pointer.y - rect.y,
+                        },
+                        rect,
+                    );
+                    self.pipeline.invalidate_layout();
                     return;
                 }
-                if let Some(handler) = click_handler_at {
-                    log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
-                    handler(self.pointer_pos);
-                    (self.render)();
-                } else if let Some(handler) = click_handler {
-                    log::debug!("creamui-render: click hit at {:?}", self.pointer_pos);
+                if let Some(handler) = click_at {
+                    log::debug!("creamui-render: click at {pointer:?}");
+                    handler(pointer);
+                    self.pipeline.invalidate_layout();
+                } else if let Some(handler) = click {
+                    log::debug!("creamui-render: click at {pointer:?}");
                     handler();
-                    (self.render)();
+                    self.pipeline.invalidate_layout();
                 }
             }
             WindowEvent::MouseInput {
@@ -1378,7 +1556,7 @@ impl WindowState {
             } => {
                 self.dragging = None;
                 self.pending_drag = None;
-                self.frame.borrow_mut().painter.press_origin = None;
+                self.set_press_origin(None);
                 if let Some(handler) = self.drag_end.take() {
                     handler();
                 }
@@ -1389,23 +1567,23 @@ impl WindowState {
                         } else if let Some(handler) = drag_click.on_click {
                             handler();
                         }
-                        (self.render)();
+                        self.pipeline.invalidate_layout();
                     }
                 }
-                (self.repaint_light)();
+                self.pipeline.invalidate_paint();
             }
             WindowEvent::CursorLeft => {
-                self.frame.borrow_mut().painter.pointer = None;
+                self.set_pointer(None);
                 if let Some((_, callback)) = self.hovered.take() {
                     callback(false);
                 }
-                (self.repaint_light)();
+                self.pipeline.invalidate_paint();
             }
             WindowEvent::Focused(false) => {
-                self.frame.borrow_mut().painter.press_origin = None;
+                self.set_press_origin(None);
                 self.dragging = None;
                 self.pending_drag = None;
-                (self.repaint_light)();
+                self.pipeline.invalidate_paint();
                 if let Some(handler) = self.focus_lost_handler.borrow().as_ref().cloned() {
                     handler();
                 }
@@ -1417,35 +1595,24 @@ impl WindowState {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let scale = self.scale_factor.peek();
-                // Convention: positive `delta_y` reveals content further
-                // down (increases a scroll view's offset), matching
-                // "natural" wheel-down scrolling.
+                let scale = self.pipeline.scale_factor.peek();
+                // Positive `delta_y` reveals content further down.
                 let delta_y: f32 = match delta {
                     MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
                     MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
                 };
-
-                let frame = self.frame.borrow();
-                let Some(scene) = frame.scene.as_ref() else {
-                    return;
-                };
-                let handler = scene.scroll_hit_test(self.pointer_pos).map(|index| {
-                    (
-                        scene.on_scroll_at(index).cloned(),
+                let pointer = self.pointer_pos;
+                let handler = self.scene(|scene| {
+                    let index = scene.scroll_hit_test(pointer)?;
+                    Some((
+                        scene.on_scroll_at(index)?.clone(),
                         scene.scroll_is_local_at(index),
-                        scene.scroll_rect_at(index),
-                    )
+                    ))
                 });
-                drop(frame);
-
-                if let Some((Some(handler), local, rect)) = handler {
+                if let Some((handler, local)) = handler {
                     handler(delta_y);
                     if local {
-                        if let Some(rect) = rect {
-                            self.light_damage.borrow_mut().push(rect);
-                        }
-                        (self.repaint_light)();
+                        self.pipeline.invalidate_paint();
                     }
                 }
             }
@@ -1454,15 +1621,16 @@ impl WindowState {
                     return;
                 }
                 if event.key == PlatformKey::F3 {
-                    let toggled = {
-                        let mut frame = self.frame.borrow_mut();
-                        frame
-                            .devtools
-                            .as_mut()
-                            .is_some_and(|devtools| devtools.toggle())
-                    };
+                    let toggled = self
+                        .pipeline
+                        .frame
+                        .borrow_mut()
+                        .devtools
+                        .as_mut()
+                        .is_some_and(|devtools| devtools.toggle());
                     if toggled {
-                        (self.repaint_light)();
+                        self.next_devtools_refresh = Instant::now();
+                        self.pipeline.invalidate_paint();
                     }
                     return;
                 }
@@ -1480,91 +1648,76 @@ impl WindowState {
                 });
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
-            WindowEvent::RedrawRequested => {
-                if let Some((local, rect, handler)) = self.pending_drag.take() {
-                    handler(local, rect);
-                    // Drag handlers write through a plain Cell, not a Signal, so nothing
-                    // else schedules the repaint this needs.
-                    if !self.dirty.get() {
-                        self.scene_dirty.set(true);
-                    }
-                }
-                let mut full_repaint = true;
-                if self.dirty.get() {
-                    self.flush_pending_viewport();
-                    (self.render)();
-                    // `render` already repaints the scene, so a pending
-                    // `scene_dirty` from earlier in the same event is moot,
-                    // and any queued `light_damage` hint is stale.
-                    self.scene_dirty.set(false);
-                    self.light_damage.borrow_mut().clear();
-                } else if self.scene_dirty.replace(false) {
-                    (self.repaint_scene)();
-                    full_repaint = !self.scene_repaint_partial.replace(false);
-                } else {
-                    full_repaint = false;
-                }
-                let raw_damage = std::mem::take(&mut *self.animated_damage.borrow_mut());
-                if !self
-                    .window
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|window| window.is_ready())
-                {
-                    return;
-                }
-                let viewport = self.viewport.peek();
-                let damage = creamui_core::merge_damage_default(&raw_damage, viewport);
-                let full_viewport_rect = Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: viewport.width,
-                    height: viewport.height,
-                };
-                let damage_covers_everything = damage.len() == 1 && damage[0] == full_viewport_rect;
-                #[cfg(feature = "perf-metrics")]
-                creamui_core::metrics::record(|m| {
-                    m.damaged_rect_count += damage.len() as u64;
-                    m.damaged_pixel_area += damage
-                        .iter()
-                        .map(|r| (r.width.max(0.0) * r.height.max(0.0)) as u64)
-                        .sum::<u64>();
-                });
-                let frame = self.frame.borrow();
-                let pixmap = &frame.painter.pixmap;
-                if let Some(presenter) = self.presenter.as_mut() {
-                    if full_repaint || damage.is_empty() || damage_covers_everything {
-                        presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
-                    } else {
-                        presenter.present_partial(
-                            pixmap.data(),
-                            pixmap.width(),
-                            pixmap.height(),
-                            &damage,
-                            self.scale_factor.peek() as f32,
-                        );
-                    }
-                }
-                if !self.first_present_logged {
-                    self.first_present_logged = true;
-                    log::debug!(
-                        "creamui-render: first present done: {:?}",
-                        self.t_run.elapsed()
-                    );
-                }
-            }
+            WindowEvent::RedrawRequested => self.redraw(),
             _ => {}
         }
+    }
+
+    fn redraw(&mut self) {
+        if let Some((local, rect, handler)) = self.pending_drag.take() {
+            handler(local, rect);
+            // Drag handlers may write plain `Cell`s rather than signals.
+            self.pipeline.invalidate_layout();
+        }
+        self.flush_pending_viewport();
+        self.pipeline.update();
+        let ready = self
+            .pipeline
+            .window
+            .borrow()
+            .as_ref()
+            .is_none_or(|window| window.is_ready());
+        if !ready {
+            return;
+        }
+        self.pipeline.present(self.presenter.as_mut());
+        if !self.first_present_logged {
+            self.first_present_logged = true;
+            log::debug!(
+                "creamui-render: first present done: {:?}",
+                self.t_run.elapsed()
+            );
+        }
+    }
+
+    /// Fires time-driven repaints that are due and returns when the next one
+    /// is.
+    fn tick(&mut self, now: Instant) -> Option<Instant> {
+        let mut next_wake: Option<Instant> = None;
+        let mut wake_at = |at: Instant| {
+            next_wake = Some(next_wake.map_or(at, |t: Instant| t.min(at)));
+        };
+        if self.pipeline.animated() {
+            if now >= self.next_animation {
+                self.next_animation = now + ANIMATION_FRAME_INTERVAL;
+                self.pipeline.invalidate_paint();
+            }
+            wake_at(self.next_animation);
+        }
+        if let Some(interval) = self.pipeline.devtools_refresh() {
+            if now >= self.next_devtools_refresh {
+                self.next_devtools_refresh = now + interval;
+                self.pipeline.invalidate_paint();
+            }
+            wake_at(self.next_devtools_refresh);
+        }
+        if self.pipeline.focused.get().is_some() {
+            if now >= self.next_blink {
+                let caret = &self.pipeline.caret_visible;
+                caret.set(!caret.get());
+                self.next_blink = now + CARET_BLINK_INTERVAL;
+                self.pipeline.invalidate_paint();
+            }
+            wake_at(self.next_blink);
+        }
+        next_wake
     }
 }
 
 /// The shared [`ApplicationHandler`] driving every window opened by
 /// [`AppBuilder`] (and, for a single window, [`run`]) from one event loop.
 struct AppHandler {
-    /// Drained the first time `resumed` runs: creates each platform
-    /// `Window` and presenter, then moves it into `windows`. `resumed` can
-    /// in principle be called again later (e.g. mobile lifecycle), at which
-    /// point this is already empty and a no-op.
+    /// Drained the first time `resumed` runs.
     pending: Vec<WindowSpec>,
     commands: Rc<RefCell<AppCommands>>,
     app: AppHandle,
@@ -1580,11 +1733,8 @@ struct AppHandler {
     trays: Vec<InstalledTray>,
     #[cfg(all(feature = "tray", target_os = "linux"))]
     proxy: EventLoopProxy<AppEvent>,
-    /// Shared by every window using [`RenderBackend::Gpu`] — one
-    /// `wgpu::Instance` regardless of how many GPU windows are open, since
-    /// its ~100-200ms Windows loader/ICD cost and driver memory footprint
-    /// are the whole reason multi-window-in-one-process is worth doing.
-    /// `None` if no queued window resolved to the GPU backend.
+    /// One `wgpu::Instance` shared by every GPU window; `None` if no queued
+    /// window resolved to the GPU backend.
     #[cfg(not(target_arch = "wasm32"))]
     gpu_instance: Option<Rc<wgpu::Instance>>,
 }
@@ -1633,126 +1783,95 @@ impl AppHandler {
                 .create_window(attrs)
                 .expect("failed to create window"),
         };
-        // Show the window the instant it exists rather than waiting for
-        // GPU init (adapter/device/pipeline — several hundred ms on
-        // Windows) to finish. That init cost doesn't go away, but the
-        // window appearing immediately is what "the app feels slow to
-        // launch" is actually about; the OS-default surface briefly
-        // shown underneath gets replaced by the real first frame a
-        // moment later.
+        // Show the window immediately; the presenter's first frame replaces
+        // the platform's placeholder surface moments later.
         window.set_visible(true);
         log::debug!(
-            "creamui-render: window created and shown: {:?}",
-            t0.elapsed()
-        );
-        log::debug!(
-            "creamui-render: window created ({}x{} logical, scale factor {})",
+            "creamui-render: window created ({}x{} logical, scale factor {}) in {:?}",
             spec.options.width,
             spec.options.height,
-            window.scale_factor()
+            window.scale_factor(),
+            t0.elapsed()
         );
 
-        spec.scale_factor.set(window.scale_factor());
+        let pipeline = spec.pipeline;
+        pipeline.scale_factor.set(window.scale_factor());
         {
             let physical = window.inner_size();
-            let scale = spec.scale_factor.peek();
-            spec.viewport.set(Size {
+            let scale = window.scale_factor();
+            let viewport = Size {
                 width: (physical.width as f64 / scale) as f32,
                 height: (physical.height as f64 / scale) as f32,
-            });
+            };
+            if pipeline.viewport.peek() != viewport {
+                pipeline.viewport.set(viewport);
+                pipeline.build();
+            }
         }
-        (spec.repaint)();
+        *pipeline.window.borrow_mut() = Some(window.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
-        let mut presenter = match spec.options.backend {
-            RenderBackend::Gpu => {
-                if self.gpu_instance.is_none() {
-                    self.gpu_instance = Some(Rc::new(GpuState::create_instance()));
-                }
-                let instance = self
-                        .gpu_instance
-                        .as_ref()
-                        .expect("a window resolved to RenderBackend::Gpu but no shared wgpu::Instance was created");
-                Presenter::Gpu(GpuState::new(
-                    window.clone(),
-                    instance,
-                    spec.options.transparent,
-                ))
+        let presenter = {
+            if spec.options.backend == RenderBackend::Gpu && self.gpu_instance.is_none() {
+                self.gpu_instance = Some(Rc::new(crate::gpu::create_instance()));
             }
-            RenderBackend::Cpu => {
-                Presenter::Cpu(CpuState::new(window.clone(), spec.options.transparent))
+            match Presenter::new(
+                &window,
+                spec.options.backend,
+                spec.options.transparent,
+                self.gpu_instance.as_deref(),
+            ) {
+                Ok(presenter) => presenter,
+                Err(err) => panic!("creamui-render: no usable presenter for the window: {err}"),
             }
         };
         #[cfg(target_arch = "wasm32")]
-        let mut presenter = Presenter::Web(WebState::new(window.clone()));
+        let presenter = Presenter::new(&window);
+        pipeline.frame.borrow_mut().adapter = presenter.adapter();
         log::debug!(
-            "creamui-render: {:?} presenter ready: {:?}",
-            spec.options.backend,
+            "creamui-render: {} presenter ready: {:?}",
+            presenter.name(),
             t0.elapsed()
         );
 
-        if window.is_ready() {
-            let frame = spec.frame.borrow();
-            let pixmap = &frame.painter.pixmap;
-            presenter.present(pixmap.data(), pixmap.width(), pixmap.height());
-        }
-        log::debug!("creamui-render: first frame presented: {:?}", t0.elapsed());
-
-        *spec.shared_window.borrow_mut() = Some(window.clone());
         (spec.on_window_ready)(WindowHandle {
-            window: spec.shared_window.clone(),
-            theme: spec.theme_provider.clone(),
+            window: pipeline.window.clone(),
+            theme: pipeline.theme.clone(),
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
         });
 
-        let window_id = window.id();
-        let frameless_resizable = !spec.options.decorations && spec.options.resizable;
-        self.windows.insert(
-            window_id,
-            WindowState {
-                viewport: spec.viewport,
-                scale_factor: spec.scale_factor,
-                frame: spec.frame,
-                window: spec.shared_window.clone(),
-                close_requested: spec.close_requested,
-                focus_lost_handler: spec.focus_lost_handler,
-                last_input_serial: spec.last_input_serial,
-                close_behavior: spec.options.close_behavior,
-                frameless_resizable,
-                presenter: Some(presenter),
-                pointer_pos: Point::default(),
-                modifiers: PlatformModifiers::default(),
-                focused: spec.focused,
-                caret_visible: spec.caret_visible,
-                next_blink: Instant::now() + CARET_BLINK_INTERVAL,
-                next_animation: Instant::now(),
-                next_resize_render: Instant::now(),
-                resize_pending: false,
-                pending_viewport: None,
-                current_cursor: CursorIcon::Default,
-                hovered: None,
-                dragging: None,
-                drag_end: None,
-                drag_click: None,
-                pending_drag: None,
-                repaint: spec.repaint,
-                repaint_scene: spec.repaint_scene,
-                repaint_light: spec.repaint_light,
-                repaint_animated: spec.repaint_animated,
-                render: spec.render,
-                dirty: spec.dirty,
-                scene_dirty: spec.scene_dirty,
-                animated_damage: spec.animated_damage,
-                light_damage: spec.light_damage,
-                scene_repaint_partial: spec.scene_repaint_partial,
-                _effect: spec._effect,
-                t_run: t0,
-                first_present_logged: false,
-            },
-        );
+        let now = Instant::now();
+        let mut state = WindowState {
+            pipeline,
+            close_requested: spec.close_requested,
+            focus_lost_handler: spec.focus_lost_handler,
+            last_input_serial: spec.last_input_serial,
+            close_behavior: spec.options.close_behavior,
+            frameless_resizable: !spec.options.decorations && spec.options.resizable,
+            presenter: Some(presenter),
+            pointer_pos: Point::default(),
+            modifiers: PlatformModifiers::default(),
+            next_blink: now + CARET_BLINK_INTERVAL,
+            next_animation: now,
+            next_devtools_refresh: now,
+            pending_viewport: None,
+            current_cursor: CursorIcon::Default,
+            hovered: None,
+            dragging: None,
+            drag_end: None,
+            drag_click: None,
+            pending_drag: None,
+            _effect: spec._effect,
+            t_run: t0,
+            first_present_logged: false,
+        };
+        if window.is_ready() {
+            state.redraw();
+        }
+        self.windows.insert(window.id(), state);
     }
 }
 
@@ -1795,16 +1914,12 @@ impl ApplicationHandler<AppEvent> for AppHandler {
         event: WindowEvent,
     ) {
         if matches!(event, WindowEvent::CloseRequested) {
-            if self
+            let hide = self
                 .windows
                 .get(&window_id)
-                .is_some_and(|state| state.close_behavior == CloseBehavior::Hide)
-            {
-                if let Some(window) = self
-                    .windows
-                    .get(&window_id)
-                    .and_then(|state| state.window.borrow().as_ref().cloned())
-                {
+                .filter(|state| state.close_behavior == CloseBehavior::Hide);
+            if let Some(state) = hide {
+                if let Some(window) = state.pipeline.window.borrow().as_ref() {
                     window.set_visible(false);
                 }
                 return;
@@ -1857,45 +1972,13 @@ impl ApplicationHandler<AppEvent> for AppHandler {
         for window_id in close_requests {
             self.close_window(event_loop, window_id);
         }
-        if self.windows.is_empty() {
-            event_loop.set_control_flow(ControlFlow::Wait);
-            return;
-        }
 
         let now = Instant::now();
-        let mut next_wake: Option<Instant> = None;
-        for state in self.windows.values_mut() {
-            if state.resize_pending {
-                if now >= state.next_resize_render {
-                    state.resize_pending = false;
-                    state.dirty.set(true);
-                    if let Some(window) = state.window.borrow().as_ref() {
-                        window.request_redraw();
-                    }
-                } else {
-                    next_wake = Some(next_wake.map_or(state.next_resize_render, |t| {
-                        t.min(state.next_resize_render)
-                    }));
-                }
-            }
-            if state.frame.borrow().painter.animated {
-                if now >= state.next_animation {
-                    state.next_animation = now + Duration::from_millis(32);
-                    (state.repaint_animated)();
-                }
-                next_wake =
-                    Some(next_wake.map_or(state.next_animation, |t| t.min(state.next_animation)));
-            }
-            if state.focused.get().is_none() {
-                continue;
-            }
-            if now >= state.next_blink {
-                state.caret_visible.set(!state.caret_visible.get());
-                state.next_blink = now + CARET_BLINK_INTERVAL;
-                (state.repaint_light)();
-            }
-            next_wake = Some(next_wake.map_or(state.next_blink, |t| t.min(state.next_blink)));
-        }
+        let next_wake = self
+            .windows
+            .values_mut()
+            .filter_map(|state| state.tick(now))
+            .min();
         event_loop.set_control_flow(match next_wake {
             Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
@@ -1939,8 +2022,9 @@ impl AppHandler {
 
     fn close_window(&mut self, event_loop: &ActiveEventLoop<'_>, window_id: WindowId) {
         log::debug!("creamui-render: close requested for window {window_id:?}");
-        if let Some(state) = self.windows.remove(&window_id) {
-            if let Some(window) = state.window.borrow_mut().take() {
+        if let Some(mut state) = self.windows.remove(&window_id) {
+            state.presenter = None;
+            if let Some(window) = state.pipeline.window.borrow_mut().take() {
                 window.close();
             }
         }
@@ -2010,8 +2094,8 @@ fn run_windows(
     }
     #[cfg(target_arch = "wasm32")]
     for spec in &mut specs {
-        // The web demo presents directly to its canvas; it has no desktop
-        // GPU/softbuffer choice, so keep the public option harmless here.
+        // The web demo always rasterizes into its canvas; there is no
+        // backend choice to make.
         spec.options.backend = RenderBackend::Gpu;
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -2025,7 +2109,7 @@ fn run_windows(
     // sitting on `resumed`'s critical path. One instance is shared by every
     // GPU-backend window; skipped entirely if none of them need it.
     #[cfg(not(target_arch = "wasm32"))]
-    let gpu_instance_handle = any_gpu.then(|| std::thread::spawn(GpuState::create_instance));
+    let gpu_instance_handle = any_gpu.then(|| std::thread::spawn(crate::gpu::create_instance));
 
     let dump_frame_path = std::env::var("CUI_DUMP_FRAME").ok();
     let multiple_windows = specs.len() > 1;
@@ -2100,9 +2184,8 @@ fn run_windows(
     }
 }
 
-/// Builds one window's pre-creation state (signals, frame buffer, reactive
-/// effect) — everything that doesn't depend on the platform `Window` actually
-/// existing yet. `resumed` finishes the job once the event loop starts.
+/// Builds one window's pre-creation state (signals, pipeline, reactive
+/// effect) — everything that doesn't need the platform window yet.
 fn build_window_spec(
     index: usize,
     spec: PendingWindow,
@@ -2117,327 +2200,67 @@ fn build_window_spec(
         build_ui,
     } = spec;
 
-    let viewport = Signal::new(Size {
-        width: options.width as f32,
-        height: options.height as f32,
-    });
-    let scale_factor = Signal::new(1.0f64);
-    let frame = Rc::new(RefCell::new(FrameState {
-        painter: SkiaPainter::new(options.width, options.height),
-        renderer: Renderer::new(),
-        scene: None,
-        devtools: devtools_for_new_window(),
-    }));
-    let shared_window: SharedWindow = Rc::new(RefCell::new(None));
+    let window: SharedWindow = Rc::new(RefCell::new(None));
     let window_drag = WindowDragHandle::new({
-        let window = shared_window.clone();
+        let window = window.clone();
         move || {
             if let Some(window) = window.borrow().as_ref() {
                 let _ = window.drag_window();
             }
         }
     });
-    let close_requested = Rc::new(Cell::new(false));
-    let focus_lost_handler = Rc::new(RefCell::new(None));
-    let last_input_serial = Rc::new(Cell::new(None));
-    let theme_provider = ThemeProvider::new(options.theme);
-    let build_ui: Rc<dyn Fn(Size) -> BoxedWidget> = Rc::from(build_ui);
-    let focused: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
-    let caret_visible: Rc<Cell<bool>> = Rc::new(Cell::new(true));
-
-    // With multiple windows sharing one `CUI_DUMP_FRAME` path, suffix each
-    // window's dump with its index rather than having every window's
-    // repaint clobber the same file.
-    let dump_frame_path: Option<String> = dump_frame_path.map(|path| {
+    // Several windows sharing one `CUI_DUMP_FRAME` path each get a suffix.
+    let dump_frame_path = dump_frame_path.map(|path| {
         if multiple_windows {
             format!("{path}.{index}")
         } else {
             path.to_string()
         }
     });
-
-    let dirty = Rc::new(Cell::new(false));
-    // Tree built eagerly by `repaint`, consumed by the next `render`.
-    let pending_root: Rc<RefCell<Option<BoxedWidget>>> = Rc::new(RefCell::new(None));
-
-    // The expensive half of a frame. It is deliberately separate from
-    // `repaint` below: pointer input may invalidate a UI dozens of times
-    // before the compositor is ready for its next frame.
-    let render: Rc<dyn Fn()> = Rc::new({
-        let viewport = viewport.clone();
-        let scale_factor = scale_factor.clone();
-        let frame = frame.clone();
-        let window = shared_window.clone();
-        let build_ui = build_ui.clone();
-        let focused = focused.clone();
-        let caret_visible = caret_visible.clone();
-        let dirty = dirty.clone();
-        let pending_root = pending_root.clone();
-        let theme_provider = theme_provider.clone();
-        let window_drag = window_drag.clone();
-        move || {
-            with_theme_scope(&theme_provider, &window_drag, || {
-                dirty.set(false);
-                // Widgets are laid out in logical pixels; the painter (and the
-                // presenter it feeds) is sized in physical pixels so HiDPI
-                // displays stay crisp — see `SkiaPainter`'s doc comment.
-                let logical_size = viewport.peek();
-                let scale = scale_factor.peek();
-                // `repaint` usually already built this; fall back for
-                // non-signal-driven redraws (animation ticks, caret blink).
-                let root = pending_root.borrow_mut().take().unwrap_or_else(|| {
-                    #[cfg(feature = "perf-metrics")]
-                    let _span = tracing::info_span!("ui_build").entered();
-                    build_ui_with_recovery(&build_ui, logical_size)
-                });
-
-                let mut frame = frame.borrow_mut();
-                let FrameState {
-                    painter, renderer, ..
-                } = &mut *frame;
-                let physical_width = (logical_size.width as f64 * scale).round() as u32;
-                let physical_height = (logical_size.height as f64 * scale).round() as u32;
-                painter.set_scale(scale as f32);
-                painter.set_color_scheme(theme_provider.get().colors);
-                painter.resize(physical_width, physical_height);
-                painter.clear(clear_color);
-                creamui_core::metrics::reset_frame_metrics();
-                let paint_started = Instant::now();
-                let scene = renderer.render_focused(
-                    root,
-                    logical_size,
-                    painter,
-                    focused.get(),
-                    caret_visible.get(),
-                );
-                let paint_duration = paint_started.elapsed();
-                let metrics = creamui_core::metrics::frame_metrics();
-                frame.scene = Some(scene);
-                let FrameState {
-                    painter, devtools, ..
-                } = &mut *frame;
-                if let Some(devtools) = devtools.as_mut() {
-                    devtools.after_paint(painter, logical_size, paint_duration, metrics);
-                }
-
-                // Debug aid: dump each painted frame to a PNG on disk, e.g. for
-                // headless verification where no on-screen compositor is available.
-                if let Some(path) = &dump_frame_path {
-                    if let Err(err) = frame.painter.pixmap.save_png(path) {
-                        log::warn!(
-                            "creamui-render: failed to write CUI_DUMP_FRAME to {path}: {err}"
-                        );
-                    }
-                }
-                drop(frame);
-
-                if let Some(window) = window.borrow().as_ref() {
-                    window.request_redraw();
-                }
-            })
-        }
+    let pipeline = Rc::new(Pipeline {
+        frame: RefCell::new(FrameState {
+            recorder: SceneRecorder::new(),
+            renderer: Renderer::new(),
+            scene: None,
+            pending: None,
+            presented: None,
+            raster: None,
+            devtools: devtools_for_new_window(),
+            report: FrameReport::default(),
+            last_report: FrameReport::default(),
+            adapter: None,
+        }),
+        viewport: Signal::new(Size {
+            width: options.width as f32,
+            height: options.height as f32,
+        }),
+        scale_factor: Signal::new(1.0),
+        window,
+        build_ui: Rc::from(build_ui),
+        theme: ThemeProvider::new(options.theme),
+        window_drag,
+        clear_color,
+        focused: Cell::new(None),
+        caret_visible: Cell::new(true),
+        pending_root: RefCell::new(None),
+        needs_layout: Cell::new(true),
+        needs_paint: Cell::new(true),
+        dump_frame_path,
     });
-
-    let light_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
-    let scene_repaint_partial = Rc::new(Cell::new(false));
-    let animated_damage: Rc<RefCell<Vec<Rect>>> = Rc::new(RefCell::new(Vec::new()));
-
-    let repaint_scene: Rc<dyn Fn()> = Rc::new({
-        let viewport = viewport.clone();
-        let scale_factor = scale_factor.clone();
-        let frame = frame.clone();
-        let window = shared_window.clone();
-        let focused = focused.clone();
-        let caret_visible = caret_visible.clone();
-        let theme_provider = theme_provider.clone();
-        let window_drag = window_drag.clone();
-        let light_damage = light_damage.clone();
-        let scene_repaint_partial = scene_repaint_partial.clone();
-        let animated_damage = animated_damage.clone();
-        move || {
-            with_theme_scope(&theme_provider, &window_drag, || {
-                let logical_size = viewport.peek();
-                let scale = scale_factor.peek();
-                let mut frame = frame.borrow_mut();
-                let physical_width = (logical_size.width as f64 * scale).round() as u32;
-                let physical_height = (logical_size.height as f64 * scale).round() as u32;
-                frame.painter.set_scale(scale as f32);
-                frame.painter.set_color_scheme(theme_provider.get().colors);
-                frame.painter.resize(physical_width, physical_height);
-
-                // If the pending damage is a small, non-empty hint (a hover
-                // or local-scroll change), clear+repaint just that region
-                // instead of the whole window. Otherwise (nothing queued, or
-                // `merge_damage_default` gave up and collapsed it to the
-                // full viewport) fall back to a normal full repaint.
-                let pending = std::mem::take(&mut *light_damage.borrow_mut());
-                let merged = creamui_core::merge_damage_default(&pending, logical_size);
-                let full_viewport_rect = Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: logical_size.width,
-                    height: logical_size.height,
-                };
-                let scoped_clip = match merged.split_first() {
-                    Some((first, rest)) if !(rest.is_empty() && *first == full_viewport_rect) => {
-                        Some(rest.iter().fold(*first, |acc, r| acc.union(*r)))
-                    }
-                    _ => None,
-                };
-
-                if let Some(clip) = scoped_clip {
-                    let FrameState {
-                        painter, renderer, ..
-                    } = &mut *frame;
-                    if let Some(scene) = renderer.repaint_region(
-                        painter,
-                        focused.get(),
-                        caret_visible.get(),
-                        clip,
-                        clear_color,
-                    ) {
-                        frame.scene = Some(scene);
-                    }
-                    scene_repaint_partial.set(true);
-                    animated_damage.borrow_mut().push(clip);
-                } else {
-                    frame.painter.clear(clear_color);
-                    let FrameState {
-                        painter, renderer, ..
-                    } = &mut *frame;
-                    if let Some(scene) =
-                        renderer.repaint_focused(painter, focused.get(), caret_visible.get())
-                    {
-                        frame.scene = Some(scene);
-                    }
-                    scene_repaint_partial.set(false);
-                    let FrameState {
-                        painter, devtools, ..
-                    } = &mut *frame;
-                    if let Some(devtools) = devtools.as_ref() {
-                        devtools.repaint_overlay(painter, logical_size);
-                    }
-                }
-                drop(frame);
-                if let Some(window) = window.borrow().as_ref() {
-                    window.request_redraw();
-                }
-            })
-        }
+    let effect = create_effect({
+        let pipeline = pipeline.clone();
+        move || pipeline.build()
     });
-
-    // Driven by `about_to_wait`'s animation tick: repaints only whatever
-    // widgets are currently promoted to their own layer, with no rebuild,
-    // no layout, and no full-window clear. Doesn't touch `frame.scene` —
-    // a pure animation tick changes no interactive geometry, so the last
-    // full render's `Scene` stays valid.
-    let repaint_animated: Rc<dyn Fn()> = Rc::new({
-        let frame = frame.clone();
-        let window = shared_window.clone();
-        let focused = focused.clone();
-        let caret_visible = caret_visible.clone();
-        let theme_provider = theme_provider.clone();
-        let window_drag = window_drag.clone();
-        let animated_damage = animated_damage.clone();
-        move || {
-            with_theme_scope(&theme_provider, &window_drag, || {
-                let mut frame = frame.borrow_mut();
-                let FrameState {
-                    painter, renderer, ..
-                } = &mut *frame;
-                let damage = renderer.repaint_animated(painter, focused.get(), caret_visible.get());
-                drop(frame);
-                if damage.is_empty() {
-                    return;
-                }
-                animated_damage.borrow_mut().extend(damage);
-                if let Some(window) = window.borrow().as_ref() {
-                    window.request_redraw();
-                }
-            })
-        }
-    });
-
-    // `create_effect` wraps this, so it must call `build_ui` itself, right
-    // here, to stay subscribed to whatever `Signal`s the active branch
-    // reads — a closure that only flips `dirty` for `render` to build later
-    // reads no `Signal` and de-subscribes the effect from everything after
-    // its first run. Layout/paint stay deferred through `dirty`.
-    let repaint: Rc<dyn Fn()> = Rc::new({
-        let viewport = viewport.clone();
-        let build_ui = build_ui.clone();
-        let pending_root = pending_root.clone();
-        let render = render.clone();
-        let window = shared_window.clone();
-        let dirty = dirty.clone();
-        let theme_provider = theme_provider.clone();
-        let window_drag = window_drag.clone();
-        move || {
-            with_theme_scope(&theme_provider, &window_drag, || {
-                let logical_size = viewport.peek();
-                *pending_root.borrow_mut() = Some(build_ui_with_recovery(&build_ui, logical_size));
-                // The first reactive run happens before the platform has created the
-                // window, so render immediately to provide its initial frame.
-                // Afterwards merely mark dirty and let RedrawRequested coalesce
-                // all input updates into one layout/paint pass.
-                if let Some(window) = window.borrow().as_ref() {
-                    if !dirty.replace(true) {
-                        window.request_redraw();
-                    }
-                } else {
-                    render();
-                }
-            })
-        }
-    });
-
-    let scene_dirty = Rc::new(Cell::new(false));
-
-    // Paint-only counterpart to `repaint`: no rebuild, no layout.
-    let repaint_light: Rc<dyn Fn()> = Rc::new({
-        let repaint_scene = repaint_scene.clone();
-        let window = shared_window.clone();
-        let dirty = dirty.clone();
-        let scene_dirty = scene_dirty.clone();
-        move || {
-            if let Some(window) = window.borrow().as_ref() {
-                if !dirty.get() && !scene_dirty.replace(true) {
-                    window.request_redraw();
-                }
-            } else {
-                repaint_scene();
-            }
-        }
-    });
-
-    let effect_repaint = repaint.clone();
-    let effect = create_effect(move || effect_repaint());
 
     WindowSpec {
         options,
         popup,
         on_window_ready,
-        repaint,
-        repaint_scene,
-        repaint_light,
-        repaint_animated,
-        render,
-        dirty,
-        scene_dirty,
-        animated_damage,
-        light_damage,
-        scene_repaint_partial,
+        pipeline,
         _effect: effect,
-        viewport,
-        scale_factor,
-        frame,
-        shared_window,
-        close_requested,
-        focus_lost_handler,
-        last_input_serial,
-        theme_provider,
-        focused,
-        caret_visible,
+        close_requested: Rc::new(Cell::new(false)),
+        focus_lost_handler: Rc::new(RefCell::new(None)),
+        last_input_serial: Rc::new(Cell::new(None)),
     }
 }
 
@@ -2468,48 +2291,33 @@ mod tests {
                 None,
                 false,
             );
-            WindowEventHarness {
-                state: WindowState {
-                    viewport: spec.viewport,
-                    scale_factor: spec.scale_factor,
-                    frame: spec.frame,
-                    window: spec.shared_window,
-                    close_requested: spec.close_requested,
-                    focus_lost_handler: spec.focus_lost_handler,
-                    last_input_serial: spec.last_input_serial,
-                    close_behavior: CloseBehavior::Close,
-                    frameless_resizable: false,
-                    presenter: None,
-                    pointer_pos: Point::default(),
-                    modifiers: PlatformModifiers::default(),
-                    focused: spec.focused,
-                    caret_visible: spec.caret_visible,
-                    next_blink: Instant::now() + CARET_BLINK_INTERVAL,
-                    next_animation: Instant::now(),
-                    next_resize_render: Instant::now(),
-                    resize_pending: false,
-                    pending_viewport: None,
-                    current_cursor: CursorIcon::Default,
-                    hovered: None,
-                    dragging: None,
-                    drag_end: None,
-                    drag_click: None,
-                    pending_drag: None,
-                    repaint: spec.repaint,
-                    repaint_scene: spec.repaint_scene,
-                    repaint_light: spec.repaint_light,
-                    repaint_animated: spec.repaint_animated,
-                    render: spec.render,
-                    dirty: spec.dirty,
-                    scene_dirty: spec.scene_dirty,
-                    animated_damage: spec.animated_damage,
-                    light_damage: spec.light_damage,
-                    scene_repaint_partial: spec.scene_repaint_partial,
-                    _effect: spec._effect,
-                    t_run: Instant::now(),
-                    first_present_logged: false,
-                },
-            }
+            let now = Instant::now();
+            let mut state = WindowState {
+                pipeline: spec.pipeline,
+                close_requested: spec.close_requested,
+                focus_lost_handler: spec.focus_lost_handler,
+                last_input_serial: spec.last_input_serial,
+                close_behavior: CloseBehavior::Close,
+                frameless_resizable: false,
+                presenter: None,
+                pointer_pos: Point::default(),
+                modifiers: PlatformModifiers::default(),
+                next_blink: now + CARET_BLINK_INTERVAL,
+                next_animation: now,
+                next_devtools_refresh: now,
+                pending_viewport: None,
+                current_cursor: CursorIcon::Default,
+                hovered: None,
+                dragging: None,
+                drag_end: None,
+                drag_click: None,
+                pending_drag: None,
+                _effect: spec._effect,
+                t_run: now,
+                first_present_logged: false,
+            };
+            state.redraw();
+            WindowEventHarness { state }
         }
 
         fn send(&mut self, event: WindowEvent) {
@@ -2817,6 +2625,7 @@ mod tests {
         harness.send(WindowEvent::CursorMoved {
             position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
         });
+        harness.send(WindowEvent::RedrawRequested);
         let after_enter = paint_calls.get();
         assert!(
             after_enter > baseline,
@@ -2826,6 +2635,7 @@ mod tests {
         harness.send(WindowEvent::CursorMoved {
             position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },
         });
+        harness.send(WindowEvent::RedrawRequested);
         assert_eq!(
             paint_calls.get(),
             after_enter,
@@ -2849,8 +2659,14 @@ mod tests {
             .into()
         }
 
-        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {
+        fn paint(&self, painter: &mut dyn creamui_core::Painter, rect: creamui_core::Rect) {
             self.paint_calls.set(self.paint_calls.get() + 1);
+            let color = if painter.hovered(rect) {
+                Color::rgb(255, 0, 0)
+            } else {
+                Color::rgb(0, 0, 255)
+            };
+            painter.fill_rect(rect, color, 0.0);
         }
 
         fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
@@ -2884,7 +2700,7 @@ mod tests {
     }
 
     #[test]
-    fn hovering_a_small_region_queues_a_scoped_damage_rect() {
+    fn many_invalidations_coalesce_into_one_frame() {
         let paint_calls = Rc::new(Cell::new(0));
         let mut harness = WindowEventHarness::new({
             let paint_calls = paint_calls.clone();
@@ -2894,23 +2710,63 @@ mod tests {
                 })
             }
         });
+        let baseline = paint_calls.get();
+        for _ in 0..10 {
+            harness.state.pipeline.invalidate_layout();
+            harness.state.pipeline.invalidate_paint();
+        }
+        assert_eq!(
+            paint_calls.get(),
+            baseline,
+            "invalidation alone never paints"
+        );
+        harness.send(WindowEvent::RedrawRequested);
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(paint_calls.get(), baseline + 1);
+    }
 
+    #[test]
+    fn hovering_a_small_region_presents_only_its_pixels() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(SmallHoverRoot {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
         harness.send(WindowEvent::CursorMoved {
             position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
         });
+        harness.send(WindowEvent::RedrawRequested);
+        let frame = harness.state.pipeline.frame.borrow();
+        let report = &frame.last_report;
+        assert!(report.damaged_pixels > 0, "the hovered widget must repaint");
+        assert!(
+            report.damaged_pixels < report.frame_pixels,
+            "a hover change must not repaint the whole window: {report:?}"
+        );
+    }
 
-        assert!(paint_calls.get() > 0, "entering the region must repaint it");
-        assert!(
-            harness.state.scene_repaint_partial.get(),
-            "a hover region smaller than the window must scope the repaint"
-        );
-        let damage = harness.state.animated_damage.borrow();
-        assert_eq!(damage.len(), 1);
-        assert!(
-            damage[0].width < 100.0 && damage[0].height < 100.0,
-            "the queued damage rect must not cover the full window: {:?}",
-            *damage
-        );
+    #[test]
+    fn resizing_updates_layout_on_the_next_frame() {
+        let sizes = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let sizes = sizes.clone();
+            move |size| {
+                sizes.borrow_mut().push(size);
+                Box::new(BlankWidget)
+            }
+        });
+        for width in [120, 140, 160] {
+            harness.send(WindowEvent::Resized(creamui_platform::PhysicalSize {
+                width,
+                height: 90,
+            }));
+        }
+        let builds = sizes.borrow().len();
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(sizes.borrow().len(), builds + 1, "one rebuild per frame");
+        assert_eq!(sizes.borrow().last().unwrap().width, 160.0);
+        let frame = harness.state.pipeline.frame.borrow();
+        assert_eq!(frame.presented.as_ref().unwrap().width, 160);
     }
 
     #[test]

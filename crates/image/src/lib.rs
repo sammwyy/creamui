@@ -8,10 +8,9 @@ mod background;
 mod svg;
 
 use creamui_core::layout::Dimension;
-use creamui_core::{Painter, Rect, Style, Styled, Widget};
+use creamui_core::{Painter, Rect, RgbaImage, Style, Styled, Widget};
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 
 pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
 #[cfg(feature = "svg")]
@@ -34,9 +33,7 @@ pub enum ImageFit {
 /// A decoded RGBA image ready for reuse across widget-tree rebuilds.
 #[derive(Clone)]
 pub struct ImageData {
-    width: u32,
-    height: u32,
-    pixels: Arc<[u8]>,
+    image: RgbaImage,
 }
 
 impl ImageData {
@@ -59,11 +56,12 @@ impl ImageData {
         let expected = (width as usize)
             .checked_mul(height as usize)
             .and_then(|pixels| pixels.checked_mul(4));
-        if width == 0 || height == 0 || expected != Some(pixels.len()) {
+        let length = pixels.len();
+        if width == 0 || height == 0 || expected != Some(length) {
             return Err(ImageError::InvalidPixels {
                 width,
                 height,
-                length: pixels.len(),
+                length,
             });
         }
         for pixel in pixels.chunks_exact_mut(4) {
@@ -72,21 +70,26 @@ impl ImageData {
             pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
             pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
         }
-        Ok(Self {
-            width,
-            height,
-            pixels: pixels.into(),
-        })
+        RgbaImage::new(width, height, pixels)
+            .map(|image| Self { image })
+            .ok_or(ImageError::InvalidPixels {
+                width,
+                height,
+                length,
+            })
     }
 
     pub fn width(&self) -> u32 {
-        self.width
+        self.image.width()
     }
     pub fn height(&self) -> u32 {
-        self.height
+        self.image.height()
     }
     pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+        self.image.pixels()
+    }
+    pub fn image(&self) -> &RgbaImage {
+        &self.image
     }
 
     /// Recolors every visible pixel to `color`, keeping each pixel's own
@@ -95,15 +98,15 @@ impl ImageData {
     /// which is what makes a single icon file reusable across a light and a
     /// dark theme: decode once, then tint to whatever the active theme's
     /// icon color is.
-    pub fn tinted(mut self, color: creamui_theme::Color) -> Self {
-        let pixels = Arc::make_mut(&mut self.pixels);
-        for pixel in pixels.chunks_exact_mut(4) {
-            let alpha = pixel[3] as u16;
-            pixel[0] = (color.r as u16 * alpha / 255) as u8;
-            pixel[1] = (color.g as u16 * alpha / 255) as u8;
-            pixel[2] = (color.b as u16 * alpha / 255) as u8;
+    pub fn tinted(self, color: creamui_theme::Color) -> Self {
+        Self {
+            image: self.image.map_pixels(|pixel| {
+                let alpha = pixel[3] as u16;
+                pixel[0] = (color.r as u16 * alpha / 255) as u8;
+                pixel[1] = (color.g as u16 * alpha / 255) as u8;
+                pixel[2] = (color.b as u16 * alpha / 255) as u8;
+            }),
         }
-        self
     }
 }
 
@@ -152,8 +155,8 @@ impl Image {
         Self {
             style: creamui_core::layout::Style {
                 size: creamui_core::layout::Size {
-                    width: Dimension::Length(data.width as f32),
-                    height: Dimension::Length(data.height as f32),
+                    width: Dimension::Length(data.width() as f32),
+                    height: Dimension::Length(data.height() as f32),
                 },
                 ..Default::default()
             }
@@ -172,8 +175,8 @@ impl Image {
     }
 
     fn destination(&self, rect: Rect) -> Rect {
-        let source_width = self.data.width as f32;
-        let source_height = self.data.height as f32;
+        let source_width = self.data.width() as f32;
+        let source_height = self.data.height() as f32;
         let scale = match self.fit {
             ImageFit::Fill => return rect,
             ImageFit::Contain => (rect.width / source_width).min(rect.height / source_height),
@@ -196,53 +199,14 @@ impl Widget for Image {
         self.style.clone()
     }
 
-    /// Identity-based, not content-based: the same decoded `ImageData`
-    /// (e.g. cloned out of a cache) always yields the same pointer, and a
-    /// fresh decode of identical pixels gets a fresh `Arc` allocation and a
-    /// different one. Collides only if an `Arc<[u8]>` is freed and a new
-    /// allocation happens to reuse its exact address before this fingerprint
-    /// is compared against — not ruled out by the type system, but not a
-    /// realistic concern for how `ImageData` is actually produced/cached.
-    fn paint_fingerprint(&self) -> Option<u64> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (Arc::as_ptr(&self.data.pixels) as *const u8 as usize).hash(&mut hasher);
-        self.data.width.hash(&mut hasher);
-        self.data.height.hash(&mut hasher);
-        self.fit.hash(&mut hasher);
-        self.style
-            .paint
-            .corner_radius
-            .map(f32::to_bits)
-            .hash(&mut hasher);
-        Some(hasher.finish())
-    }
-
-    // `ImageFit::Contain` letterboxes rather than covering `rect`, and draws
-    // no background of its own, so it can leave real gaps the same way text
-    // does.
-    fn paints_transparently(&self) -> bool {
-        true
-    }
-
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let corner_radius = self.style.paint.corner_radius.unwrap_or(0.0);
         if matches!(self.fit, ImageFit::Cover) || corner_radius > 0.0 {
             painter.push_clip_rounded(rect, corner_radius);
-            painter.draw_rgba_image(
-                self.destination(rect),
-                self.data.pixels(),
-                self.data.width,
-                self.data.height,
-            );
+            painter.draw_image(self.destination(rect), self.data.image(), None);
             painter.pop_clip();
         } else {
-            painter.draw_rgba_image(
-                self.destination(rect),
-                self.data.pixels(),
-                self.data.width,
-                self.data.height,
-            );
+            painter.draw_image(self.destination(rect), self.data.image(), None);
         }
     }
 }
@@ -266,8 +230,13 @@ mod tests {
         fn fill_rect(&mut self, _: Rect, _: creamui_theme::Color, _: f32) {}
         fn stroke_rect(&mut self, _: Rect, _: creamui_theme::Color, _: f32, _: f32) {}
         fn fill_text(&mut self, _: Rect, _: &str, _: creamui_theme::Color, _: f32, _: TextAlign) {}
-        fn draw_rgba_image(&mut self, rect: Rect, _: &[u8], width: u32, height: u32) {
-            self.image = Some((rect, width, height));
+        fn draw_image(
+            &mut self,
+            rect: Rect,
+            image: &RgbaImage,
+            _tint: Option<creamui_theme::Color>,
+        ) {
+            self.image = Some((rect, image.width(), image.height()));
         }
     }
 
@@ -301,21 +270,6 @@ mod tests {
     fn rejects_image_sizes_that_overflow_rgba_buffer_length() {
         let result = ImageData::from_rgba(u32::MAX, u32::MAX, Vec::new());
         assert!(matches!(result, Err(ImageError::InvalidPixels { .. })));
-    }
-
-    #[test]
-    fn fingerprint_is_stable_across_clones_of_the_same_decoded_data() {
-        let data = ImageData::from_rgba(2, 2, vec![255; 16]).unwrap();
-        let a = Image::new(data.clone());
-        let b = Image::new(data);
-        assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
-    }
-
-    #[test]
-    fn fingerprint_differs_for_independently_decoded_identical_pixels() {
-        let a = Image::new(ImageData::from_rgba(2, 2, vec![255; 16]).unwrap());
-        let b = Image::new(ImageData::from_rgba(2, 2, vec![255; 16]).unwrap());
-        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
     }
 
     #[test]

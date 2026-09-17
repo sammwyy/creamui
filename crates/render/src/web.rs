@@ -1,13 +1,17 @@
-//! Web presentation: copies the rasterized frame into the platform canvas.
+//! Web presentation: copies the damaged parts of the rasterized frame into
+//! the platform canvas.
 
+use crate::display_list::Bounds;
 use creamui_platform::PlatformWindow;
 use std::sync::Arc;
+use tiny_skia::Pixmap;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, ImageData};
 
 pub struct WebState {
     canvas: HtmlCanvasElement,
     context: CanvasRenderingContext2d,
+    straight: Vec<u8>,
 }
 
 impl WebState {
@@ -21,25 +25,54 @@ impl WebState {
             .expect("browser does not support a 2D canvas context")
             .dyn_into::<CanvasRenderingContext2d>()
             .expect("canvas context was not CanvasRenderingContext2d");
-        Self { canvas, context }
+        Self {
+            canvas,
+            context,
+            straight: Vec::new(),
+        }
     }
 
-    pub fn present(&mut self, rgba: &[u8], width: u32, height: u32) {
-        // The `<canvas>` backing pixel buffer (its `width`/`height` IDL
-        // attributes) is independent of its CSS box size and the platform never
-        // touches it — left at the browser default (300x150) it silently
-        // crops every frame and the CSS-sized box then stretches that crop,
-        // rendering blurry. Keep it in lockstep with the painted frame so a
-        // CSS-fullscreen canvas gets a full-resolution, uncropped frame.
-        if self.canvas.width() != width || self.canvas.height() != height {
+    pub fn present(&mut self, frame: &Pixmap, regions: &[Bounds]) {
+        let (width, height) = (frame.width(), frame.height());
+        // The canvas backing store is independent of its CSS box; left at the
+        // browser default it would crop and then stretch every frame.
+        let resized = self.canvas.width() != width || self.canvas.height() != height;
+        if resized {
             self.canvas.set_width(width);
             self.canvas.set_height(height);
         }
-        let data =
-            ImageData::new_with_u8_clamped_array_and_sh(wasm_bindgen::Clamped(rgba), width, height)
-                .expect("could not create browser image data");
-        self.context
-            .put_image_data(&data, 0.0, 0.0)
-            .expect("could not present CreamUI frame to canvas");
+        self.straight.clear();
+        self.straight.extend(frame.pixels().iter().flat_map(|px| {
+            let c = px.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        }));
+        let data = match ImageData::new_with_u8_clamped_array_and_sh(
+            wasm_bindgen::Clamped(&self.straight),
+            width,
+            height,
+        ) {
+            Ok(data) => data,
+            Err(err) => {
+                log::error!("creamui-render: could not create canvas image data: {err:?}");
+                return;
+            }
+        };
+        let full = [Bounds::new(0.0, 0.0, width as f32, height as f32)];
+        for region in if resized { &full[..] } else { regions } {
+            let result = self
+                .context
+                .put_image_data_with_dirty_x_and_dirty_y_and_dirty_width_and_dirty_height(
+                    &data,
+                    0.0,
+                    0.0,
+                    region.x0 as f64,
+                    region.y0 as f64,
+                    region.width() as f64,
+                    region.height() as f64,
+                );
+            if let Err(err) = result {
+                log::error!("creamui-render: could not present frame to canvas: {err:?}");
+            }
+        }
     }
 }

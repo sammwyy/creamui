@@ -6,6 +6,38 @@
 
 ---
 
+## 0. Status (2026-09-17)
+
+The rendering half of this plan landed ahead of the runtime-tree half,
+modeled on gpui/Zed and Slint rather than on the per-node GPU stores of
+Phase 8:
+
+- **Done:** Phase 7's retained paint representation, as a whole-frame
+  `DisplayList` recorded through the existing `Painter` trait
+  (`crates/render/src/display_list.rs`, `recorder.rs`). Frames are diffed
+  by common prefix/suffix plus pairwise comparison, which also covers
+  paint-order changes, so 13.5's central damage tracking exists without
+  per-node fragments.
+- **Done:** Phase 8 as one instanced SDF pipeline (quads, borders, lines,
+  glyphs, images) with batches split only at image changes
+  (`crates/render/src/gpu.rs`). The unwired `gpu_scene` module was
+  deleted. CPU raster is the fallback and reference backend (21.5), replays
+  only damaged regions, and is pixel-compared against the GPU in tests.
+- **Done:** 15.5's shared layout cache for painting (`text.rs`); 20.3's
+  per-stage frame timeline (devtools, `CUI_FRAME_LOG`).
+- **Removed:** the paint-time layer promotion and fingerprint cache. It was
+  the main source of stale-pixel artifacts and memory growth; recording is
+  cheap enough that retained pixels are not needed below the compositor.
+- **Still open:** Phases 2–6 are built but not wired into `window.rs`;
+  widgets are still rebuilt and reconciled from the root on every signal
+  change, which now dominates large updates (see
+  `docs/performance/baseline.md`). The next steps with the best payoff are
+  a scroll layer (16.2) and wiring the runtime tree so a signal write
+  re-records one subtree instead of rebuilding the whole widget tree.
+  Remaining gaps are tracked in `TODO.md`.
+
+---
+
 ## 1. Executive Summary
 
 CreamUI already has several useful foundations:

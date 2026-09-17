@@ -1,11 +1,9 @@
-//! Cost of a hover-triggered repaint. There is no node-local hover repaint
-//! path: a hover transition repaints the whole retained tree via
-//! [`Renderer::repaint_focused`], so this measures how that cost scales
-//! with tree size.
+//! Cost of a hover transition: re-record the tree, diff, and rasterize only
+//! the rows whose appearance changed.
 
-use creamui_bench::painter::raster_painter;
+use creamui_bench::painter::FramePipeline;
 use creamui_bench::scenes;
-use creamui_core::{Renderer, Size};
+use creamui_core::{Point, Renderer, Size};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 const VIEWPORT: Size = Size {
@@ -13,20 +11,27 @@ const VIEWPORT: Size = Size {
     height: 1080.0,
 };
 
-fn bench_hover_triggered_repaint(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hover/repaint_after_hover_change");
-    for &count in &[1_000usize, 10_000, 50_000] {
+fn bench_hover_transition(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hover/frame_after_hover_change");
+    for &count in &[1_000usize, 10_000] {
         let mut renderer = Renderer::new();
-        let mut painter = raster_painter(1920, 1080);
-        renderer.render(scenes::wide_tree(count), VIEWPORT, &mut painter);
+        let mut frames = FramePipeline::new(1920, 1080, 1.0);
+        renderer.update(scenes::hover_list(count), VIEWPORT);
+        frames.frame(&renderer);
+        let mut row = 0;
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| {
-                renderer.repaint_focused(&mut painter, None, false);
+                row = (row + 1) % 40;
+                frames.set_pointer(Some(Point {
+                    x: 10.0,
+                    y: row as f32 * 24.0 + 4.0,
+                }));
+                frames.frame(&renderer)
             });
         });
     }
     group.finish();
 }
 
-criterion_group!(benches, bench_hover_triggered_repaint);
+criterion_group!(benches, bench_hover_transition);
 criterion_main!(benches);

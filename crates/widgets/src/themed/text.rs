@@ -80,14 +80,6 @@ impl Widget for Text {
         self.inner.paint(painter, rect);
     }
 
-    fn paint_fingerprint(&self) -> Option<u64> {
-        self.inner.paint_fingerprint()
-    }
-
-    fn paints_transparently(&self) -> bool {
-        self.inner.paints_transparently()
-    }
-
     fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
         self.inner.legacy_node_kind()
     }
@@ -169,14 +161,6 @@ impl Widget for Heading {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect);
-    }
-
-    fn paint_fingerprint(&self) -> Option<u64> {
-        self.inner.paint_fingerprint()
-    }
-
-    fn paints_transparently(&self) -> bool {
-        self.inner.paints_transparently()
     }
 
     fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {

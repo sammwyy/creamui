@@ -1,46 +1,70 @@
-//! Cost of the text shaping cache (`creamui_render::ShapeCache`) —
-//! REFACTOR.md 15.2/15.5's shaping cache: re-shaping already-cached text
-//! should cost a hashmap lookup, not a `fontdue` layout pass, and that
-//! lookup should stay flat regardless of how much other distinct text is
-//! cached alongside it.
+//! Cost of recording text: a repeated label must cost a cache lookup, not a
+//! `fontdue` layout pass.
 
-use creamui_render::ShapeCache;
+use creamui_core::{Painter, Rect, TextAlign};
+use creamui_render::SceneRecorder;
+use creamui_theme::{Color, ColorScheme};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-fn bench_shape_cache_miss(c: &mut Criterion) {
+const RECT: Rect = Rect {
+    x: 0.0,
+    y: 0.0,
+    width: 400.0,
+    height: 20.0,
+};
+
+fn begin(recorder: &mut SceneRecorder) {
+    recorder.begin(400, 20, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+}
+
+fn bench_layout_miss(c: &mut Criterion) {
     c.bench_function("text_shape/cache_miss", |b| {
-        let mut cache = ShapeCache::new();
+        let mut recorder = SceneRecorder::new();
+        begin(&mut recorder);
         let mut tick = 0u32;
         b.iter(|| {
             tick = tick.wrapping_add(1);
-            cache.shape(&format!("hello world {tick}"), 16.0, 400.0, None, false);
+            let text = format!("hello world {tick}");
+            recorder.fill_text(
+                RECT,
+                &text,
+                Color::rgb(255, 255, 255),
+                16.0,
+                TextAlign::Start,
+            );
         });
     });
 }
 
-/// Re-shaping the same already-cached text must cost the same whether 10
-/// or 10,000 other distinct texts are already warm in the cache.
-fn bench_shape_cache_hit_independent_of_cache_size(c: &mut Criterion) {
+fn bench_layout_hit(c: &mut Criterion) {
     let mut group = c.benchmark_group("text_shape/cache_hit");
     for &count in &[10usize, 1_000, 10_000] {
-        let mut cache = ShapeCache::with_capacity(count + 1);
+        let mut recorder = SceneRecorder::new();
+        begin(&mut recorder);
         for i in 0..count {
-            cache.shape(&format!("distinct text {i}"), 16.0, 400.0, None, false);
+            let text = format!("distinct text {i}");
+            recorder.fill_text(
+                RECT,
+                &text,
+                Color::rgb(255, 255, 255),
+                16.0,
+                TextAlign::Start,
+            );
         }
-        cache.shape("target text", 16.0, 400.0, None, false);
-
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| {
-                cache.shape("target text", 16.0, 400.0, None, false);
+                recorder.fill_text(
+                    RECT,
+                    "distinct text 3",
+                    Color::rgb(255, 255, 255),
+                    16.0,
+                    TextAlign::Start,
+                );
             });
         });
     }
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_shape_cache_miss,
-    bench_shape_cache_hit_independent_of_cache_size
-);
+criterion_group!(benches, bench_layout_miss, bench_layout_hit);
 criterion_main!(benches);

@@ -4,6 +4,29 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Replaced CPU-raster-then-upload rendering with a retained display list:
+  widgets record primitives, consecutive frames are diffed into damage,
+  and only changed pixels are redrawn and presented. The GPU backend now
+  draws rounded rects, borders, lines, glyphs and images with one instanced
+  SDF pipeline and falls back to the CPU backend when no adapter works.
+- Removed the per-widget pixel layer cache (`Painter::push_layer` and
+  friends, `Widget::paint_fingerprint`, `Widget::paints_transparently`),
+  which pasted stale backdrops and allocated window-sized clip masks.
+- The CPU backend presents through an `Argb8888` `wl_shm` buffer on Wayland
+  and passes alpha to `softbuffer` elsewhere, so transparent windows work
+  without a GPU.
+- Text layouts and glyph bitmaps are cached across frames.
+- Resizes lay out on the next frame instead of after a 100 ms settle delay,
+  clicks and key presses no longer render synchronously, and widgets
+  scrolled out of their clip are not painted.
+- `Painter::draw_rgba_image` became `Painter::draw_image`, taking a shared
+  `RgbaImage` and an optional tint; `IconImage` holds an `RgbaImage`.
+- Keyboard focus no longer jumps to another widget when a focusable one is
+  scrolled out of view.
+- Devtools report per-stage frame timings, damage and cache sizes, and
+  `CUI_FRAME_LOG=1` prints them per frame. Added the `gpu` benchmark and
+  the `frame_report` example.
+
 - Replaced the public layout-only widget style contract with CreamUI's common
   `Style`, covering layout, paint, typography, and stable interaction-state
   patches. Existing `creamui_core::layout::Style` declarations remain accepted

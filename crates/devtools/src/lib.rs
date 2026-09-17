@@ -1,12 +1,14 @@
 //! Development-only tools for CreamUI applications.
 //!
 //! Call [`init`] before creating CreamUI windows. Every window gets its own
-//! FPS/frame-time overlay; CPU and memory are process-wide, so all windows
-//! share one reading. Press F3 to show or hide a window's overlay.
+//! overlay with FPS, per-stage frame timings, damage and cache statistics;
+//! CPU and memory are process-wide, so all windows share one reading. Press
+//! F3 to show or hide a window's overlay. Set `CUI_FRAME_LOG=1` to also print
+//! every presented frame's timings to stderr.
 
 use creamui_core::metrics::FrameMetrics;
 use creamui_core::{Painter, Rect, Size, TextAlign};
-use creamui_render::{install_devtools, Devtools, WindowDevtools};
+use creamui_render::{install_devtools, Devtools, FrameReport, WindowDevtools};
 use creamui_theme::Color;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -31,12 +33,18 @@ pub enum DebugPosition {
     TopRight,
 }
 
+const OVERLAY_REFRESH: Duration = Duration::from_millis(500);
+const LOG_SUMMARY_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Configuration supplied to [`init_with`].
 #[derive(Debug, Clone, Copy)]
 pub struct DevtoolsOptions {
     /// Starts hidden by default; F3 toggles the overlay for each window.
     pub initially_visible: bool,
     pub position: DebugPosition,
+    /// Prints each presented frame and a once-per-second summary to stderr.
+    /// Defaults to whether `CUI_FRAME_LOG=1` is set.
+    pub log_frames: bool,
 }
 
 impl Default for DevtoolsOptions {
@@ -44,6 +52,7 @@ impl Default for DevtoolsOptions {
         Self {
             initially_visible: false,
             position: DebugPosition::BottomRight,
+            log_frames: std::env::var("CUI_FRAME_LOG").as_deref() == Ok("1"),
         }
     }
 }
@@ -75,10 +84,11 @@ impl Devtools for BenchmarkDevtools {
         Box::new(BenchmarkWindow {
             visible: self.options.initially_visible,
             position: self.options.position,
+            log_frames: self.options.log_frames,
             frame_stats: FrameStats::new(),
             process_stats: self.process_stats.clone(),
-            #[cfg(feature = "perf-metrics")]
-            engine_metrics: FrameMetrics::default(),
+            last: FrameReport::default(),
+            last_summary: Instant::now(),
         })
     }
 }
@@ -86,52 +96,38 @@ impl Devtools for BenchmarkDevtools {
 struct BenchmarkWindow {
     visible: bool,
     position: DebugPosition,
+    log_frames: bool,
     frame_stats: FrameStats,
     process_stats: Rc<RefCell<ProcessStats>>,
-    #[cfg(feature = "perf-metrics")]
-    engine_metrics: FrameMetrics,
-}
-
-impl BenchmarkWindow {
-    #[cfg(feature = "perf-metrics")]
-    fn engine_metrics(&self) -> Option<&FrameMetrics> {
-        Some(&self.engine_metrics)
-    }
-    #[cfg(not(feature = "perf-metrics"))]
-    fn engine_metrics(&self) -> Option<&FrameMetrics> {
-        None
-    }
+    last: FrameReport,
+    last_summary: Instant,
 }
 
 impl WindowDevtools for BenchmarkWindow {
-    fn after_paint(
-        &mut self,
-        painter: &mut dyn Painter,
-        viewport: Size,
-        paint_duration: Duration,
-        metrics: FrameMetrics,
-    ) {
-        self.frame_stats.record_frame(paint_duration);
+    fn frame_presented(&mut self, report: &FrameReport) {
+        self.frame_stats.record_frame(report.total());
         self.process_stats.borrow_mut().maybe_sample();
-        #[cfg(feature = "perf-metrics")]
-        {
-            self.engine_metrics = metrics;
+        self.last = report.clone();
+        if !self.log_frames {
+            return;
         }
-        #[cfg(not(feature = "perf-metrics"))]
-        let _ = metrics;
-        if self.visible {
-            draw_overlay(
-                painter,
-                viewport,
-                self.position,
-                &self.frame_stats,
-                &self.process_stats.borrow(),
-                self.engine_metrics(),
+        eprintln!("[creamui] {}", frame_line(report));
+        if self.last_summary.elapsed() >= LOG_SUMMARY_INTERVAL {
+            self.last_summary = Instant::now();
+            let process = self.process_stats.borrow();
+            eprintln!(
+                "[creamui] fps {:.0} | frame avg {:.2} max {:.2} ms | {} frames | RAM {} | CPU {}",
+                self.frame_stats.fps(),
+                self.frame_stats.avg_ms(),
+                self.frame_stats.max_ms(),
+                self.frame_stats.repaint_count(),
+                format_ram(process.ram_mb()),
+                format_cpu(process.cpu_percent()),
             );
         }
     }
 
-    fn repaint_overlay(&self, painter: &mut dyn Painter, viewport: Size) {
+    fn paint_overlay(&self, painter: &mut dyn Painter, viewport: Size) {
         if self.visible {
             draw_overlay(
                 painter,
@@ -139,15 +135,50 @@ impl WindowDevtools for BenchmarkWindow {
                 self.position,
                 &self.frame_stats,
                 &self.process_stats.borrow(),
-                self.engine_metrics(),
+                &self.last,
             );
         }
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        self.visible.then_some(OVERLAY_REFRESH)
     }
 
     fn toggle(&mut self) -> bool {
         self.visible = !self.visible;
         true
     }
+}
+
+fn ms(duration: Duration) -> f32 {
+    duration.as_secs_f32() * 1000.0
+}
+
+fn damage_percent(report: &FrameReport) -> f32 {
+    if report.frame_pixels == 0 {
+        0.0
+    } else {
+        report.damaged_pixels as f32 / report.frame_pixels as f32 * 100.0
+    }
+}
+
+fn frame_line(report: &FrameReport) -> String {
+    format!(
+        "{} {:.2} ms{} | build {:.2} layout {:.2} record {:.2} raster {:.2} present {:.2} | {} items | damage {} rects {:.1}% | text {} layouts {} glyphs",
+        report.backend,
+        ms(report.total()),
+        if report.rebuilt { " rebuilt" } else { "" },
+        ms(report.build),
+        ms(report.layout),
+        ms(report.record),
+        ms(report.raster),
+        ms(report.present),
+        report.display_items,
+        report.damaged_regions,
+        damage_percent(report),
+        report.cached_text_layouts,
+        report.cached_glyphs,
+    )
 }
 
 const FRAME_HISTORY_LEN: usize = 120;
@@ -383,25 +414,61 @@ fn format_bytes(bytes: u64) -> String {
 fn overlay_text(
     frame_stats: &FrameStats,
     process_stats: &ProcessStats,
-    engine_metrics: Option<&FrameMetrics>,
+    report: &FrameReport,
 ) -> String {
     let mut text = format!(
-        "FPS {:.0}\nFrame {:.1}/{:.1}/{:.1}/{:.1} ms\n(cur/avg/min/max)\nRepaints {}\nRAM {}\nCPU {}",
-        frame_stats.fps(), frame_stats.current_ms(), frame_stats.avg_ms(), frame_stats.min_ms(), frame_stats.max_ms(), frame_stats.repaint_count(), format_ram(process_stats.ram_mb()), format_cpu(process_stats.cpu_percent()),
+        "FPS {:.0}  frame {:.2} ms\navg/min/max {:.1}/{:.1}/{:.1} ms\nbuild {:.2}  layout {:.2}\nrecord {:.2}  raster {:.2}\npresent {:.2}  frames {}\n{} {}\nitems {}  damage {:.1}%\ntext {} / glyphs {}\nRAM {}  CPU {}",
+        frame_stats.fps(),
+        frame_stats.current_ms(),
+        frame_stats.avg_ms(),
+        frame_stats.min_ms(),
+        frame_stats.max_ms(),
+        ms(report.build),
+        ms(report.layout),
+        ms(report.record),
+        ms(report.raster),
+        ms(report.present),
+        frame_stats.repaint_count(),
+        report.backend,
+        short_adapter(report.adapter.as_deref()),
+        report.display_items,
+        damage_percent(report),
+        report.cached_text_layouts,
+        report.cached_glyphs,
+        format_ram(process_stats.ram_mb()),
+        format_cpu(process_stats.cpu_percent()),
     );
-    if let Some(m) = engine_metrics {
-        text.push_str(&format!(
-            "\n--- engine ---\nReconcile {}\nTaffy s/c/ch {}/{}/{}\nLayout {}  Measure {}\nPaint v/r {}/{}\nHit/Composite {}/{}\nDamage {} rects / {} px\nGPU {}  Draws {}",
-            m.reconcile_visits,
-            m.taffy_style_writes, m.taffy_context_writes, m.taffy_children_writes,
-            m.layout_runs, m.measure_calls,
-            m.paint_nodes_visited, m.paint_nodes_recorded,
-            m.hit_nodes_updated, m.composite_nodes_updated,
-            m.damaged_rect_count, m.damaged_pixel_area,
-            format_bytes(m.gpu_upload_bytes), m.draw_calls,
-        ));
+    if cfg!(feature = "perf-metrics") {
+        text.push_str(&engine_text(&report.metrics));
     }
     text
+}
+
+fn short_adapter(adapter: Option<&str>) -> &str {
+    let name = adapter.unwrap_or("");
+    let name = name.split(" (").next().unwrap_or(name);
+    match name.char_indices().nth(26) {
+        Some((end, _)) => &name[..end],
+        None => name,
+    }
+}
+
+fn engine_text(m: &FrameMetrics) -> String {
+    format!(
+        "\n--- engine ---\nReconcile {}\nTaffy s/c/ch {}/{}/{}\nLayout {}  Measure {}\nPaint v/r {}/{}\nText layouts {}\nCPU px {}\nGPU {}  Draws {}",
+        m.reconcile_visits,
+        m.taffy_style_writes,
+        m.taffy_context_writes,
+        m.taffy_children_writes,
+        m.layout_runs,
+        m.measure_calls,
+        m.paint_nodes_visited,
+        m.paint_nodes_recorded,
+        m.text_layouts,
+        m.cpu_pixels_rasterized,
+        format_bytes(m.gpu_upload_bytes),
+        m.draw_calls,
+    )
 }
 
 fn draw_overlay(
@@ -410,17 +477,13 @@ fn draw_overlay(
     position: DebugPosition,
     frame_stats: &FrameStats,
     process_stats: &ProcessStats,
-    engine_metrics: Option<&FrameMetrics>,
+    report: &FrameReport,
 ) {
-    let text = overlay_text(frame_stats, process_stats, engine_metrics);
+    let text = overlay_text(frame_stats, process_stats, report);
     let font_size = 12.0;
-    let line_height = font_size * 1.5;
+    let line_height = font_size * 1.2;
     let padding = 10.0;
-    let width = if engine_metrics.is_some() {
-        230.0
-    } else {
-        190.0
-    };
+    let width = 250.0;
     let height = line_height * text.lines().count().max(1) as f32 + padding * 2.0;
     let margin = 12.0;
     let (x, y) = match position {
@@ -463,20 +526,48 @@ fn draw_overlay(
 mod tests {
     use super::*;
 
-    #[test]
-    fn f3_toggles_visibility() {
-        let mut window = BenchmarkWindow {
+    fn window() -> BenchmarkWindow {
+        BenchmarkWindow {
             visible: false,
             position: DebugPosition::default(),
+            log_frames: false,
             frame_stats: FrameStats::new(),
             process_stats: Rc::new(RefCell::new(ProcessStats::new())),
-            #[cfg(feature = "perf-metrics")]
-            engine_metrics: FrameMetrics::default(),
-        };
+            last: FrameReport::default(),
+            last_summary: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn f3_toggles_visibility_and_refresh() {
+        let mut window = window();
+        assert_eq!(window.refresh_interval(), None);
         assert!(window.toggle());
         assert!(window.visible);
+        assert_eq!(window.refresh_interval(), Some(OVERLAY_REFRESH));
         window.toggle();
         assert!(!window.visible);
+    }
+
+    #[test]
+    fn presented_frames_feed_the_statistics() {
+        let mut window = window();
+        let report = FrameReport {
+            backend: "cpu",
+            build: Duration::from_millis(1),
+            raster: Duration::from_millis(3),
+            display_items: 42,
+            damaged_pixels: 25,
+            frame_pixels: 100,
+            ..Default::default()
+        };
+        window.frame_presented(&report);
+        assert_eq!(window.frame_stats.repaint_count(), 1);
+        assert!((window.frame_stats.current_ms() - 4.0).abs() < 0.01);
+        let line = frame_line(&report);
+        assert!(line.starts_with("cpu 4.00 ms"), "{line}");
+        assert!(line.contains("42 items"));
+        assert!(line.contains("25.0%"));
     }
 
     #[test]
@@ -493,20 +584,36 @@ mod tests {
 
     #[test]
     fn overlay_text_uses_real_line_breaks() {
-        let text = overlay_text(&FrameStats::new(), &ProcessStats::new(), None);
+        let text = overlay_text(
+            &FrameStats::new(),
+            &ProcessStats::new(),
+            &FrameReport::default(),
+        );
         assert!(text.contains('\n'));
         assert!(!text.contains("\\n"));
     }
 
-    #[cfg(feature = "perf-metrics")]
     #[test]
-    fn overlay_text_appends_engine_counters_when_present() {
+    fn adapter_names_are_shortened() {
+        assert_eq!(short_adapter(None), "");
+        assert_eq!(
+            short_adapter(Some("llvmpipe (LLVM 20.1.8) (Vulkan)")),
+            "llvmpipe"
+        );
+        assert_eq!(
+            short_adapter(Some("An Extremely Long Graphics Adapter Name")).len(),
+            26
+        );
+    }
+
+    #[test]
+    fn engine_counters_are_listed() {
         let metrics = FrameMetrics {
             reconcile_visits: 3,
             draw_calls: 2,
             ..Default::default()
         };
-        let text = overlay_text(&FrameStats::new(), &ProcessStats::new(), Some(&metrics));
+        let text = engine_text(&metrics);
         assert!(text.contains("--- engine ---"));
         assert!(text.contains("Reconcile 3"));
     }

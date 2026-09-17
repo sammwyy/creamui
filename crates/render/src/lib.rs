@@ -1,32 +1,33 @@
 //! Rendering backend for CreamUI.
 //!
-//! Rasterization happens on the CPU via `tiny-skia` ([`painter::SkiaPainter`]);
-//! the GPU ([`gpu`]) only uploads and composites the result. This keeps the
-//! MVP's rendering code simple while still presenting through the GPU.
+//! Widgets paint into a [`SceneRecorder`], which records a backend-neutral
+//! [`DisplayList`]. Consecutive lists are diffed into [`Damage`]; the GPU
+//! backend ([`GpuRenderer`]) draws the list with one instanced SDF
+//! pipeline, while the software backend ([`Rasterizer`]) replays only the
+//! damaged regions with `tiny-skia` and presents just those pixels.
 
 mod backend;
 #[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 mod devtools;
-mod font;
+mod display_list;
 #[cfg(not(target_arch = "wasm32"))]
 mod gpu;
-#[cfg(not(target_arch = "wasm32"))]
-mod gpu_scene;
-mod painter;
+mod raster;
+mod recorder;
+mod text;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod window;
 
 pub use backend::RenderBackend;
 pub use creamui_platform as platform;
-pub use devtools::{install_devtools, Devtools, WindowDevtools};
+pub use devtools::{install_devtools, Devtools, FrameReport, WindowDevtools};
+pub use display_list::{damage, Bounds, Damage, DisplayList};
 #[cfg(not(target_arch = "wasm32"))]
-pub use gpu_scene::{
-    quad_instances_for_fragment, AtlasRect, GlyphAtlas, GlyphInstance, GlyphPrimitiveId,
-    GlyphStore, GpuPrimitiveId, GpuSceneState, QuadInstance, QuadStore, ShapeCache, ShapedRun,
-};
-pub use painter::SkiaPainter;
+pub use gpu::{GpuRenderer, HeadlessGpu};
+pub use raster::Rasterizer;
+pub use recorder::SceneRecorder;
 pub use window::{
     run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, PopupOptions, WindowHandle,
     WindowOptions,

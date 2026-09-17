@@ -3,7 +3,8 @@ use crate::layout::padding;
 use crate::RawText;
 use creamui_core::layout::{AlignItems, Style};
 use creamui_core::{
-    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, Styled, TextAlign, Widget,
+    BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, RgbaImage, Styled, TextAlign,
+    Widget,
 };
 use creamui_theme::{use_theme, Color, Theme};
 use std::rc::Rc;
@@ -38,9 +39,7 @@ pub enum Symbol {
 /// SVG/PNG icons hand in bytes they rasterized themselves.
 #[derive(Clone)]
 pub struct IconImage {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Rc<[u8]>,
+    pub image: RgbaImage,
     /// When true, every visible pixel is recolored to the `color` an
     /// [`Icon`] is drawn with (its alpha is all that survives) — for a
     /// single-color icon that must track the active/hover state and theme
@@ -95,18 +94,7 @@ impl Icon {
     ) {
         let symbol = match source.into() {
             IconSource::Image(image) => {
-                if image.monochrome {
-                    let mut tinted = image.rgba.to_vec();
-                    for pixel in tinted.chunks_exact_mut(4) {
-                        let alpha = pixel[3] as u16;
-                        pixel[0] = (color.r as u16 * alpha / 255) as u8;
-                        pixel[1] = (color.g as u16 * alpha / 255) as u8;
-                        pixel[2] = (color.b as u16 * alpha / 255) as u8;
-                    }
-                    painter.draw_rgba_image(rect, &tinted, image.width, image.height);
-                } else {
-                    painter.draw_rgba_image(rect, &image.rgba, image.width, image.height);
-                }
+                painter.draw_image(rect, &image.image, image.monochrome.then_some(color));
                 return;
             }
             IconSource::Initial {
@@ -275,36 +263,6 @@ impl Widget for Icon {
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         Self::draw(self.source.clone(), painter, rect, self.color);
-    }
-
-    fn paint_fingerprint(&self) -> Option<u64> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        match &self.source {
-            IconSource::Symbol(symbol) => symbol.hash(&mut hasher),
-            IconSource::Image(image) => {
-                (Rc::as_ptr(&image.rgba) as *const u8 as usize).hash(&mut hasher);
-                image.width.hash(&mut hasher);
-                image.height.hash(&mut hasher);
-                image.monochrome.hash(&mut hasher);
-            }
-            IconSource::Initial {
-                letter,
-                background,
-                text_color,
-            } => {
-                letter.hash(&mut hasher);
-                background.hash(&mut hasher);
-                text_color.hash(&mut hasher);
-            }
-        }
-        self.color.hash(&mut hasher);
-        self.size.to_bits().hash(&mut hasher);
-        Some(hasher.finish())
-    }
-
-    fn paints_transparently(&self) -> bool {
-        true
     }
 }
 
@@ -576,31 +534,5 @@ impl Widget for Choice {
     }
     fn paint_focused_overlay(&self, p: &mut dyn Painter, r: Rect, c: bool) {
         self.inner.paint_focused_overlay(p, r, c);
-    }
-}
-
-#[cfg(test)]
-mod icon_fingerprint_tests {
-    use super::*;
-
-    #[test]
-    fn identical_icons_hash_equal() {
-        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
-        let b = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
-        assert_eq!(a.paint_fingerprint(), b.paint_fingerprint());
-    }
-
-    #[test]
-    fn different_symbol_hashes_differently() {
-        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3));
-        let b = Icon::new(Symbol::Close, Color::rgb(1, 2, 3));
-        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
-    }
-
-    #[test]
-    fn different_size_hashes_differently() {
-        let a = Icon::new(Symbol::Check, Color::rgb(1, 2, 3)).size(18.0);
-        let b = Icon::new(Symbol::Check, Color::rgb(1, 2, 3)).size(24.0);
-        assert_ne!(a.paint_fingerprint(), b.paint_fingerprint());
     }
 }

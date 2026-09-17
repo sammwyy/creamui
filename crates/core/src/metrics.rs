@@ -25,6 +25,8 @@ pub struct FrameMetrics {
     pub hit_nodes_updated: u64,
     pub composite_nodes_updated: u64,
 
+    pub display_items: u64,
+    pub text_layouts: u64,
     pub cpu_pixels_rasterized: u64,
     pub gpu_upload_bytes: u64,
     pub draw_calls: u64,

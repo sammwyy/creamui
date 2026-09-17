@@ -1,21 +1,16 @@
-//! Render backend selection: GPU (`wgpu`) presentation vs. a CPU-only
-//! (`softbuffer`) fallback, chosen by the embedding app at window-creation
+//! Render backend selection, chosen by the embedding app at window-creation
 //! time and optionally overridden by `CUI_OVERRIDE_RENDER_BACKEND`.
 
-/// Which path composites CreamUI's CPU-rasterized frame to the screen.
-///
-/// Shape/text rasterization is always CPU-side (`tiny-skia`/`fontdue` — see
-/// [`crate::painter`]); this only picks how the resulting buffer reaches the
-/// window: a GPU blit or a direct CPU blit.
+/// Which renderer turns a window's display lists into pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderBackend {
-    /// Composite via `wgpu` (the default): a single textured blit pass.
+    /// Draw with `wgpu` (the default), falling back to [`RenderBackend::Cpu`]
+    /// when no usable adapter exists.
     #[default]
     Gpu,
-    /// Blit the CPU-rasterized buffer straight to the window via
-    /// `softbuffer`, with no GPU instance/adapter/device involved. Useful
-    /// when no usable GPU driver is present, or when GPU init cost isn't
-    /// worth it for the window being opened.
+    /// Rasterize damaged regions on the CPU and present them without any
+    /// GPU instance, adapter or device. Useful when no usable GPU driver is
+    /// present, or when GPU init cost and memory aren't worth it.
     Cpu,
 }
 

@@ -55,7 +55,7 @@ homepage = "https://github.com/sammwyy/creamui"
 creamui-reactive = { version = "0.1.1", path = "crates/reactive" }
 creamui = { version = "0.1.1", path = "crates/creamui" }
 creamui-core = { version = "0.1.2", path = "crates/core" }
-creamui-theme = { version = "0.1.1", path = "crates/theme" }
+creamui-theme = { version = "0.1.2", path = "crates/theme" }
 creamui-theme-loader = { version = "0.1.1", path = "crates/theme-loader" }
 creamui-fonts = { version = "0.1.1", path = "crates/fonts" }
 creamui-widgets = { version = "0.1.1", path = "crates/widgets" }

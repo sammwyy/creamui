@@ -1483,6 +1483,11 @@ impl WindowState {
             WindowEvent::RedrawRequested => {
                 if let Some((local, rect, handler)) = self.pending_drag.take() {
                     handler(local, rect);
+                    // Drag handlers write through a plain Cell, not a Signal, so nothing
+                    // else schedules the repaint this needs.
+                    if !self.dirty.get() {
+                        self.scene_dirty.set(true);
+                    }
                 }
                 let mut full_repaint = true;
                 if self.dirty.get() {

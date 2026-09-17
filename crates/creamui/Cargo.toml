@@ -26,6 +26,7 @@ platform-wayland = ["creamui-platform/wayland", "creamui-render/platform-wayland
 platform-x11 = ["creamui-platform/x11", "creamui-render/platform-x11"]
 platform-windows = ["creamui-platform/windows", "creamui-render/platform-windows"]
 perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics", "creamui-devtools?/perf-metrics"]
+system-theme = ["creamui-render/system-theme", "dep:creamui-theme-loader"]
 full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray"]
 
 [dependencies]
@@ -35,6 +36,7 @@ creamui-platform = { workspace = true }
 creamui-render = { workspace = true }
 creamui-devtools = { workspace = true, optional = true }
 creamui-theme = { workspace = true }
+creamui-theme-loader = { workspace = true, optional = true }
 creamui-fonts = { workspace = true }
 creamui-widgets = { workspace = true }
 creamui-image = { workspace = true, optional = true }

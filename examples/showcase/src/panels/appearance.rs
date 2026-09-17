@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-/// A pill-shaped selectable button, used for the dark/light and accent
+/// A pill-shaped selectable button, used for the theme and accent
 /// pickers on the Appearance page. Selection is fully controlled: it carries
 /// no state of its own.
 fn pill(label: &str, active: bool, on_click: impl Fn() + 'static) -> BoxedWidget {
@@ -35,20 +35,30 @@ fn swatch(color: Color, active: bool, on_click: impl Fn() + 'static) -> BoxedWid
     })
 }
 
-/// The "Appearance" panel: toggles dark/light mode and picks an accent
+/// The "Appearance" panel: selects a theme mode and accent
 /// color, both stored in `Signal`s owned by `main`, so changes are visible
 /// immediately across every other section.
 #[component]
-pub fn AppearancePanel(dark_mode: Signal<bool>, accent_index: Signal<usize>) -> BoxedWidget {
+pub fn AppearancePanel(mode: Signal<ThemeMode>, accent_index: Signal<usize>) -> BoxedWidget {
     let theme = use_theme();
-    let is_dark = dark_mode.get();
+    let selected_mode = mode.get();
     let selected_accent = accent_index.get();
 
-    let dark_flag = dark_mode.clone();
-    let light_flag = dark_mode.clone();
+    let light_mode = mode.clone();
+    let dark_mode = mode.clone();
+    let midnight_mode = mode.clone();
     let mode_pills: Vec<BoxedWidget> = vec![
-        pill("Dark", is_dark, move || dark_flag.set(true)),
-        pill("Light", !is_dark, move || light_flag.set(false)),
+        pill("Light", selected_mode == ThemeMode::Light, move || {
+            light_mode.set(ThemeMode::Light)
+        }),
+        pill("Dark", selected_mode == ThemeMode::Dark, move || {
+            dark_mode.set(ThemeMode::Dark)
+        }),
+        pill(
+            "Midnight",
+            selected_mode == ThemeMode::Midnight,
+            move || midnight_mode.set(ThemeMode::Midnight),
+        ),
     ];
 
     let mut swatches: Vec<BoxedWidget> = Vec::new();
@@ -62,12 +72,16 @@ pub fn AppearancePanel(dark_mode: Signal<bool>, accent_index: Signal<usize>) -> 
     let accent_name = ACCENTS[selected_accent].0;
     let summary = format!(
         "{} mode · {} accent",
-        if is_dark { "Dark" } else { "Light" },
+        match selected_mode {
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+            ThemeMode::Midnight => "Midnight",
+        },
         accent_name
     );
 
-    let primary_mode = dark_mode.clone();
-    let secondary_mode = dark_mode.clone();
+    let primary_mode = mode.clone();
+    let secondary_mode = mode.clone();
 
     Box::new(jsx! {
         <RawView style={column(section_gap())}>
@@ -87,8 +101,8 @@ pub fn AppearancePanel(dark_mode: Signal<bool>, accent_index: Signal<usize>) -> 
                 <Heading>"Component preview"</Heading>
                 <Text secondary={true} align={TextAlign::Start}>"Open a category to explore sizes, states, and interactions."</Text>
                 <CardRow>
-                    <StyledButton variant={ButtonVariant::Primary} size={ButtonSize::Md} label={"Primary".to_owned()} state={ButtonState::Normal} on_click={Box::new(move || primary_mode.update(|v| *v = !*v)) as Box<dyn Fn()>} disabled={false} />
-                    <StyledButton variant={ButtonVariant::Secondary} size={ButtonSize::Md} label={"Secondary".to_owned()} state={ButtonState::Normal} on_click={Box::new(move || secondary_mode.update(|v| *v = !*v)) as Box<dyn Fn()>} disabled={false} />
+                    <StyledButton variant={ButtonVariant::Primary} size={ButtonSize::Md} label={"Primary".to_owned()} state={ButtonState::Normal} on_click={Box::new(move || primary_mode.set(ThemeMode::Dark)) as Box<dyn Fn()>} disabled={false} />
+                    <StyledButton variant={ButtonVariant::Secondary} size={ButtonSize::Md} label={"Secondary".to_owned()} state={ButtonState::Normal} on_click={Box::new(move || secondary_mode.set(ThemeMode::Light)) as Box<dyn Fn()>} disabled={false} />
                     <StyledButton variant={ButtonVariant::Primary} size={ButtonSize::Md} label={"Disabled".to_owned()} state={ButtonState::Normal} on_click={Box::new(|| {}) as Box<dyn Fn()>} disabled={true} />
                 </CardRow>
                 <Text secondary={true} align={TextAlign::Start}>"These preview buttons switch the color scheme."</Text>

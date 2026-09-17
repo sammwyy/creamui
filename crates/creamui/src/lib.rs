@@ -27,7 +27,12 @@ pub use creamui_render::{
 };
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use creamui_render::{TrayBuilder, TrayIcon};
-pub use creamui_theme::{use_theme, Color, ColorScheme, Theme, ThemeProvider, Typography};
+pub use creamui_theme::{
+    use_theme, AccentPreset, AppearanceSelection, Color, ColorScheme, ResolvedAppearance, Theme,
+    ThemeDefinition, ThemeProvider, Typography,
+};
+#[cfg(feature = "system-theme")]
+pub use creamui_theme_loader as theme_loader;
 pub use creamui_widgets::*;
 
 #[cfg(feature = "image")]

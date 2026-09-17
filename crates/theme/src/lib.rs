@@ -1,13 +1,9 @@
-//! Theme primitives split deliberately in two: [`ColorScheme`] owns colours,
-//! while [`Theme`] owns the shape and behaviour of components.
-
-mod persist;
-pub use persist::{active_theme, active_theme_id, list_themes, set_active_theme, ThemeInfo};
-
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 /// An 8-bit sRGB color with alpha.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -42,8 +38,53 @@ impl Color {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorParseError;
+
+impl fmt::Display for ColorParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("expected #RGB, #RGBA, #RRGGBB, or #RRGGBBAA")
+    }
+}
+
+impl std::error::Error for ColorParseError {}
+
+impl FromStr for Color {
+    type Err = ColorParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.strip_prefix('#').ok_or(ColorParseError)?;
+        let byte =
+            |index| u8::from_str_radix(&value[index..index + 2], 16).map_err(|_| ColorParseError);
+        match value.len() {
+            3 | 4 => {
+                let component = |index| {
+                    let digit = value.as_bytes()[index] as char;
+                    digit
+                        .to_digit(16)
+                        .map(|value| (value as u8) * 17)
+                        .ok_or(ColorParseError)
+                };
+                Ok(Self::rgba(
+                    component(0)?,
+                    component(1)?,
+                    component(2)?,
+                    if value.len() == 4 { component(3)? } else { 255 },
+                ))
+            }
+            6 | 8 => Ok(Self::rgba(
+                byte(0)?,
+                byte(2)?,
+                byte(4)?,
+                if value.len() == 8 { byte(6)? } else { 255 },
+            )),
+            _ => Err(ColorParseError),
+        }
+    }
+}
+
 /// All colour tokens. This can be changed independently from a [`Theme`].
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColorScheme {
     /// Background primary: the app canvas.
     pub surface: Color,
@@ -120,6 +161,27 @@ impl ColorScheme {
             warning: Color::rgb(0xb8, 0x7d, 0x0a),
             success: Color::rgb(0x22, 0xa0, 0x55),
         }
+    }
+
+    pub fn midnight() -> Self {
+        let mut colors = Self::dark();
+        colors.surface = Color::rgb(0x0a, 0x0a, 0x0c);
+        colors.surface_elevated = Color::rgb(0x12, 0x11, 0x15);
+        colors.surface_hover = Color::rgb(0x1d, 0x1b, 0x21);
+        colors.accent = Color::rgb(0xb3, 0x8c, 0xff);
+        colors.accent_hover = Color::rgb(0xc4, 0xa8, 0xff);
+        colors.accent_pressed = Color::rgb(0x91, 0x69, 0xd9);
+        colors.selection_background = Color::rgb(0x78, 0x56, 0xc8);
+        colors.border = Color::rgb(0x29, 0x27, 0x2e);
+        colors.border_strong = Color::rgb(0x43, 0x3f, 0x4a);
+        colors
+    }
+
+    pub fn with_accent(mut self, accent: Color) -> Self {
+        self.accent = accent;
+        self.accent_hover = accent.mix(Color::rgb(255, 255, 255), 0.15);
+        self.accent_pressed = accent.mix(Color::rgb(0, 0, 0), 0.15);
+        self
     }
 }
 impl Default for ColorScheme {
@@ -239,6 +301,15 @@ impl Theme {
     pub const fn light() -> Self {
         Self::base().with_colors(ColorScheme::light())
     }
+
+    pub fn midnight() -> Self {
+        Self::base().with_colors(ColorScheme::midnight())
+    }
+
+    pub fn with_accent(mut self, accent: Color) -> Self {
+        self.colors = self.colors.with_accent(accent);
+        self
+    }
 }
 impl std::ops::Deref for Theme {
     type Target = ColorScheme;
@@ -250,6 +321,95 @@ impl Default for Theme {
     fn default() -> Self {
         Self::dark()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccentPreset {
+    pub id: String,
+    pub name: String,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThemeDefinition {
+    pub id: String,
+    pub name: String,
+    pub default_variant: String,
+    pub variants: BTreeMap<String, Theme>,
+    pub accent_presets: Vec<AccentPreset>,
+    pub default_accent: Option<Color>,
+}
+
+impl ThemeDefinition {
+    pub fn variant(&self, id: &str) -> Option<Theme> {
+        self.variants.get(id).copied()
+    }
+
+    pub fn default_theme(&self) -> Theme {
+        self.variant(&self.default_variant)
+            .expect("theme definitions always have their default variant")
+    }
+
+    pub fn builtin_default() -> Self {
+        Self {
+            id: "default".into(),
+            name: "Default".into(),
+            default_variant: "dark".into(),
+            variants: BTreeMap::from([
+                ("light".into(), Theme::light()),
+                ("dark".into(), Theme::dark()),
+                ("midnight".into(), Theme::midnight()),
+            ]),
+            accent_presets: vec![
+                AccentPreset {
+                    id: "blue".into(),
+                    name: "Blue".into(),
+                    color: Color::rgb(74, 144, 226),
+                },
+                AccentPreset {
+                    id: "cyan".into(),
+                    name: "Cyan".into(),
+                    color: Color::rgb(39, 215, 255),
+                },
+                AccentPreset {
+                    id: "green".into(),
+                    name: "Green".into(),
+                    color: Color::rgb(61, 201, 111),
+                },
+                AccentPreset {
+                    id: "pink".into(),
+                    name: "Pink".into(),
+                    color: Color::rgb(255, 117, 181),
+                },
+                AccentPreset {
+                    id: "purple".into(),
+                    name: "Purple".into(),
+                    color: Color::rgb(167, 123, 255),
+                },
+                AccentPreset {
+                    id: "orange".into(),
+                    name: "Orange".into(),
+                    color: Color::rgb(224, 165, 46),
+                },
+            ],
+            default_accent: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppearanceSelection {
+    pub theme: Option<String>,
+    pub variant: Option<String>,
+    pub accent: Option<Color>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedAppearance {
+    pub theme_id: String,
+    pub variant_id: String,
+    pub accent: Color,
+    pub theme: Theme,
 }
 
 /// Reactive provider for a style theme.
@@ -327,5 +487,41 @@ mod tests {
         assert_eq!(dark.name, light.name);
         assert_eq!(dark.tab_radius, light.tab_radius);
         assert_ne!(dark.colors, light.colors);
+    }
+
+    #[test]
+    fn builtin_theme_has_its_named_variants() {
+        let theme = ThemeDefinition::builtin_default();
+        assert_eq!(theme.variant("light").unwrap().colors, ColorScheme::light());
+        assert_eq!(theme.variant("dark").unwrap().colors, ColorScheme::dark());
+        assert_eq!(
+            theme.variant("midnight").unwrap().colors,
+            ColorScheme::midnight()
+        );
+    }
+
+    #[test]
+    fn parses_hex_colors() {
+        assert_eq!("#f0a".parse(), Ok(Color::rgb(255, 0, 170)));
+        assert_eq!("#f0a8".parse(), Ok(Color::rgba(255, 0, 170, 136)));
+        assert_eq!("#ff75b5".parse(), Ok(Color::rgb(255, 117, 181)));
+        assert_eq!("#27d7ff80".parse(), Ok(Color::rgba(39, 215, 255, 128)));
+    }
+
+    #[test]
+    fn custom_accent_is_not_limited_to_presets() {
+        let accent = Color::rgb(18, 171, 52);
+        let resolved = ThemeDefinition::builtin_default()
+            .default_theme()
+            .with_accent(accent);
+        assert_eq!(resolved.colors.accent, accent);
+    }
+
+    #[test]
+    fn midnight_is_deeper_than_dark() {
+        let dark = ColorScheme::dark();
+        let midnight = ColorScheme::midnight();
+        assert!(midnight.surface.r < dark.surface.r);
+        assert!(midnight.surface_elevated.r < dark.surface_elevated.r);
     }
 }

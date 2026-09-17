@@ -164,6 +164,12 @@ impl Default for WindowOptions {
 }
 
 impl WindowOptions {
+    #[cfg(feature = "system-theme")]
+    pub fn system_theme(mut self) -> Result<Self, creamui_theme_loader::ThemeLoadError> {
+        self.theme = creamui_theme_loader::SystemThemeLoader::new().load()?.theme;
+        Ok(self)
+    }
+
     /// Sets the initial logical screen position before the native window is
     /// created. This is preferable to moving the window after creation,
     /// especially on Wayland where compositors may ignore late moves.
@@ -860,6 +866,7 @@ struct WindowSpec {
 /// ```
 pub struct AppBuilder {
     specs: Vec<PendingWindow>,
+    system_theme: Option<Theme>,
     on_panic: Option<PanicHandler>,
     on_started: Option<Box<dyn FnOnce(AppHandle)>>,
     exit_when_last_window_closes: bool,
@@ -883,6 +890,7 @@ impl AppBuilder {
     pub fn new() -> Self {
         AppBuilder {
             specs: Vec::new(),
+            system_theme: None,
             on_panic: None,
             on_started: None,
             // Preserve the original AppBuilder/run behavior for regular
@@ -899,6 +907,16 @@ impl AppBuilder {
     pub fn keep_running(mut self) -> Self {
         self.exit_when_last_window_closes = false;
         self
+    }
+
+    #[cfg(feature = "system-theme")]
+    pub fn system_theme(mut self) -> Result<Self, creamui_theme_loader::ThemeLoadError> {
+        let theme = creamui_theme_loader::SystemThemeLoader::new().load()?.theme;
+        for spec in &mut self.specs {
+            spec.options.theme = theme;
+        }
+        self.system_theme = Some(theme);
+        Ok(self)
     }
 
     /// Runs `handler` once the native event loop is ready. It receives an
@@ -930,11 +948,14 @@ impl AppBuilder {
     /// shared event loop. See [`crate::run`] for what each argument does.
     pub fn window(
         mut self,
-        options: WindowOptions,
+        mut options: WindowOptions,
         clear_color: Color,
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
         build_ui: impl Fn(Size) -> BoxedWidget + 'static,
     ) -> Self {
+        if let Some(theme) = self.system_theme {
+            options.theme = theme;
+        }
         self.specs.push(PendingWindow {
             options,
             popup: None,

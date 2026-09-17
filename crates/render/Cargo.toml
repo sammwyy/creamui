@@ -24,10 +24,12 @@ tray = ["dep:creamui-tray", "creamui-tray/linux-status-notifier"]
 # counters/spans for the render-specific stages (CPU raster, GPU upload,
 # draw calls, damage).
 perf-metrics = ["creamui-core/perf-metrics", "dep:tracing"]
+system-theme = ["dep:creamui-theme-loader"]
 
 [dependencies]
 creamui-core = { workspace = true }
 creamui-theme = { workspace = true }
+creamui-theme-loader = { workspace = true, optional = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-tray = { workspace = true, optional = true }

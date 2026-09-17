@@ -30,6 +30,13 @@ pub const ACCENTS: [(&str, Color); 5] = [
     ("Apricot", Color::rgb(255, 177, 109)),
 ];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Light,
+    Dark,
+    Midnight,
+}
+
 /// Shifts each color channel by `delta`, clamping at the `u8` bounds. Used to
 /// derive hover/pressed accent shades from whichever swatch is selected.
 pub fn shade(color: Color, delta: i32) -> Color {
@@ -47,10 +54,14 @@ pub fn accent_foreground(color: Color) -> Color {
     }
 }
 
-pub fn build_theme(dark: bool, accent: Color) -> Theme {
-    let mut theme = if dark { Theme::dark() } else { Theme::light() };
+pub fn build_theme(mode: ThemeMode, accent: Color) -> Theme {
+    let mut theme = match mode {
+        ThemeMode::Light => Theme::light(),
+        ThemeMode::Dark => Theme::dark(),
+        ThemeMode::Midnight => Theme::midnight(),
+    };
     theme.colors.accent = accent;
-    theme.colors.accent_hover = shade(accent, if dark { 20 } else { -12 });
+    theme.colors.accent_hover = shade(accent, if mode == ThemeMode::Light { -12 } else { 20 });
     theme.colors.accent_pressed = shade(accent, -26);
     theme.colors.selection_background = accent;
     theme.colors.selection_text = accent_foreground(accent);

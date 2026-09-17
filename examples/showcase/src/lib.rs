@@ -7,14 +7,14 @@
 //! itself, and `prelude.rs` the one import every one of those files starts
 //! with.
 //!
-//! The whole window is driven by a handful of small signals — `dark_mode`,
+//! The whole window is driven by a handful of small signals — `theme_mode`,
 //! `accent_index`, `active_section`, plus one signal per interactive control
-//! — so picking a new accent color or toggling dark/light mode re-renders
+//! — so picking a new accent color or theme mode re-renders
 //! every panel with the new `Theme` immediately, the same reactive path any
 //! other `Signal` change takes.
 //!
 //! The derived theme itself flows through `use_theme()`: an effect set up
-//! in `on_window_ready` watches `dark_mode`/`accent_index` and pushes the
+//! in `on_window_ready` watches `theme_mode`/`accent_index` and pushes the
 //! recomputed `Theme` via `WindowHandle::set_theme`, so every panel below
 //! reads it with `use_theme()` instead of recomputing it locally.
 
@@ -35,7 +35,7 @@ pub fn launch() {
         .expect("bundled JPEG should decode");
     let image_webp = ImageData::from_bytes(include_bytes!("../assets/images/botanical.webp"))
         .expect("bundled WebP should decode");
-    let dark_mode = Signal::new(true);
+    let theme_mode = Signal::new(ThemeMode::Dark);
     let accent_index = Signal::new(0usize);
     let active_section = Signal::new(0usize);
 
@@ -95,19 +95,19 @@ pub fn launch() {
             title: "CreamUI — Showcase".into(),
             width: 1080,
             height: 740,
-            theme: build_theme(dark_mode.peek(), ACCENTS[accent_index.peek()].1),
+            theme: build_theme(theme_mode.peek(), ACCENTS[accent_index.peek()].1),
             ..Default::default()
         },
         Theme::dark().surface,
         {
-            let dark_mode = dark_mode.clone();
+            let theme_mode = theme_mode.clone();
             let accent_index = accent_index.clone();
             let theme_sync = theme_sync.clone();
             move |handle: WindowHandle| {
-                let dark_mode = dark_mode.clone();
+                let theme_mode = theme_mode.clone();
                 let accent_index = accent_index.clone();
                 *theme_sync.borrow_mut() = Some(create_effect(move || {
-                    handle.set_theme(build_theme(dark_mode.get(), ACCENTS[accent_index.get()].1));
+                    handle.set_theme(build_theme(theme_mode.get(), ACCENTS[accent_index.get()].1));
                 }));
             }
         },
@@ -152,7 +152,7 @@ pub fn launch() {
             // cannot invalidate this window or make us lay it out again.
             let panel = match active_section.get() {
                 0 => AppearancePanel(AppearancePanelProps {
-                    dark_mode: dark_mode.clone(),
+                    mode: theme_mode.clone(),
                     accent_index: accent_index.clone(),
                 }),
                 1 => TypographyPanel(TypographyPanelProps {

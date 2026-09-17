@@ -1132,8 +1132,8 @@ fn text_area_drag_and_shift_arrows_update_controlled_selection() {
         scene.on_key_at(focused).unwrap().clone()(KeyInput {
             key: Key::Right,
             modifiers: Modifiers {
-                ctrl: false,
                 shift: true,
+                ..Default::default()
             },
         });
         assert!(
@@ -1172,7 +1172,7 @@ fn text_area_ctrl_a_selects_the_entire_controlled_document() {
             key: Key::Char('a'),
             modifiers: Modifiers {
                 ctrl: true,
-                shift: false,
+                ..Default::default()
             },
         });
         assert_eq!(

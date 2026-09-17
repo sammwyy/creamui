@@ -1,13 +1,14 @@
 //! Development-only tools for CreamUI applications.
 //!
-//! Call [`init`] before creating CreamUI windows. Every window gets an
-//! independent FPS, frame-time, CPU and memory overlay. Press F3 to show or
-//! hide it.
+//! Call [`init`] before creating CreamUI windows. Every window gets its own
+//! FPS/frame-time overlay; CPU and memory are process-wide, so all windows
+//! share one reading. Press F3 to show or hide a window's overlay.
 
 use creamui_core::metrics::FrameMetrics;
 use creamui_core::{Painter, Rect, Size, TextAlign};
 use creamui_render::{install_devtools, Devtools, WindowDevtools};
 use creamui_theme::Color;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -57,11 +58,16 @@ pub fn init() {
 
 /// Installs devtools with explicit initial overlay options.
 pub fn init_with(options: DevtoolsOptions) {
-    install_devtools(Rc::new(BenchmarkDevtools { options }));
+    install_devtools(Rc::new(BenchmarkDevtools {
+        options,
+        process_stats: Rc::new(RefCell::new(ProcessStats::new())),
+    }));
 }
 
 struct BenchmarkDevtools {
     options: DevtoolsOptions,
+    // Shared, not per-window: CPU%/RAM are process-wide.
+    process_stats: Rc<RefCell<ProcessStats>>,
 }
 
 impl Devtools for BenchmarkDevtools {
@@ -70,7 +76,7 @@ impl Devtools for BenchmarkDevtools {
             visible: self.options.initially_visible,
             position: self.options.position,
             frame_stats: FrameStats::new(),
-            process_stats: ProcessStats::new(),
+            process_stats: self.process_stats.clone(),
             #[cfg(feature = "perf-metrics")]
             engine_metrics: FrameMetrics::default(),
         })
@@ -81,7 +87,7 @@ struct BenchmarkWindow {
     visible: bool,
     position: DebugPosition,
     frame_stats: FrameStats,
-    process_stats: ProcessStats,
+    process_stats: Rc<RefCell<ProcessStats>>,
     #[cfg(feature = "perf-metrics")]
     engine_metrics: FrameMetrics,
 }
@@ -106,7 +112,7 @@ impl WindowDevtools for BenchmarkWindow {
         metrics: FrameMetrics,
     ) {
         self.frame_stats.record_frame(paint_duration);
-        self.process_stats.maybe_sample();
+        self.process_stats.borrow_mut().maybe_sample();
         #[cfg(feature = "perf-metrics")]
         {
             self.engine_metrics = metrics;
@@ -119,7 +125,7 @@ impl WindowDevtools for BenchmarkWindow {
                 viewport,
                 self.position,
                 &self.frame_stats,
-                &self.process_stats,
+                &self.process_stats.borrow(),
                 self.engine_metrics(),
             );
         }
@@ -132,7 +138,7 @@ impl WindowDevtools for BenchmarkWindow {
                 viewport,
                 self.position,
                 &self.frame_stats,
-                &self.process_stats,
+                &self.process_stats.borrow(),
                 self.engine_metrics(),
             );
         }
@@ -463,7 +469,7 @@ mod tests {
             visible: false,
             position: DebugPosition::default(),
             frame_stats: FrameStats::new(),
-            process_stats: ProcessStats::new(),
+            process_stats: Rc::new(RefCell::new(ProcessStats::new())),
             #[cfg(feature = "perf-metrics")]
             engine_metrics: FrameMetrics::default(),
         };

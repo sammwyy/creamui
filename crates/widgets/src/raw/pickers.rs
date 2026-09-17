@@ -386,10 +386,14 @@ impl Widget for RawColorPicker {
                 2.,
             );
         }
+        // Clamped so the handle stays fully inside its track even for a
+        // color at (or near) an edge, instead of poking out past it.
+        let sv_max_x = (field_width - 8.).max(0.);
+        let sv_max_y = (rect.height - 8.).max(0.);
         painter.stroke_rect(
             Rect {
-                x: rect.x + saturation * field_width - 4.,
-                y: rect.y + (1. - value) * rect.height - 4.,
+                x: rect.x + (saturation * field_width - 4.).clamp(0., sv_max_x),
+                y: rect.y + ((1. - value) * rect.height - 4.).clamp(0., sv_max_y),
                 width: 8.,
                 height: 8.,
             },
@@ -397,10 +401,11 @@ impl Widget for RawColorPicker {
             2.,
             4.,
         );
+        let hue_max_y = (rect.height - 4.).max(0.);
         painter.stroke_rect(
             Rect {
                 x: hue_x - 2.,
-                y: rect.y + hue * rect.height - 2.,
+                y: rect.y + (hue * rect.height - 2.).clamp(0., hue_max_y),
                 width: hue_width + 4.,
                 height: 4.,
             },

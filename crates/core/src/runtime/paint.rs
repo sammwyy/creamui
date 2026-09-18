@@ -10,6 +10,15 @@ pub struct QuadPrimitive {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientPrimitive {
+    pub rect: crate::Rect,
+    pub start: creamui_theme::Color,
+    pub end: creamui_theme::Color,
+    pub angle_degrees: f32,
+    pub corner_radius: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BorderPrimitive {
     pub rect: crate::Rect,
     pub color: creamui_theme::Color,
@@ -39,6 +48,7 @@ pub struct ImagePrimitive {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintPrimitive {
     Quad(QuadPrimitive),
+    Gradient(GradientPrimitive),
     Border(BorderPrimitive),
     Text(TextPrimitive),
     Image(ImagePrimitive),
@@ -78,11 +88,23 @@ pub(super) fn generate_fragment(
     let paint = &node.paint_style;
 
     if let Some(background) = paint.background {
-        ops.push(PaintOp::Primitive(PaintPrimitive::Quad(QuadPrimitive {
-            rect,
-            color: background.resolve(colors),
-            corner_radius: paint.corner_radius.unwrap_or(0.0),
-        })));
+        let primitive = match background {
+            crate::Background::Solid(color) => PaintPrimitive::Quad(QuadPrimitive {
+                rect,
+                color: color.resolve(colors),
+                corner_radius: paint.corner_radius.unwrap_or(0.0),
+            }),
+            crate::Background::LinearGradient(gradient) => {
+                PaintPrimitive::Gradient(GradientPrimitive {
+                    rect,
+                    start: gradient.start.resolve(colors),
+                    end: gradient.end.resolve(colors),
+                    angle_degrees: gradient.angle_degrees,
+                    corner_radius: paint.corner_radius.unwrap_or(0.0),
+                })
+            }
+        };
+        ops.push(PaintOp::Primitive(primitive));
     }
 
     match &node.kind {
@@ -185,6 +207,25 @@ impl crate::Painter for RecordingPainter {
                 color,
                 corner_radius,
             })));
+    }
+
+    fn fill_linear_gradient(
+        &mut self,
+        rect: crate::Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        angle_degrees: f32,
+        corner_radius: f32,
+    ) {
+        self.ops.push(PaintOp::Primitive(PaintPrimitive::Gradient(
+            GradientPrimitive {
+                rect,
+                start,
+                end,
+                angle_degrees,
+                corner_radius,
+            },
+        )));
     }
 
     fn stroke_rect(

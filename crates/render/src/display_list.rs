@@ -148,9 +148,18 @@ impl Clip {
 /// A rounded rectangle with an optional inner border. `bounds` is the
 /// outer edge; the border is drawn inside it.
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QuadGradient {
+    pub start: [f32; 2],
+    pub end: [f32; 2],
+    pub start_color: Color,
+    pub end_color: Color,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quad {
     pub bounds: Bounds,
     pub background: Color,
+    pub gradient: Option<QuadGradient>,
     pub radius: f32,
     pub border_width: f32,
     pub border_color: Color,
@@ -402,6 +411,7 @@ mod tests {
             primitive: Primitive::Quad(Quad {
                 bounds: Bounds::new(x, 10.0, x + 10.0, 20.0),
                 background: color,
+                gradient: None,
                 radius: 0.0,
                 border_width: 0.0,
                 border_color: Color::rgba(0, 0, 0, 0),
@@ -499,6 +509,7 @@ mod tests {
             primitive: Primitive::Quad(Quad {
                 bounds: Bounds::new(0.0, 0.0, 180.0, 90.0),
                 background: color,
+                gradient: None,
                 radius: 0.0,
                 border_width: 0.0,
                 border_color: Color::rgba(0, 0, 0, 0),

@@ -17,6 +17,7 @@ const KIND_QUAD: f32 = 0.0;
 const KIND_LINE: f32 = 1.0;
 const KIND_GLYPH: f32 = 2.0;
 const KIND_IMAGE: f32 = 3.0;
+const KIND_GRADIENT_QUAD: f32 = 4.0;
 const INITIAL_ATLAS_SIZE: u32 = 1024;
 const IMAGE_CACHE_FRAMES: u64 = 300;
 
@@ -445,20 +446,42 @@ impl GpuRenderer {
             batch_image = image;
             let clip = clip_params(&item.clip);
             match &item.primitive {
-                Primitive::Quad(quad) => self.instances.push(Instance {
-                    bounds: [
-                        quad.bounds.x0,
-                        quad.bounds.y0,
-                        quad.bounds.x1,
-                        quad.bounds.y1,
-                    ],
-                    color: premultiplied(quad.background),
-                    border_color: premultiplied(quad.border_color),
-                    params: [KIND_QUAD, quad.radius, quad.border_width, clip.2],
-                    clip: clip.0,
-                    rounded_clip: clip.1,
-                    ..Zeroable::zeroed()
-                }),
+                Primitive::Quad(quad) => {
+                    let (kind, color, border_color, data) = match quad.gradient {
+                        Some(gradient) => (
+                            KIND_GRADIENT_QUAD,
+                            premultiplied(gradient.start_color),
+                            premultiplied(gradient.end_color),
+                            [
+                                gradient.start[0],
+                                gradient.start[1],
+                                gradient.end[0],
+                                gradient.end[1],
+                            ],
+                        ),
+                        None => (
+                            KIND_QUAD,
+                            premultiplied(quad.background),
+                            premultiplied(quad.border_color),
+                            [0.0; 4],
+                        ),
+                    };
+                    self.instances.push(Instance {
+                        bounds: [
+                            quad.bounds.x0,
+                            quad.bounds.y0,
+                            quad.bounds.x1,
+                            quad.bounds.y1,
+                        ],
+                        color,
+                        border_color,
+                        data,
+                        params: [kind, quad.radius, quad.border_width, clip.2],
+                        clip: clip.0,
+                        rounded_clip: clip.1,
+                        ..Zeroable::zeroed()
+                    });
+                }
                 Primitive::Line(line) => {
                     let b = item.primitive.bounds();
                     self.instances.push(Instance {

@@ -54,6 +54,11 @@ impl TextInput {
         self
     }
 
+    pub fn on_key_press(mut self, on_key_press: impl Fn(KeyInput) + 'static) -> Self {
+        self.inner = self.inner.on_key_press(on_key_press);
+        self
+    }
+
     pub fn clipboard_enabled(mut self, enabled: bool) -> Self {
         self.inner = self.inner.clipboard_enabled(enabled);
         self

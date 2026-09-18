@@ -11,6 +11,7 @@ struct Globals {
 const KIND_QUAD: f32 = 0.0;
 const KIND_LINE: f32 = 1.0;
 const KIND_GLYPH: f32 = 2.0;
+const KIND_GRADIENT_QUAD: f32 = 4.0;
 
 struct Instance {
     @location(0) bounds: vec4<f32>,
@@ -88,10 +89,20 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
 
     let kind = in.params.x;
     var color: vec4<f32>;
-    if kind == KIND_QUAD {
+    if kind == KIND_QUAD || kind == KIND_GRADIENT_QUAD {
         let outer = rounded_rect_distance(p, in.bounds, in.params.y);
         coverage *= clamp(0.5 - outer, 0.0, 1.0);
-        color = in.color;
+        if kind == KIND_GRADIENT_QUAD {
+            let direction = in.data.zw - in.data.xy;
+            let progress = clamp(
+                dot(p - in.data.xy, direction) / max(dot(direction, direction), 1e-6),
+                0.0,
+                1.0,
+            );
+            color = mix(in.color, in.border_color, progress);
+        } else {
+            color = in.color;
+        }
         let border = in.params.z;
         if border > 0.0 {
             let inset = vec4<f32>(border, border, -border, -border);

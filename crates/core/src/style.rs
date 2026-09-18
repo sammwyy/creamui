@@ -108,6 +108,175 @@ impl PartialEq<ColorValue> for Color {
     }
 }
 
+/// A two-stop linear gradient. Angles follow CSS: `0deg` points up and
+/// `90deg` points right.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LinearGradient {
+    pub angle_degrees: f32,
+    pub start: ColorValue,
+    pub end: ColorValue,
+}
+
+impl LinearGradient {
+    pub fn new(
+        angle_degrees: f32,
+        start: impl Into<ColorValue>,
+        end: impl Into<ColorValue>,
+    ) -> Self {
+        Self {
+            angle_degrees,
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+}
+
+/// A solid or gradient component background.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Background {
+    Solid(ColorValue),
+    LinearGradient(LinearGradient),
+}
+
+impl From<ColorValue> for Background {
+    fn from(color: ColorValue) -> Self {
+        Self::Solid(color)
+    }
+}
+
+impl From<Color> for Background {
+    fn from(color: Color) -> Self {
+        Self::Solid(color.into())
+    }
+}
+
+impl From<ColorToken> for Background {
+    fn from(color: ColorToken) -> Self {
+        Self::Solid(color.into())
+    }
+}
+
+impl From<LinearGradient> for Background {
+    fn from(gradient: LinearGradient) -> Self {
+        Self::LinearGradient(gradient)
+    }
+}
+
+impl From<&str> for Background {
+    fn from(value: &str) -> Self {
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid CreamUI background `{value}`: {error}"))
+    }
+}
+
+impl From<String> for Background {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl FromStr for Background {
+    type Err = StyleParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let input = input.trim();
+        let Some(body) = input
+            .strip_prefix("linear-gradient(")
+            .and_then(|value| value.strip_suffix(')'))
+        else {
+            return Ok(Self::Solid(input.parse()?));
+        };
+        let mut parts = body.split(',').map(str::trim);
+        let direction = parts
+            .next()
+            .ok_or_else(|| StyleParseError("gradient direction is missing".into()))?;
+        let start = parts
+            .next()
+            .ok_or_else(|| StyleParseError("gradient start color is missing".into()))?;
+        let end = parts
+            .next()
+            .ok_or_else(|| StyleParseError("gradient end color is missing".into()))?;
+        if parts.next().is_some() {
+            return Err(StyleParseError(format!(
+                "only two-stop gradients are supported: `{input}`"
+            )));
+        }
+        let angle_degrees = match direction {
+            "to top" => 0.0,
+            "to right" => 90.0,
+            "to bottom" => 180.0,
+            "to left" => 270.0,
+            value => value
+                .strip_suffix("deg")
+                .unwrap_or(value)
+                .trim()
+                .parse()
+                .map_err(|_| StyleParseError(format!("invalid gradient angle `{value}`")))?,
+        };
+        Ok(Self::LinearGradient(LinearGradient::new(
+            angle_degrees,
+            start.parse::<ColorValue>()?,
+            end.parse::<ColorValue>()?,
+        )))
+    }
+}
+
+/// A CSS-like outer box shadow.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: ColorValue,
+}
+
+impl BoxShadow {
+    pub fn new(
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        spread: f32,
+        color: impl Into<ColorValue>,
+    ) -> Self {
+        Self {
+            offset_x,
+            offset_y,
+            blur: blur.max(0.0),
+            spread,
+            color: color.into(),
+        }
+    }
+}
+
+impl FromStr for BoxShadow {
+    type Err = StyleParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let parts = input.split_whitespace().collect::<Vec<_>>();
+        if parts.len() != 5 {
+            return Err(StyleParseError(format!(
+                "box-shadow expects `x y blur spread color`, got `{input}`"
+            )));
+        }
+        let length = |value: &str| {
+            value
+                .strip_suffix("px")
+                .unwrap_or(value)
+                .parse::<f32>()
+                .map_err(|_| StyleParseError(format!("invalid shadow length `{value}`")))
+        };
+        Ok(Self::new(
+            length(parts[0])?,
+            length(parts[1])?,
+            length(parts[2])?,
+            length(parts[3])?,
+            parts[4].parse::<ColorValue>()?,
+        ))
+    }
+}
+
 /// CSS-like lengths accepted by the declaration layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthValue {
@@ -277,7 +446,8 @@ impl Border {
 /// Properties painted behind and around a component's content.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PaintStyle {
-    pub background: Option<ColorValue>,
+    pub background: Option<Background>,
+    pub box_shadow: Option<BoxShadow>,
     pub border: Option<Border>,
     pub corner_radius: Option<f32>,
     /// An outline is painted outside the layout box and therefore does not
@@ -289,6 +459,7 @@ impl PaintStyle {
     fn patched(self, patch: Self) -> Self {
         Self {
             background: patch.background.or(self.background),
+            box_shadow: patch.box_shadow.or(self.box_shadow),
             border: patch.border.or(self.border),
             corner_radius: patch.corner_radius.or(self.corner_radius),
             outline: patch.outline.or(self.outline),
@@ -344,7 +515,8 @@ pub struct StateStyle {
 macro_rules! creamui_style_property_schema {
     ($consumer:ident) => {
         $consumer! {
-            Background(crate::ColorValue) => "background" |target, value| { target.paint.background = Some(value); } => background(color: impl Into<crate::ColorValue>) |style| { style.paint.background = Some(color.into()); };
+            Background(crate::Background) => "background" |target, value| { target.paint.background = Some(value); } => background(background: impl Into<crate::Background>) |style| { style.paint.background = Some(background.into()); };
+            BoxShadow(crate::BoxShadow) => "box-shadow" |target, value| { target.paint.box_shadow = Some(value); } => box_shadow(shadow: crate::BoxShadow) |style| { style.paint.box_shadow = Some(shadow); };
             Border(crate::Border) => "border" |target, value| { target.paint.border = Some(value); } => border(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.border = Some(crate::Border::new(color, width)); };
             CornerRadius(f32) => "border-radius" |target, value| { target.paint.corner_radius = Some(value); } => corner_radius(radius: f32) |style| { style.paint.corner_radius = Some(radius); };
             Outline(crate::Border) => "outline" |target, value| { target.paint.outline = Some(value); } => outline(color: impl Into<crate::ColorValue>, width: f32) |style| { style.paint.outline = Some(crate::Border::new(color, width)); };
@@ -399,8 +571,23 @@ macro_rules! creamui_style_property_schema {
 
 macro_rules! common_value_builders {
     () => {
-        pub fn background(mut self, color: impl Into<ColorValue>) -> Self {
-            self.paint.background = Some(color.into());
+        pub fn background(mut self, background: impl Into<Background>) -> Self {
+            self.paint.background = Some(background.into());
+            self
+        }
+
+        pub fn linear_gradient(
+            mut self,
+            angle_degrees: f32,
+            start: impl Into<ColorValue>,
+            end: impl Into<ColorValue>,
+        ) -> Self {
+            self.paint.background = Some(LinearGradient::new(angle_degrees, start, end).into());
+            self
+        }
+
+        pub fn box_shadow(mut self, shadow: BoxShadow) -> Self {
+            self.paint.box_shadow = Some(shadow);
             self
         }
 
@@ -466,6 +653,7 @@ impl StateStyle {
         Self {
             paint: PaintStyle {
                 background: None,
+                box_shadow: None,
                 border: None,
                 corner_radius: None,
                 outline: None,
@@ -799,7 +987,9 @@ impl StyleProp {
         };
 
         match name.trim() {
-            "background" | "background-color" => Ok(Self::Background(value.parse()?)),
+            "background" => Ok(Self::Background(value.parse()?)),
+            "background-color" => Ok(Self::Background(Background::Solid(value.parse()?))),
+            "box-shadow" => Ok(Self::BoxShadow(value.parse()?)),
             "border" => Ok(Self::Border(border(value)?)),
             "border-radius" => Ok(Self::CornerRadius(number(value)?)),
             "outline" => Ok(Self::Outline(border(value)?)),
@@ -963,7 +1153,9 @@ mod tests {
 
         assert_eq!(
             resolved.paint.background,
-            Some(ColorValue::Token(ColorToken::TextDisabled))
+            Some(Background::Solid(ColorValue::Token(
+                ColorToken::TextDisabled,
+            )))
         );
         assert_eq!(
             resolved.paint.border,
@@ -992,6 +1184,37 @@ mod tests {
         assert_eq!(
             style.paint.border,
             Some(Border::new(Color::rgb(0x10, 0x20, 0x30), 2.0))
+        );
+    }
+
+    #[test]
+    fn parses_linear_gradients_and_box_shadows() {
+        let style = Style::new().properties([
+            StyleProp::parse(
+                "background",
+                "linear-gradient(135deg, #102030, var(--accent))",
+            )
+            .unwrap(),
+            StyleProp::parse("box-shadow", "0px 8px 24px 0px #00000080").unwrap(),
+        ]);
+
+        assert_eq!(
+            style.paint.background,
+            Some(Background::LinearGradient(LinearGradient::new(
+                135.0,
+                Color::rgb(0x10, 0x20, 0x30),
+                ColorToken::Accent,
+            )))
+        );
+        assert_eq!(
+            style.paint.box_shadow,
+            Some(BoxShadow::new(
+                0.0,
+                8.0,
+                24.0,
+                0.0,
+                Color::rgba(0, 0, 0, 128),
+            ))
         );
     }
 

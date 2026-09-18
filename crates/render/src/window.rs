@@ -129,6 +129,8 @@ pub struct WindowOptions {
     pub resizable: bool,
     pub decorations: bool,
     pub transparent: bool,
+    /// Gives keyboard focus to the first focusable widget on the initial frame.
+    pub focus_first: bool,
     pub role: WindowRole,
     /// How a close request from the window manager is handled.
     pub close_behavior: CloseBehavior,
@@ -151,6 +153,7 @@ impl Default for WindowOptions {
             resizable: true,
             decorations: true,
             transparent: false,
+            focus_first: false,
             role: WindowRole::Normal,
             close_behavior: CloseBehavior::Close,
             backend: RenderBackend::default(),
@@ -2240,7 +2243,7 @@ fn build_window_spec(
         theme: ThemeProvider::new(options.theme),
         window_drag,
         clear_color,
-        focused: Cell::new(None),
+        focused: Cell::new(options.focus_first.then_some(0)),
         caret_visible: Cell::new(true),
         pending_root: RefCell::new(None),
         needs_layout: Cell::new(true),

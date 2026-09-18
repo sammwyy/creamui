@@ -17,7 +17,10 @@ pub struct RawTextInput {
     pub on_cursor_change: Rc<dyn Fn(usize)>,
     pub on_selection_change: Rc<dyn Fn(TextSelection)>,
     pub on_submit: Rc<dyn Fn()>,
+    pub on_key_press: Rc<dyn Fn(KeyInput)>,
     pub clipboard_enabled: bool,
+    keyboard_value: Rc<RefCell<String>>,
+    keyboard_cursor: Rc<Cell<usize>>,
     keyboard_selection: Rc<Cell<TextSelection>>,
     drag_anchor: Rc<Cell<usize>>,
 }
@@ -781,6 +784,7 @@ impl RawTextInput {
     ) -> Self {
         let value = value.into();
         let cursor = value.len();
+        let keyboard_value = Rc::new(RefCell::new(value.clone()));
         RawTextInput {
             style: creamui_core::Style::from(style)
                 .color(text_color)
@@ -799,7 +803,10 @@ impl RawTextInput {
             on_cursor_change: Rc::new(|_| {}),
             on_selection_change: Rc::new(|_| {}),
             on_submit: Rc::new(|| {}),
+            on_key_press: Rc::new(|_| {}),
             clipboard_enabled: true,
+            keyboard_value,
+            keyboard_cursor: Rc::new(Cell::new(cursor)),
             keyboard_selection: Rc::new(Cell::new(TextSelection {
                 anchor: cursor,
                 focus: cursor,
@@ -843,6 +850,7 @@ impl RawTextInput {
             anchor: self.cursor,
             focus: self.cursor,
         };
+        self.keyboard_cursor.set(self.cursor);
         self.keyboard_selection.set(self.selection);
         self.on_cursor_change = Rc::new(on_change);
         self
@@ -875,6 +883,13 @@ impl RawTextInput {
     /// so this is the hook for "submit on Enter" instead.
     pub fn on_submit(mut self, on_submit: impl Fn() + 'static) -> Self {
         self.on_submit = Rc::new(on_submit);
+        self
+    }
+
+    /// Observes key presses while this input is focused without replacing
+    /// its built-in text editing, selection, or clipboard behavior.
+    pub fn on_key_press(mut self, on_key_press: impl Fn(KeyInput) + 'static) -> Self {
+        self.on_key_press = Rc::new(on_key_press);
         self
     }
 
@@ -1009,19 +1024,23 @@ impl Widget for RawTextInput {
     }
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
-        let value = self.value.clone();
+        let keyboard_value = self.keyboard_value.clone();
         let on_change = self.on_change.clone();
-        let cursor = self.cursor;
+        let keyboard_cursor = self.keyboard_cursor.clone();
         let on_cursor_change = self.on_cursor_change.clone();
         let selection = self.keyboard_selection.clone();
         let on_selection_change = self.on_selection_change.clone();
         let clipboard_enabled = self.clipboard_enabled;
         let on_submit = self.on_submit.clone();
+        let on_key_press = self.on_key_press.clone();
         Some(Rc::new(move |input: KeyInput| {
+            on_key_press(input);
             if matches!(input.key, Key::Enter) {
                 on_submit();
                 return;
             }
+            let value = keyboard_value.borrow().clone();
+            let cursor = keyboard_cursor.get();
             let selected = selection.get();
             if clipboard_enabled && input.modifiers.ctrl {
                 match input.key {
@@ -1031,6 +1050,7 @@ impl Widget for RawTextInput {
                             focus: value.len(),
                         };
                         selection.set(all);
+                        keyboard_cursor.set(value.len());
                         creamui_reactive::batch(|| {
                             on_cursor_change(value.len());
                             on_selection_change(all);
@@ -1052,6 +1072,8 @@ impl Widget for RawTextInput {
                             focus: at,
                         };
                         selection.set(collapsed);
+                        *keyboard_value.borrow_mut() = next.clone();
+                        keyboard_cursor.set(at);
                         creamui_reactive::batch(|| {
                             on_change(next);
                             on_cursor_change(at);
@@ -1078,6 +1100,8 @@ impl Widget for RawTextInput {
                                 focus: at,
                             };
                             selection.set(collapsed);
+                            *keyboard_value.borrow_mut() = next.clone();
+                            keyboard_cursor.set(at);
                             creamui_reactive::batch(|| {
                                 on_change(next);
                                 on_cursor_change(at);
@@ -1164,6 +1188,10 @@ impl Widget for RawTextInput {
                 }
             };
             selection.set(next_selection);
+            keyboard_cursor.set(at);
+            if changed {
+                *keyboard_value.borrow_mut() = next.clone();
+            }
             creamui_reactive::batch(|| {
                 if changed {
                     on_change(next);

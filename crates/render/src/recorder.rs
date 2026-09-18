@@ -2,8 +2,8 @@
 //! [`DisplayList`] in physical pixels instead of rasterizing them.
 
 use crate::display_list::{
-    Bounds, Clip, DisplayList, DrawItem, ImagePrimitive, Line, Primitive, Quad, RoundedClip,
-    TextRun,
+    Bounds, Clip, DisplayList, DrawItem, ImagePrimitive, Line, Primitive, Quad, QuadGradient,
+    RoundedClip, TextRun,
 };
 use crate::text::TextSystem;
 use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
@@ -203,6 +203,48 @@ impl Painter for SceneRecorder {
         self.push(Primitive::Quad(Quad {
             bounds,
             background: color,
+            gradient: None,
+            radius: (corner_radius * self.scale)
+                .min(bounds.width() / 2.0)
+                .min(bounds.height() / 2.0)
+                .max(0.0),
+            border_width: 0.0,
+            border_color: TRANSPARENT,
+        }));
+    }
+
+    fn fill_linear_gradient(
+        &mut self,
+        rect: Rect,
+        start: Color,
+        end: Color,
+        angle_degrees: f32,
+        corner_radius: f32,
+    ) {
+        let bounds = self.bounds(rect);
+        if (start.a == 0 && end.a == 0) || bounds.is_empty() {
+            return;
+        }
+        let radians = angle_degrees.to_radians();
+        let direction = [radians.sin(), -radians.cos()];
+        let half =
+            direction[0].abs() * bounds.width() * 0.5 + direction[1].abs() * bounds.height() * 0.5;
+        let center = [(bounds.x0 + bounds.x1) * 0.5, (bounds.y0 + bounds.y1) * 0.5];
+        self.push(Primitive::Quad(Quad {
+            bounds,
+            background: start,
+            gradient: Some(QuadGradient {
+                start: [
+                    center[0] - direction[0] * half,
+                    center[1] - direction[1] * half,
+                ],
+                end: [
+                    center[0] + direction[0] * half,
+                    center[1] + direction[1] * half,
+                ],
+                start_color: start,
+                end_color: end,
+            }),
             radius: (corner_radius * self.scale)
                 .min(bounds.width() / 2.0)
                 .min(bounds.height() / 2.0)
@@ -231,6 +273,7 @@ impl Painter for SceneRecorder {
         self.push(Primitive::Quad(Quad {
             bounds,
             background: TRANSPARENT,
+            gradient: None,
             radius,
             border_width: width,
             border_color: color,

@@ -941,10 +941,6 @@ fn text_input_is_focusable_and_types_and_deletes_characters() {
         creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
         let value = Signal::new(String::new());
 
-        // Mirrors what `creamui_render::window` actually does: rebuild the tree
-        // and fetch a fresh `on_key` from the new `Scene` after every keystroke,
-        // since (like `Button`'s `on_click`) `on_key` closures capture the value
-        // as of the render that produced them.
         let build = |value: Signal<String>| {
             let value_for_change = value.clone();
             RawView::new(creamui_widgets::layout::row(0.0))
@@ -977,18 +973,13 @@ fn text_input_is_focusable_and_types_and_deletes_characters() {
             "a point far from the (top-left-positioned, 200x36) input should not be focusable"
         );
 
-        scene.on_key_at(index).unwrap().clone()(KeyInput {
+        let on_key = scene.on_key_at(index).unwrap().clone();
+        on_key(KeyInput {
             key: Key::Char('h'),
             modifiers: Default::default(),
         });
         assert_eq!(value.get(), "h");
-
-        let scene = render_frame(
-            Box::new(build(value.clone())),
-            size,
-            &mut RecordingPainter::default(),
-        );
-        scene.on_key_at(index).unwrap().clone()(KeyInput {
+        on_key(KeyInput {
             key: Key::Char('i'),
             modifiers: Default::default(),
         });

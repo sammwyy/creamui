@@ -8,9 +8,7 @@ use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Painter, Point, Rect, Styled, TextAlign, Widget,
 };
 use creamui_theme::Color;
-use std::cell::Cell;
-#[cfg(not(target_arch = "wasm32"))]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[cfg(not(target_arch = "wasm32"))]

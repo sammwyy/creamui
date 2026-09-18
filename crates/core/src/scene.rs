@@ -274,11 +274,18 @@ thread_local! {
 
 /// How far a border or outline paints outside its own rect.
 fn paint_overflow(paint: &crate::PaintStyle) -> f32 {
-    paint
+    let decoration = paint
         .border
         .map(|b| b.width / 2.0)
         .unwrap_or(0.0)
-        .max(paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0))
+        .max(paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0));
+    let shadow = paint
+        .box_shadow
+        .map(|shadow| {
+            shadow.blur + shadow.spread.max(0.0) + shadow.offset_x.abs().max(shadow.offset_y.abs())
+        })
+        .unwrap_or(0.0);
+    decoration.max(shadow)
 }
 
 /// The largest [`paint_overflow`] across any single interaction state —
@@ -350,8 +357,30 @@ fn paint_instance(
         let colors = painter.color_scheme();
         let resolved = instance.style.resolve(states);
         let radius = resolved.paint.corner_radius.unwrap_or(0.0);
+        if let Some(shadow) = resolved.paint.box_shadow {
+            painter.draw_box_shadow(
+                rect,
+                shadow.color.resolve(&colors),
+                shadow.offset_x,
+                shadow.offset_y,
+                shadow.blur,
+                shadow.spread,
+                radius,
+            );
+        }
         if let Some(background) = resolved.paint.background {
-            painter.fill_rect(rect, background.resolve(&colors), radius);
+            match background {
+                crate::Background::Solid(color) => {
+                    painter.fill_rect(rect, color.resolve(&colors), radius)
+                }
+                crate::Background::LinearGradient(gradient) => painter.fill_linear_gradient(
+                    rect,
+                    gradient.start.resolve(&colors),
+                    gradient.end.resolve(&colors),
+                    gradient.angle_degrees,
+                    radius,
+                ),
+            }
         }
         instance.widget.paint(painter, rect);
         #[cfg(feature = "perf-metrics")]

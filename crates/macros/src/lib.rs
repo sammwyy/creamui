@@ -822,6 +822,8 @@ impl Element {
                     "style",
                     "placeholder",
                     "clipboard_enabled",
+                    "on_submit",
+                    "on_key_press",
                     "font_family",
                 ])?;
                 if !self.children.is_empty() {
@@ -841,6 +843,12 @@ impl Element {
                 }
                 if let Some(enabled) = self.prop("clipboard_enabled")? {
                     output = quote!(#output.clipboard_enabled(#enabled));
+                }
+                if let Some(on_submit) = self.prop("on_submit")? {
+                    output = quote!(#output.on_submit(#on_submit));
+                }
+                if let Some(on_key_press) = self.prop("on_key_press")? {
+                    output = quote!(#output.on_key_press(#on_key_press));
                 }
                 Ok(output)
             }

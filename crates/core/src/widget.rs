@@ -185,6 +185,60 @@ pub trait Painter {
         self.fill_text_weight(rect, text, color, font_size, align, bold, italic);
     }
     fn fill_rect(&mut self, rect: Rect, color: creamui_theme::Color, corner_radius: f32);
+    fn fill_linear_gradient(
+        &mut self,
+        rect: Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        _angle_degrees: f32,
+        corner_radius: f32,
+    ) {
+        self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
+    }
+    fn draw_box_shadow(
+        &mut self,
+        rect: Rect,
+        color: creamui_theme::Color,
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        spread: f32,
+        corner_radius: f32,
+    ) {
+        if color.a == 0 {
+            return;
+        }
+        let blur = blur.max(0.0);
+        let steps = blur.ceil().clamp(1.0, 20.0) as usize;
+        let weight_sum = (0..steps)
+            .map(|index| {
+                let t = index as f32 / steps as f32;
+                (1.0 - t) * (1.0 - t)
+            })
+            .sum::<f32>()
+            .max(1.0);
+        for index in (0..steps).rev() {
+            let t = index as f32 / steps as f32;
+            let expansion = spread + blur * t;
+            let weight = (1.0 - t) * (1.0 - t) / weight_sum;
+            let layer = creamui_theme::Color::rgba(
+                color.r,
+                color.g,
+                color.b,
+                (color.a as f32 * weight).round() as u8,
+            );
+            self.fill_rect(
+                Rect {
+                    x: rect.x + offset_x - expansion,
+                    y: rect.y + offset_y - expansion,
+                    width: rect.width + expansion * 2.0,
+                    height: rect.height + expansion * 2.0,
+                },
+                layer,
+                (corner_radius + expansion).max(0.0),
+            );
+        }
+    }
     fn stroke_rect(
         &mut self,
         rect: Rect,

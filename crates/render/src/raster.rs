@@ -11,8 +11,8 @@ use crate::display_list::{
 use creamui_theme::Color;
 use std::collections::HashMap;
 use tiny_skia::{
-    FillRule, FilterQuality, LineCap, Mask, Paint, PathBuilder, Pixmap, PixmapMut, PixmapPaint,
-    PixmapRef, Stroke, Transform,
+    FillRule, FilterQuality, GradientStop, LineCap, LinearGradient, Mask, Paint, PathBuilder,
+    Pixmap, PixmapMut, PixmapPaint, PixmapRef, Point, SpreadMode, Stroke, Transform,
 };
 
 const TINT_CACHE_FRAMES: u64 = 300;
@@ -110,7 +110,11 @@ impl Rasterizer {
             return;
         }
         if let Primitive::Quad(quad) = &item.primitive {
-            if clip.rounded.is_none() && quad.radius == 0.0 && quad.border_width == 0.0 {
+            if clip.rounded.is_none()
+                && quad.gradient.is_none()
+                && quad.radius == 0.0
+                && quad.border_width == 0.0
+            {
                 let visible = quad.bounds.intersect(clip.bounds);
                 if !visible.is_empty() {
                     fill_rect(
@@ -309,6 +313,42 @@ fn solid(color: Color) -> Paint<'static> {
     paint
 }
 
+fn quad_paint(quad: &Quad) -> Paint<'static> {
+    let Some(gradient) = quad.gradient else {
+        return solid(quad.background);
+    };
+    let mut paint = Paint::default();
+    paint.anti_alias = true;
+    paint.shader = LinearGradient::new(
+        Point::from_xy(gradient.start[0], gradient.start[1]),
+        Point::from_xy(gradient.end[0], gradient.end[1]),
+        vec![
+            GradientStop::new(
+                0.0,
+                tiny_skia::Color::from_rgba8(
+                    gradient.start_color.r,
+                    gradient.start_color.g,
+                    gradient.start_color.b,
+                    gradient.start_color.a,
+                ),
+            ),
+            GradientStop::new(
+                1.0,
+                tiny_skia::Color::from_rgba8(
+                    gradient.end_color.r,
+                    gradient.end_color.g,
+                    gradient.end_color.b,
+                    gradient.end_color.a,
+                ),
+            ),
+        ],
+        SpreadMode::Pad,
+        Transform::identity(),
+    )
+    .unwrap_or_else(|| solid(quad.background).shader);
+    paint
+}
+
 fn fill_rect(
     target: &mut PixmapMut,
     b: Bounds,
@@ -360,17 +400,19 @@ fn push_rounded_rect(pb: &mut PathBuilder, b: Bounds, radius: f32) {
 }
 
 fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Option<&Mask>) {
-    if quad.background.a > 0 {
+    if quad.background.a > 0 || quad.gradient.is_some() {
+        let paint = quad_paint(quad);
         if quad.radius <= 0.01 {
-            fill_rect(target, quad.bounds, quad.background, transform, mask);
+            if let Some(rect) = tiny_skia::Rect::from_ltrb(
+                quad.bounds.x0,
+                quad.bounds.y0,
+                quad.bounds.x1,
+                quad.bounds.y1,
+            ) {
+                target.fill_rect(rect, &paint, transform, mask);
+            }
         } else if let Some(path) = rounded_rect_path(quad.bounds, quad.radius) {
-            target.fill_path(
-                &path,
-                &solid(quad.background),
-                FillRule::Winding,
-                transform,
-                mask,
-            );
+            target.fill_path(&path, &paint, FillRule::Winding, transform, mask);
         }
     }
     if quad.border_width > 0.0 && quad.border_color.a > 0 {
@@ -525,6 +567,25 @@ mod tests {
         r.render(&list, &Damage::Full);
         assert_eq!(rgba(&r, 0, 0), [10, 20, 30, 255]);
         assert_eq!(rgba(&r, 8, 8), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn linear_gradient_interpolates_across_the_quad() {
+        let list = record(|p| {
+            p.fill_linear_gradient(
+                rect(0.0, 0.0, 40.0, 30.0),
+                Color::rgb(255, 0, 0),
+                Color::rgb(0, 0, 255),
+                90.0,
+                0.0,
+            )
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        let left = rgba(&raster, 2, 15);
+        let right = rgba(&raster, 37, 15);
+        assert!(left[0] > left[2]);
+        assert!(right[2] > right[0]);
     }
 
     #[test]

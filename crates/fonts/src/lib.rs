@@ -4,8 +4,10 @@
 use fontdue::{Font as FontFace, FontSettings};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::{env, fs};
 
 /// Family name the bundled DejaVu Sans font is registered under.
 pub const DEFAULT_FAMILY: &str = "sans-serif";
@@ -58,6 +60,7 @@ impl Registry {
 
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::with_defaults());
+    static PREFERRED_FAMILY: RefCell<Option<String>> = RefCell::new(None);
 }
 
 fn parse(bytes: &[u8]) -> Result<FontFace, FontError> {
@@ -123,6 +126,122 @@ pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
             .expect("DEFAULT_FAMILY is always registered")
             .clone()
     })
+}
+
+/// The family stack [`resolve`] and [`use_font`] fall back to when no
+/// family is explicitly requested, following the last font loaded with
+/// [`use_system_font`] (or [`DEFAULT_FAMILY`] otherwise).
+pub fn preferred_family() -> String {
+    PREFERRED_FAMILY
+        .with(|cell| cell.borrow().clone())
+        .unwrap_or_else(|| DEFAULT_FAMILY.to_string())
+}
+
+/// Sets the family [`preferred_family`] returns, without touching the
+/// registry.
+pub fn set_preferred_family(family: Option<String>) {
+    PREFERRED_FAMILY.with(|cell| *cell.borrow_mut() = family);
+}
+
+/// Loads `family` from the system's installed fonts by matching a font
+/// file's name against it (ignoring case, spaces, and dashes), registers
+/// it, and makes it the new [`preferred_family`]. Leaves the registry
+/// and the preferred family untouched and returns `false` when no
+/// matching font file is found on disk.
+pub fn use_system_font(family: &str) -> bool {
+    let Some(regular) = find_system_font(family, FontWeight::Regular) else {
+        return false;
+    };
+    let Ok(bytes) = fs::read(&regular) else {
+        return false;
+    };
+    if register_bytes(family, FontWeight::Regular, bytes).is_err() {
+        return false;
+    }
+    if let Some(bold) = find_system_font(family, FontWeight::Bold) {
+        if let Ok(bytes) = fs::read(bold) {
+            let _ = register_bytes(family, FontWeight::Bold, bytes);
+        }
+    }
+    set_preferred_family(Some(family.to_owned()));
+    true
+}
+
+fn find_system_font(family: &str, weight: FontWeight) -> Option<PathBuf> {
+    match_font(system_font_index(), family, weight)
+}
+
+fn match_font(index: &[(String, PathBuf)], family: &str, weight: FontWeight) -> Option<PathBuf> {
+    let target = normalize_font_name(family);
+    let matches: Vec<&(String, PathBuf)> = index
+        .iter()
+        .filter(|(stem, _)| stem.starts_with(&target))
+        .collect();
+    let wants_bold = weight == FontWeight::Bold;
+    matches
+        .iter()
+        .find(|(stem, _)| stem.contains("bold") == wants_bold)
+        .or_else(|| (!wants_bold).then(|| matches.first()).flatten())
+        .map(|(_, path)| path.clone())
+}
+
+fn normalize_font_name(name: &str) -> String {
+    name.chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '-' && *ch != '_')
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+fn system_font_index() -> &'static [(String, PathBuf)] {
+    static INDEX: OnceLock<Vec<(String, PathBuf)>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut entries = Vec::new();
+        for directory in system_font_directories() {
+            collect_font_files(&directory, &mut entries);
+        }
+        entries
+    })
+}
+
+fn system_font_directories() -> Vec<PathBuf> {
+    let mut directories = vec![
+        PathBuf::from("/usr/share/fonts"),
+        PathBuf::from("/usr/local/share/fonts"),
+    ];
+    if let Some(home) = env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        directories.push(home.join(".local/share/fonts"));
+        directories.push(home.join(".fonts"));
+    }
+    directories
+}
+
+fn collect_font_files(directory: &Path, entries: &mut Vec<(String, PathBuf)>) {
+    let Ok(read_dir) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_font_files(&path, entries);
+            continue;
+        }
+        let is_font = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "ttf" | "otf" | "ttc"
+                )
+            });
+        let Some(stem) = is_font.then(|| path.file_stem()).flatten() else {
+            continue;
+        };
+        if let Some(stem) = stem.to_str() {
+            entries.push((normalize_font_name(stem), path));
+        }
+    }
 }
 
 /// Both weights of a resolved family stack.
@@ -206,5 +325,98 @@ mod tests {
             assert!(handle.regular.glyph_count() > 0);
             assert!(handle.bold.glyph_count() > 0);
         });
+    }
+
+    #[test]
+    fn preferred_family_defaults_to_the_bundled_family() {
+        set_preferred_family(None);
+        assert_eq!(preferred_family(), DEFAULT_FAMILY);
+        set_preferred_family(Some("Inter".to_owned()));
+        assert_eq!(preferred_family(), "Inter");
+        set_preferred_family(None);
+    }
+
+    #[test]
+    fn normalizes_case_spaces_and_dashes() {
+        assert_eq!(normalize_font_name("Fira Code"), "firacode");
+        assert_eq!(normalize_font_name("Fira-Code-Bold"), "firacodebold");
+    }
+
+    #[test]
+    fn matches_a_regular_face_over_a_bold_one_with_the_same_stem() {
+        let index = vec![
+            (
+                normalize_font_name("Inter-Bold"),
+                PathBuf::from("/fonts/Inter-Bold.ttf"),
+            ),
+            (
+                normalize_font_name("Inter-Regular"),
+                PathBuf::from("/fonts/Inter-Regular.ttf"),
+            ),
+        ];
+        assert_eq!(
+            match_font(&index, "Inter", FontWeight::Regular),
+            Some(PathBuf::from("/fonts/Inter-Regular.ttf"))
+        );
+        assert_eq!(
+            match_font(&index, "Inter", FontWeight::Bold),
+            Some(PathBuf::from("/fonts/Inter-Bold.ttf"))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_any_match_when_a_family_has_no_plain_regular_file() {
+        let index = vec![(
+            normalize_font_name("Inter-Bold"),
+            PathBuf::from("/fonts/Inter-Bold.ttf"),
+        )];
+        assert_eq!(
+            match_font(&index, "Inter", FontWeight::Regular),
+            Some(PathBuf::from("/fonts/Inter-Bold.ttf"))
+        );
+    }
+
+    #[test]
+    fn a_missing_bold_variant_matches_nothing() {
+        let index = vec![(
+            normalize_font_name("Inter-Regular"),
+            PathBuf::from("/fonts/Inter-Regular.ttf"),
+        )];
+        assert_eq!(match_font(&index, "Inter", FontWeight::Bold), None);
+    }
+
+    #[test]
+    fn unrelated_families_never_match() {
+        let index = vec![(
+            normalize_font_name("Inter-Regular"),
+            PathBuf::from("/fonts/Inter-Regular.ttf"),
+        )];
+        assert_eq!(match_font(&index, "Roboto", FontWeight::Regular), None);
+    }
+
+    #[test]
+    fn collects_only_font_files_recursively() {
+        let root =
+            std::env::temp_dir().join(format!("creamui-fonts-collect-{}", std::process::id()));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(root.join("Sample.ttf"), b"not a real font").unwrap();
+        fs::write(nested.join("Sample.otf"), b"not a real font").unwrap();
+        fs::write(root.join("notes.txt"), b"ignore me").unwrap();
+
+        let mut entries = Vec::new();
+        collect_font_files(&root, &mut entries);
+        entries.sort();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|(stem, _)| stem == "sample"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn use_system_font_leaves_the_preferred_family_unset_when_nothing_matches() {
+        set_preferred_family(None);
+        assert!(!use_system_font("Definitely Not An Installed Family XYZ"));
+        assert_eq!(preferred_family(), DEFAULT_FAMILY);
     }
 }

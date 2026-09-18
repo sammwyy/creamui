@@ -402,6 +402,9 @@ pub struct AppearanceSelection {
     pub theme: Option<String>,
     pub variant: Option<String>,
     pub accent: Option<Color>,
+    /// A CSS-style family stack (e.g. `"Inter, sans-serif"`) preferred over
+    /// the bundled default, resolved by loading it from the system.
+    pub font_family: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -410,6 +413,7 @@ pub struct ResolvedAppearance {
     pub variant_id: String,
     pub accent: Color,
     pub theme: Theme,
+    pub font_family: Option<String>,
 }
 
 /// Reactive provider for a style theme.

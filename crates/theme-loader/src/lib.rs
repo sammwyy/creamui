@@ -91,6 +91,11 @@ impl SystemThemeLoader {
         self
     }
 
+    pub fn font_family(mut self, family: impl Into<String>) -> Self {
+        self.selection.font_family = Some(family.into());
+        self
+    }
+
     pub fn load(self) -> Result<ResolvedAppearance, ThemeLoadError> {
         self.load_from_paths(config_path(), data_dirs())
     }
@@ -129,6 +134,7 @@ impl SystemThemeLoader {
             variant_id,
             accent,
             theme: resolved,
+            font_family: selection.font_family,
         })
     }
 }
@@ -182,6 +188,12 @@ pub fn write_system_appearance(selection: &AppearanceSelection) -> Result<(), Th
         contents.push_str(&format!(
             "accent = \"#{:02x}{:02x}{:02x}{:02x}\"\n",
             accent.r, accent.g, accent.b, accent.a
+        ));
+    }
+    if let Some(font_family) = &selection.font_family {
+        contents.push_str(&format!(
+            "font_family = {}\n",
+            toml::Value::String(font_family.clone())
         ));
     }
     fs::write(path, contents).map_err(ThemeLoadError::Io)
@@ -275,6 +287,7 @@ fn environment_selection() -> Result<AppearanceSelection, ThemeLoadError> {
         theme: env::var("CREAMUI_THEME").ok(),
         variant: env::var("CREAMUI_VARIANT").ok(),
         accent,
+        font_family: env::var("CREAMUI_FONT").ok(),
     })
 }
 
@@ -287,6 +300,7 @@ fn merge_selection(
         theme: top.theme.or(middle.theme).or(base.theme),
         variant: top.variant.or(middle.variant).or(base.variant),
         accent: top.accent.or(middle.accent).or(base.accent),
+        font_family: top.font_family.or(middle.font_family).or(base.font_family),
     }
 }
 
@@ -304,6 +318,7 @@ struct AppearanceFile {
     theme: Option<String>,
     variant: Option<String>,
     accent: Option<String>,
+    font_family: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -354,6 +369,7 @@ fn selection_from_file(file: AppearanceFile) -> Result<AppearanceSelection, Them
         theme: file.theme,
         variant: file.variant,
         accent: file.accent.map(parse_color).transpose()?,
+        font_family: file.font_family,
     })
 }
 
@@ -524,6 +540,53 @@ success = "#151515"
         assert_eq!(resolved.variant_id, "oled");
         assert_eq!(resolved.accent, accent);
         assert_eq!(resolved.theme.colors.accent, accent);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn font_family_is_absent_by_default_and_honors_the_builder() {
+        let _guard = lock();
+        let appearance = temporary_dir("no-font").join("appearance.toml");
+        let resolved = SystemThemeLoader::new()
+            .load_from_paths(Some(appearance), vec![])
+            .unwrap();
+        assert_eq!(resolved.font_family, None);
+
+        let appearance = temporary_dir("with-font").join("appearance.toml");
+        let resolved = SystemThemeLoader::new()
+            .font_family("Inter")
+            .load_from_paths(Some(appearance), vec![])
+            .unwrap();
+        assert_eq!(resolved.font_family, Some("Inter".to_owned()));
+    }
+
+    #[test]
+    fn font_family_is_read_from_the_appearance_file() {
+        let _guard = lock();
+        let root = temporary_dir("font-file");
+        let appearance = root.join("appearance.toml");
+        fs::write(&appearance, "font_family = 'Fira Code'\n").unwrap();
+        let resolved = SystemThemeLoader::new()
+            .load_from_paths(Some(appearance), vec![])
+            .unwrap();
+        assert_eq!(resolved.font_family, Some("Fira Code".to_owned()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn writing_the_system_appearance_persists_the_font_family() {
+        let _guard = lock();
+        let root = temporary_dir("write-font");
+        let previous_config = env::var_os("XDG_CONFIG_HOME");
+        unsafe { env::set_var("XDG_CONFIG_HOME", &root) };
+        write_system_appearance(&AppearanceSelection {
+            font_family: Some("Fira Code".to_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+        let contents = fs::read_to_string(root.join("cream/appearance.toml")).unwrap();
+        assert!(contents.contains("font_family = \"Fira Code\""));
+        unsafe { restore("XDG_CONFIG_HOME", previous_config) };
         fs::remove_dir_all(root).unwrap();
     }
 

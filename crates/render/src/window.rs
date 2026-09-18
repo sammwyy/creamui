@@ -162,7 +162,11 @@ impl Default for WindowOptions {
 impl WindowOptions {
     #[cfg(feature = "system-theme")]
     pub fn system_theme(mut self) -> Result<Self, creamui_theme_loader::ThemeLoadError> {
-        self.theme = creamui_theme_loader::SystemThemeLoader::new().load()?.theme;
+        let resolved = creamui_theme_loader::SystemThemeLoader::new().load()?;
+        if let Some(font_family) = &resolved.font_family {
+            creamui_fonts::use_system_font(font_family);
+        }
+        self.theme = resolved.theme;
         Ok(self)
     }
 
@@ -1153,7 +1157,11 @@ impl AppBuilder {
 
     #[cfg(feature = "system-theme")]
     pub fn system_theme(mut self) -> Result<Self, creamui_theme_loader::ThemeLoadError> {
-        let theme = creamui_theme_loader::SystemThemeLoader::new().load()?.theme;
+        let resolved = creamui_theme_loader::SystemThemeLoader::new().load()?;
+        if let Some(font_family) = &resolved.font_family {
+            creamui_fonts::use_system_font(font_family);
+        }
+        let theme = resolved.theme;
         for spec in &mut self.specs {
             spec.options.theme = theme;
         }

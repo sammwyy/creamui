@@ -2,7 +2,7 @@
 //! so an unchanged label costs one hash lookup per paint.
 
 use creamui_core::TextAlign;
-use creamui_fonts::{FontWeight, DEFAULT_FAMILY};
+use creamui_fonts::FontWeight;
 use fontdue::layout::{
     CoordinateSystem, GlyphRasterConfig, HorizontalAlign, Layout, LayoutSettings, TextStyle,
     VerticalAlign,
@@ -86,7 +86,10 @@ impl TextSystem {
         } else {
             FontWeight::Regular
         };
-        let face = creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), weight);
+        let preferred = family
+            .map(str::to_owned)
+            .unwrap_or_else(creamui_fonts::preferred_family);
+        let face = creamui_fonts::resolve(&preferred, weight);
         self.faces
             .push((family.map(str::to_owned), bold, face.clone()));
         face

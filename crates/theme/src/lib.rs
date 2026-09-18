@@ -310,6 +310,32 @@ impl Theme {
         self.colors = self.colors.with_accent(accent);
         self
     }
+
+    /// Scales every radius token by the corner style's factor.
+    pub fn with_corners(mut self, corners: CornerStyle) -> Self {
+        let factor = corners.radius_factor();
+        for radius in [
+            &mut self.radius_small,
+            &mut self.radius_medium,
+            &mut self.radius_large,
+            &mut self.button_radius,
+            &mut self.checkbox_radius,
+            &mut self.input_radius,
+            &mut self.textarea_radius,
+            &mut self.card_radius,
+            &mut self.scroll_radius,
+            &mut self.tabs_radius,
+            &mut self.tab_radius,
+            &mut self.sidebar_radius,
+            &mut self.sidebar_item_radius,
+            &mut self.sidebar_icon_radius,
+            &mut self.menu_radius,
+            &mut self.menu_item_radius,
+        ] {
+            *radius = (*radius * factor).round();
+        }
+        self
+    }
 }
 impl std::ops::Deref for Theme {
     type Target = ColorScheme;
@@ -397,6 +423,54 @@ impl ThemeDefinition {
     }
 }
 
+/// The user's preferred corner rounding, shared by CreamUI widgets and the
+/// compositor's window frames so the whole desktop agrees on one shape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum CornerStyle {
+    Square,
+    Soft,
+    #[default]
+    Round,
+}
+
+impl CornerStyle {
+    pub const ALL: [Self; 3] = [Self::Square, Self::Soft, Self::Round];
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::Soft => "soft",
+            Self::Round => "round",
+        }
+    }
+
+    /// Case-insensitive, so hand-edited files may say `Soft` or `SOFT`.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|style| style.id().eq_ignore_ascii_case(id.trim()))
+    }
+
+    /// How much of a theme's authored radii survives: square corners drop
+    /// them entirely, soft ones halve them.
+    pub const fn radius_factor(self) -> f32 {
+        match self {
+            Self::Square => 0.,
+            Self::Soft => 0.5,
+            Self::Round => 1.,
+        }
+    }
+
+    /// Outer corner radius for top-level windows, in logical pixels.
+    pub const fn window_radius(self) -> i32 {
+        match self {
+            Self::Square => 0,
+            Self::Soft => 6,
+            Self::Round => 12,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppearanceSelection {
     pub theme: Option<String>,
@@ -405,6 +479,7 @@ pub struct AppearanceSelection {
     /// A CSS-style family stack (e.g. `"Inter, sans-serif"`) preferred over
     /// the bundled default, resolved by loading it from the system.
     pub font_family: Option<String>,
+    pub corners: Option<CornerStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -412,8 +487,10 @@ pub struct ResolvedAppearance {
     pub theme_id: String,
     pub variant_id: String,
     pub accent: Color,
+    /// Already applied to `theme`'s radius tokens.
     pub theme: Theme,
     pub font_family: Option<String>,
+    pub corners: CornerStyle,
 }
 
 /// Reactive provider for a style theme.
@@ -474,6 +551,17 @@ impl Default for ColorSchemeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corner_styles_scale_radii_and_parse_case_insensitively() {
+        let round = Theme::default();
+        let soft = Theme::default().with_corners(CornerStyle::Soft);
+        let square = Theme::default().with_corners(CornerStyle::Square);
+        assert_eq!(soft.card_radius, (round.card_radius / 2.).round());
+        assert_eq!(square.button_radius, 0.);
+        assert_eq!(CornerStyle::from_id("SOFT"), Some(CornerStyle::Soft));
+        assert_eq!(CornerStyle::from_id("pointy"), None);
+    }
 
     #[test]
     fn default_style_is_rounded() {

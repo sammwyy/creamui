@@ -329,7 +329,7 @@ fn common_style_is_shared_by_layout_paint_typography_and_widget_contract() {
     label.paint(&mut text_painter, Rect::default());
     assert_eq!(
         text_painter.text,
-        Some((hovered_text, 15.0, TextAlign::Center))
+        Some((hovered_text, 15.0, TextAlign::Start))
     );
 }
 

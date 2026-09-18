@@ -1,5 +1,5 @@
 use creamui_theme::{
-    AccentPreset, AppearanceSelection, Color, ColorScheme, ResolvedAppearance, Theme,
+    AccentPreset, AppearanceSelection, Color, ColorScheme, CornerStyle, ResolvedAppearance, Theme,
     ThemeDefinition,
 };
 use serde::Deserialize;
@@ -20,6 +20,9 @@ pub enum ThemeLoadError {
         source: toml::de::Error,
     },
     InvalidColor {
+        value: String,
+    },
+    InvalidCorners {
         value: String,
     },
     InvalidThemeId(String),
@@ -45,6 +48,12 @@ impl fmt::Display for ThemeLoadError {
                 write!(f, "invalid theme file {}: {source}", path.display())
             }
             Self::InvalidColor { value } => write!(f, "invalid color {value}"),
+            Self::InvalidCorners { value } => {
+                write!(
+                    f,
+                    "invalid corners {value}; expected square, soft, or round"
+                )
+            }
             Self::InvalidThemeId(id) => write!(f, "invalid theme id {id}"),
             Self::ThemeNotFound(id) => write!(f, "theme {id} was not found"),
             Self::VariantNotFound { theme, variant } => {
@@ -96,6 +105,11 @@ impl SystemThemeLoader {
         self
     }
 
+    pub fn corners(mut self, corners: CornerStyle) -> Self {
+        self.selection.corners = Some(corners);
+        self
+    }
+
     pub fn load(self) -> Result<ResolvedAppearance, ThemeLoadError> {
         self.load_from_paths(config_path(), data_dirs())
     }
@@ -128,13 +142,15 @@ impl SystemThemeLoader {
             .accent
             .or(theme.default_accent)
             .unwrap_or(resolved.colors.accent);
-        resolved = resolved.with_accent(accent);
+        let corners = selection.corners.unwrap_or_default();
+        resolved = resolved.with_accent(accent).with_corners(corners);
         Ok(ResolvedAppearance {
             theme_id,
             variant_id,
             accent,
             theme: resolved,
             font_family: selection.font_family,
+            corners,
         })
     }
 }
@@ -195,6 +211,9 @@ pub fn write_system_appearance(selection: &AppearanceSelection) -> Result<(), Th
             "font_family = {}\n",
             toml::Value::String(font_family.clone())
         ));
+    }
+    if let Some(corners) = selection.corners {
+        contents.push_str(&format!("corners = \"{}\"\n", corners.id()));
     }
     fs::write(path, contents).map_err(ThemeLoadError::Io)
 }
@@ -288,6 +307,7 @@ fn environment_selection() -> Result<AppearanceSelection, ThemeLoadError> {
         variant: env::var("CREAMUI_VARIANT").ok(),
         accent,
         font_family: env::var("CREAMUI_FONT").ok(),
+        corners: None,
     })
 }
 
@@ -301,6 +321,7 @@ fn merge_selection(
         variant: top.variant.or(middle.variant).or(base.variant),
         accent: top.accent.or(middle.accent).or(base.accent),
         font_family: top.font_family.or(middle.font_family).or(base.font_family),
+        corners: top.corners.or(middle.corners).or(base.corners),
     }
 }
 
@@ -319,6 +340,7 @@ struct AppearanceFile {
     variant: Option<String>,
     accent: Option<String>,
     font_family: Option<String>,
+    corners: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -370,6 +392,12 @@ fn selection_from_file(file: AppearanceFile) -> Result<AppearanceSelection, Them
         variant: file.variant,
         accent: file.accent.map(parse_color).transpose()?,
         font_family: file.font_family,
+        corners: match file.corners {
+            Some(value) => {
+                Some(CornerStyle::from_id(&value).ok_or(ThemeLoadError::InvalidCorners { value })?)
+            }
+            None => None,
+        },
     })
 }
 
@@ -570,6 +598,24 @@ success = "#151515"
             .load_from_paths(Some(appearance), vec![])
             .unwrap();
         assert_eq!(resolved.font_family, Some("Fira Code".to_owned()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corner_style_round_trips_through_the_appearance_file() {
+        let _guard = lock();
+        let root = temporary_dir("write-corners");
+        let previous_config = env::var_os("XDG_CONFIG_HOME");
+        unsafe { env::set_var("XDG_CONFIG_HOME", &root) };
+        write_system_appearance(&AppearanceSelection {
+            corners: Some(CornerStyle::Soft),
+            ..Default::default()
+        })
+        .unwrap();
+        let path = root.join("cream/appearance.toml");
+        let selection = read_appearance(&path).unwrap();
+        assert_eq!(selection.corners, Some(CornerStyle::Soft));
+        unsafe { restore("XDG_CONFIG_HOME", previous_config) };
         fs::remove_dir_all(root).unwrap();
     }
 

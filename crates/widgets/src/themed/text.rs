@@ -37,9 +37,9 @@ impl TextSize {
     }
 }
 
-/// Themed body text using the theme's primary text color. Centered by
-/// default (handy for standalone labels and captions); call [`Text::align`]
-/// for left/right-aligned copy.
+/// Themed body text using the theme's primary text color. Start-aligned by
+/// default for readable body copy; call [`Text::align`] for a different
+/// alignment.
 pub struct Text {
     inner: RawText,
 }

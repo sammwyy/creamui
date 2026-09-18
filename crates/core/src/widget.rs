@@ -49,8 +49,8 @@ pub type MeasureFn = Box<dyn Fn(Size<Option<f32>>, Size<AvailableSpace>) -> Size
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {
     #[default]
-    Center,
     Start,
+    Center,
     End,
 }
 

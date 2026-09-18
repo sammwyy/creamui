@@ -113,10 +113,12 @@ pub struct RawText {
 
 impl RawText {
     /// Creates text with semantic defaults, ready to receive a shared style.
+    /// Text is start-aligned unless a component explicitly requests another
+    /// alignment, matching the usual default for readable body copy.
     pub fn unstyled(text: impl Into<String>) -> Self {
         RawText {
             text: text.into(),
-            style: creamui_core::Style::new().text_align(TextAlign::Center),
+            style: creamui_core::Style::new().text_align(TextAlign::Start),
         }
     }
 

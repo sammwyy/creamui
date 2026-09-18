@@ -268,8 +268,11 @@ impl Widget for Icon {
 
 #[derive(Clone, Copy, Debug)]
 pub enum SurfaceRole {
+    /// The primary material for a page or major pane.
     Panel,
+    /// A grouped region inside a panel, such as a settings section.
     Inset,
+    /// A transient surface that sits above the current page.
     Floating,
 }
 
@@ -307,8 +310,33 @@ impl Widget for Surface {
         std::mem::take(&mut self.children)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let radius = self.theme.card_radius;
-        if matches!(self.role, SurfaceRole::Floating) {
+        let (background, border, radius, shadow) = match self.role {
+            // A page is the broadest visible layer: its larger radius makes
+            // the pane read as one material without making every nested
+            // group look like a separate floating card.
+            SurfaceRole::Panel => (
+                self.theme.colors.surface_elevated,
+                self.theme.colors.border,
+                self.theme.radius_large,
+                false,
+            ),
+            // Groups step back one depth level. Their smaller radius is
+            // shared by every group in the same layer, including in light
+            // themes where colour contrast alone is often too subtle.
+            SurfaceRole::Inset => (
+                self.theme.colors.surface,
+                self.theme.colors.border,
+                self.theme.radius_medium,
+                false,
+            ),
+            SurfaceRole::Floating => (
+                self.theme.colors.surface_elevated,
+                self.theme.colors.border_strong,
+                self.theme.radius_medium,
+                true,
+            ),
+        };
+        if shadow {
             for spread in (1..=5).rev() {
                 let s = spread as f32;
                 painter.fill_rect(
@@ -323,16 +351,8 @@ impl Widget for Surface {
                 );
             }
         }
-        painter.fill_rect(
-            rect,
-            if matches!(self.role, SurfaceRole::Inset) {
-                self.theme.surface
-            } else {
-                self.theme.surface_elevated
-            },
-            radius,
-        );
-        painter.stroke_rect(rect, self.theme.border, 1., radius);
+        painter.fill_rect(rect, background, radius);
+        painter.stroke_rect(rect, border, 1., radius);
     }
 }
 

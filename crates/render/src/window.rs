@@ -1970,11 +1970,8 @@ impl ApplicationHandler<AppEvent> for AppHandler {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
-        self.drain_app_commands(event_loop);
-        if self.commands.borrow().exit_requested {
-            event_loop.exit();
-            return;
-        }
+        // Closes before creates: a replacement popup must not be requested
+        // while the one it's replacing is still alive server-side.
         let close_requests: Vec<WindowId> = self
             .windows
             .iter()
@@ -1982,6 +1979,12 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             .collect();
         for window_id in close_requests {
             self.close_window(event_loop, window_id);
+        }
+
+        self.drain_app_commands(event_loop);
+        if self.commands.borrow().exit_requested {
+            event_loop.exit();
+            return;
         }
 
         let now = Instant::now();

@@ -469,6 +469,15 @@ impl CornerStyle {
             Self::Round => 12,
         }
     }
+
+    /// Outer corner radius for popups/dialogs, in logical pixels.
+    pub const fn popup_radius(self) -> i32 {
+        match self {
+            Self::Square => 0,
+            Self::Soft => 8,
+            Self::Round => 16,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -10,6 +10,7 @@ use creamui_platform::PlatformWindow;
 use creamui_theme::Color;
 use fontdue::layout::GlyphRasterConfig;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -165,8 +166,8 @@ struct Batch {
 /// Renders display lists with a `wgpu` device into any color target of
 /// its format.
 pub struct GpuRenderer {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Rc<wgpu::Device>,
+    queue: Rc<wgpu::Queue>,
     format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
@@ -184,7 +185,7 @@ pub struct GpuRenderer {
 }
 
 impl GpuRenderer {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: Rc<wgpu::Device>, queue: Rc<wgpu::Queue>, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("creamui-shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("gpu.wgsl").into()),
@@ -681,6 +682,42 @@ async fn request_device(
         .await
 }
 
+/// The adapter/device/queue negotiated for the first GPU window in a
+/// process, reused by every later one so only the first window pays for
+/// `request_adapter`/`request_device`.
+pub struct GpuContext {
+    adapter: wgpu::Adapter,
+    device: Rc<wgpu::Device>,
+    queue: Rc<wgpu::Queue>,
+    adapter_name: String,
+}
+
+impl GpuContext {
+    fn request(
+        instance: &wgpu::Instance,
+        compatible_surface: &wgpu::Surface<'static>,
+    ) -> Result<Self, String> {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: Some(compatible_surface),
+            force_fallback_adapter: false,
+        }))
+        .ok_or("no compatible GPU adapter")?;
+        let info = adapter.get_info();
+        let (device, queue) =
+            pollster::block_on(request_device(&adapter)).map_err(|e| format!("device: {e}"))?;
+        device.on_uncaptured_error(Box::new(|err| {
+            log::error!("creamui-render: wgpu error: {err}");
+        }));
+        Ok(GpuContext {
+            adapter,
+            device: Rc::new(device),
+            queue: Rc::new(queue),
+            adapter_name: format!("{} ({:?})", info.name, info.backend),
+        })
+    }
+}
+
 /// A window surface presented through [`GpuRenderer`].
 pub struct GpuSurface {
     renderer: GpuRenderer,
@@ -691,30 +728,27 @@ pub struct GpuSurface {
 }
 
 impl GpuSurface {
+    /// `gpu_context` is filled in on the first call and reused on every
+    /// later one, so only the first GPU window in a process requests its
+    /// own adapter and device.
     pub fn new(
         window: Arc<dyn PlatformWindow>,
         instance: &wgpu::Instance,
         transparent: bool,
+        gpu_context: &mut Option<GpuContext>,
     ) -> Result<Self, String> {
         let t0 = std::time::Instant::now();
         let size = window.inner_size();
         let surface = instance
             .create_surface(window)
             .map_err(|e| format!("surface: {e}"))?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .ok_or("no compatible GPU adapter")?;
-        let info = adapter.get_info();
-        let (device, queue) =
-            pollster::block_on(request_device(&adapter)).map_err(|e| format!("device: {e}"))?;
-        device.on_uncaptured_error(Box::new(|err| {
-            log::error!("creamui-render: wgpu error: {err}");
-        }));
+        if gpu_context.is_none() {
+            *gpu_context = Some(GpuContext::request(instance, &surface)?);
+        }
+        let context = gpu_context.as_ref().expect("just initialized above");
+        let (adapter, device, queue) = (&context.adapter, &context.device, &context.queue);
 
-        let caps = surface.get_capabilities(&adapter);
+        let caps = surface.get_capabilities(adapter);
         let format = caps
             .formats
             .iter()
@@ -752,12 +786,11 @@ impl GpuSurface {
             },
             desired_maximum_frame_latency: 1,
         };
-        surface.configure(&device, &config);
-        let renderer = GpuRenderer::new(device, queue, view_format);
+        surface.configure(device, &config);
+        let renderer = GpuRenderer::new(device.clone(), queue.clone(), view_format);
         log::debug!(
-            "creamui-render: GPU surface ready on {} ({:?}) as {format:?}/{alpha_mode:?} in {:?}",
-            info.name,
-            info.backend,
+            "creamui-render: GPU surface ready on {} as {format:?}/{alpha_mode:?} in {:?}",
+            context.adapter_name,
             t0.elapsed()
         );
         Ok(GpuSurface {
@@ -765,7 +798,7 @@ impl GpuSurface {
             surface,
             config,
             view_format,
-            adapter_name: format!("{} ({:?})", info.name, info.backend),
+            adapter_name: context.adapter_name.clone(),
         })
     }
 
@@ -829,7 +862,7 @@ impl HeadlessGpu {
         let (device, queue) =
             pollster::block_on(request_device(&adapter)).map_err(|e| format!("device: {e}"))?;
         Ok(HeadlessGpu {
-            renderer: GpuRenderer::new(device, queue, wgpu::TextureFormat::Rgba8Unorm),
+            renderer: GpuRenderer::new(Rc::new(device), Rc::new(queue), wgpu::TextureFormat::Rgba8Unorm),
             adapter_name: format!("{} ({:?})", info.name, info.backend),
         })
     }

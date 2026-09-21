@@ -359,9 +359,10 @@ impl Presenter {
         backend: RenderBackend,
         transparent: bool,
         gpu_instance: Option<&wgpu::Instance>,
+        gpu_context: &mut Option<crate::gpu::GpuContext>,
     ) -> Result<Self, String> {
         if let (RenderBackend::Gpu, Some(instance)) = (backend, gpu_instance) {
-            match GpuSurface::new(window.clone(), instance, transparent) {
+            match GpuSurface::new(window.clone(), instance, transparent, gpu_context) {
                 Ok(surface) => return Ok(Presenter::Gpu(surface)),
                 Err(err) => log::warn!(
                     "creamui-render: GPU backend unavailable ({err}), falling back to CPU"
@@ -1748,6 +1749,10 @@ struct AppHandler {
     /// window resolved to the GPU backend.
     #[cfg(not(target_arch = "wasm32"))]
     gpu_instance: Option<Rc<wgpu::Instance>>,
+    /// Adapter/device/queue negotiated by the first GPU window and reused
+    /// by every later one; `None` until that first window is created.
+    #[cfg(not(target_arch = "wasm32"))]
+    gpu_context: Option<crate::gpu::GpuContext>,
 }
 
 impl AppHandler {
@@ -1831,6 +1836,7 @@ impl AppHandler {
                 spec.options.backend,
                 spec.options.transparent,
                 self.gpu_instance.as_deref(),
+                &mut self.gpu_context,
             ) {
                 Ok(presenter) => presenter,
                 Err(err) => panic!("creamui-render: no usable presenter for the window: {err}"),
@@ -2185,6 +2191,8 @@ fn run_windows(
         proxy: event_loop.create_proxy(),
         #[cfg(not(target_arch = "wasm32"))]
         gpu_instance,
+        #[cfg(not(target_arch = "wasm32"))]
+        gpu_context: None,
     };
     #[cfg(not(target_arch = "wasm32"))]
     let mut handler = handler;

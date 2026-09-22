@@ -15,6 +15,8 @@ categories = ["gui"]
 default = ["platform-winit"]
 platform-winit = ["creamui-platform/winit-adapter"]
 platform-wayland = ["creamui-platform/wayland"]
+platform-blur-kwin = ["creamui-platform/blur-kwin"]
+platform-blur-blair = ["creamui-platform/blur-blair"]
 platform-x11 = ["creamui-platform/x11"]
 platform-windows = ["creamui-platform/windows"]
 # Native Linux system-tray integration through the freedesktop

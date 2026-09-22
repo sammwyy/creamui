@@ -130,8 +130,8 @@ pub struct WindowOptions {
     pub decorations: bool,
     pub transparent: bool,
     /// Compositor-side background blur, applied once at creation. Requires
-    /// `transparent` and a compositor that supports it (e.g. KWin); `None`
-    /// elsewhere. See [`PlatformWindow::set_blur_region`](creamui_platform::PlatformWindow::set_blur_region).
+    /// `transparent` and the `blur-kwin`/`blur-blair` platform feature
+    /// matching the running compositor; `None` otherwise.
     pub blur: Option<BlurRegion>,
     /// Gives keyboard focus to the first focusable widget on the initial frame.
     pub focus_first: bool,
@@ -984,8 +984,8 @@ impl WindowHandle {
     }
 
     /// Requests (or clears, with `None`) compositor-side background blur
-    /// behind the window. Unsupported outside Wayland compositors that
-    /// implement `org_kde_kwin_blur` (e.g. KWin) — a no-op elsewhere.
+    /// behind the window. A no-op without a matching `blur-*` platform
+    /// feature or compositor support.
     pub fn set_blur_region(&self, region: Option<BlurRegion>) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_blur_region(region);

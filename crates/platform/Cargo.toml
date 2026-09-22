@@ -13,9 +13,16 @@ categories = ["gui"]
 [features]
 default = ["winit-adapter"]
 winit-adapter = []
-wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:wayland-protocols-plasma", "dep:xkbcommon"]
+wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:xkbcommon"]
 x11 = ["winit-adapter"]
 windows = ["winit-adapter"]
+# Background blur on Wayland: each backend is an optional, additive
+# integration for the compositor that speaks its protocol, so a build that
+# only ever runs under one of them doesn't pay for the other's dependency.
+# Neither is enabled by `wayland` itself; `set_blur_region` stays a no-op
+# without at least one of these on.
+blur-kwin = ["wayland", "dep:wayland-protocols-plasma"]
+blur-blair = ["wayland", "dep:blair-blur-protocol"]
 
 [dependencies]
 raw-window-handle = { workspace = true }
@@ -24,6 +31,7 @@ smithay-client-toolkit = { version = "0.19", optional = true }
 wayland-client = { version = "0.31", features = ["system"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
+blair-blur-protocol = { path = "../../../blair/crates/blur-protocol", features = ["client"], optional = true }
 xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -260,3 +260,9 @@
 - Keyboard focus is a tab-order index into `Scene::focusables`, so
   inserting or removing a focusable widget before the focused one moves
   focus to a different widget.
+- `WindowOptions::blur`/`PlatformWindow::set_blur_region` only has backends
+  for Wayland (`blur-kwin` for KWin's `org_kde_kwin_blur`, `blur-blair` for
+  blair's own `blair_blur_unstable_v1`); X11's
+  `_KDE_NET_WM_BLUR_BEHIND_REGION` atom and the winit/Windows/macOS
+  backends stay a no-op. The FFI/dynamic C ABI does not expose `blur`
+  either (`window_options_from_c` always passes `None`).

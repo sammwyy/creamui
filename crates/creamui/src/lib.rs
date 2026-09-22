@@ -22,8 +22,8 @@ pub use creamui_devtools as devtools;
 pub use creamui_fonts::{include_font, use_font, FontHandle, FontWeight};
 pub use creamui_reactive::{create_effect, Effect, Signal};
 pub use creamui_render::{
-    run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, RenderBackend, WindowHandle,
-    WindowOptions,
+    run, AppBuilder, AppHandle, BlurRegion, CloseBehavior, PanicDetails, RenderBackend,
+    WindowHandle, WindowOptions,
 };
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use creamui_render::{TrayBuilder, TrayIcon};

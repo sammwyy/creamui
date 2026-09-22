@@ -1,8 +1,8 @@
 use crate::{
-    BackendKind, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition, LogicalSize,
-    Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend,
-    PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId,
-    WindowLevel, WindowRole,
+    BackendKind, BlurRegion, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition,
+    LogicalSize, Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize,
+    PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent,
+    WindowId, WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -59,6 +59,9 @@ use std::{
         Arc, Mutex,
     },
     time::{Duration, Instant},
+};
+use wayland_protocols_plasma::blur::client::{
+    org_kde_kwin_blur::OrgKdeKwinBlur, org_kde_kwin_blur_manager::OrgKdeKwinBlurManager,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -137,6 +140,8 @@ impl<T: 'static> EventLoop<T> {
             XdgShell::bind(&globals, &queue_handle).map_err(|error| error.to_string())?;
         let cursor_shape_manager = CursorShapeManager::bind(&globals, &queue_handle).ok();
         let layer_shell = globals.bind(&queue_handle, 1..=5, ()).ok();
+        let blur_manager: Option<OrgKdeKwinBlurManager> =
+            globals.bind(&queue_handle, 1..=1, ()).ok();
         let seat: Option<wl_seat::WlSeat> = globals.bind(&queue_handle, 1..=9, ()).ok();
         let data_device_manager = DataDeviceManagerState::bind(&globals, &queue_handle).ok();
         let data_device = data_device_manager
@@ -154,6 +159,7 @@ impl<T: 'static> EventLoop<T> {
             seat,
             cursor_shape_manager,
             layer_shell,
+            blur_manager,
             data_device_manager,
             data_device,
             icon_pool,
@@ -182,6 +188,7 @@ impl<T: 'static> EventLoop<T> {
             runtime.borrow_mut().close_requested();
             runtime.borrow_mut().apply_cursor_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
+            runtime.borrow_mut().apply_blur_requests(&queue_handle);
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
@@ -271,6 +278,7 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.blur_requests.clone(),
             attributes.size,
             false,
         ));
@@ -328,6 +336,7 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.blur_requests.clone(),
             attributes.size,
             false,
         ));
@@ -388,6 +397,9 @@ struct Runtime {
     xkb_state: Option<xkb::State>,
     cursor_shape_manager: Option<CursorShapeManager>,
     layer_shell: Option<ZwlrLayerShellV1>,
+    blur_manager: Option<OrgKdeKwinBlurManager>,
+    blur_objects: HashMap<WindowId, OrgKdeKwinBlur>,
+    blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     cursor_serial: Option<u32>,
     pointer_focus: Option<WindowId>,
@@ -417,6 +429,12 @@ struct DragRequest {
     icon: Option<DragIcon>,
 }
 
+/// Queued by [`Window::set_blur_region`], drained by [`Runtime::apply_blur_requests`].
+struct BlurRequest {
+    window_id: WindowId,
+    region: Option<BlurRegion>,
+}
+
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -426,6 +444,7 @@ impl Runtime {
         seat: Option<wl_seat::WlSeat>,
         cursor_shape_manager: Option<CursorShapeManager>,
         layer_shell: Option<ZwlrLayerShellV1>,
+        blur_manager: Option<OrgKdeKwinBlurManager>,
         data_device_manager: Option<DataDeviceManagerState>,
         data_device: Option<DataDevice>,
         icon_pool: SlotPool,
@@ -441,6 +460,9 @@ impl Runtime {
             xkb_state: None,
             cursor_shape_manager,
             layer_shell,
+            blur_manager,
+            blur_objects: HashMap::new(),
+            blur_requests: Arc::new(Mutex::new(Vec::new())),
             cursor_shape_device: None,
             cursor_serial: None,
             pointer_focus: None,
@@ -492,6 +514,9 @@ impl Runtime {
             {
                 layer_surface.destroy();
                 handle.surface.destroy();
+            }
+            if let Some(blur) = self.blur_objects.remove(&id) {
+                blur.release();
             }
             if self.pointer_focus == Some(id) {
                 self.pointer_focus = None;
@@ -558,6 +583,67 @@ impl Runtime {
             );
             source.start_drag(device, &origin, icon.as_ref(), request.serial);
             self.active_drag = Some(source);
+        }
+    }
+
+    /// Applies each queued [`BlurRequest`], creating or updating the
+    /// surface's `org_kde_kwin_blur` object. A no-op when the compositor
+    /// does not advertise the blur-manager global.
+    fn apply_blur_requests(&mut self, qh: &QueueHandle<DispatchState>) {
+        let requests = std::mem::take(
+            &mut *self
+                .blur_requests
+                .lock()
+                .expect("blur request lock poisoned"),
+        );
+        let Some(manager) = self.blur_manager.clone() else {
+            return;
+        };
+        for request in requests {
+            let Some(surface) = self
+                .windows
+                .get(&request.window_id)
+                .map(|window| window.surface().clone())
+            else {
+                continue;
+            };
+            match request.region {
+                None => {
+                    manager.unset(&surface);
+                    if let Some(blur) = self.blur_objects.remove(&request.window_id) {
+                        blur.release();
+                    }
+                }
+                Some(region) => {
+                    let blur = self
+                        .blur_objects
+                        .entry(request.window_id)
+                        .or_insert_with(|| manager.create(&surface, qh, ()));
+                    let wl_region = match region {
+                        BlurRegion::Window => None,
+                        BlurRegion::Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        } => {
+                            let wl_region = self.compositor.wl_compositor().create_region(qh, ());
+                            wl_region.add(
+                                x as i32,
+                                y as i32,
+                                width.ceil() as i32,
+                                height.ceil() as i32,
+                            );
+                            Some(wl_region)
+                        }
+                    };
+                    blur.set_region(wl_region.as_ref());
+                    blur.commit();
+                    if let Some(wl_region) = wl_region {
+                        wl_region.destroy();
+                    }
+                }
+            }
         }
     }
 
@@ -672,6 +758,7 @@ fn create_layer_window(
         runtime.close_requests.clone(),
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
+        runtime.blur_requests.clone(),
         attributes.size,
         overlay,
     ));
@@ -851,6 +938,30 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for DispatchState {
             }
             _ => {}
         }
+    }
+}
+
+impl Dispatch<OrgKdeKwinBlurManager, ()> for DispatchState {
+    fn event(
+        _: &mut Self,
+        _: &OrgKdeKwinBlurManager,
+        _: <OrgKdeKwinBlurManager as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<OrgKdeKwinBlur, ()> for DispatchState {
+    fn event(
+        _: &mut Self,
+        _: &OrgKdeKwinBlur,
+        _: <OrgKdeKwinBlur as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
     }
 }
 
@@ -1367,6 +1478,7 @@ pub struct Window {
     close_requests: Arc<Mutex<Vec<WindowId>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+    blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     pointer_passthrough: bool,
 }
 
@@ -1379,6 +1491,7 @@ impl Window {
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+        blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1397,6 +1510,7 @@ impl Window {
             close_requests,
             cursor_requests,
             drag_requests,
+            blur_requests,
             pointer_passthrough,
         }
     }
@@ -1499,6 +1613,17 @@ impl PlatformWindow for Window {
         requests.push((self.id, icon));
     }
     fn focus(&self) {}
+    fn set_blur_region(&self, region: Option<BlurRegion>) {
+        let mut requests = self
+            .blur_requests
+            .lock()
+            .expect("blur request lock poisoned");
+        requests.retain(|request| request.window_id != self.id);
+        requests.push(BlurRequest {
+            window_id: self.id,
+            region,
+        });
+    }
     fn start_drag(
         &self,
         serial: crate::InputSerial,

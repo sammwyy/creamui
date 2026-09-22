@@ -49,6 +49,22 @@ pub struct PhysicalPosition {
     pub y: f64,
 }
 
+/// Region behind a window's surface the compositor should blur, via
+/// [`crate::PlatformWindow::set_blur_region`]. Coordinates are logical
+/// window-local pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BlurRegion {
+    /// Blur behind the whole surface.
+    Window,
+    /// Blur restricted to this rectangle.
+    Rect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowLevel {
     Normal,

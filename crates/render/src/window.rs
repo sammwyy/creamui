@@ -26,9 +26,9 @@ use creamui_core::{
     WindowDragHandle,
 };
 use creamui_platform::{
-    ActiveEventLoop, ApplicationHandler, ControlFlow, CursorIcon as PlatformCursorIcon, DragIcon,
-    EventLoop, EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize,
-    Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta, PlatformWindow,
+    ActiveEventLoop, ApplicationHandler, BlurRegion, ControlFlow, CursorIcon as PlatformCursorIcon,
+    DragIcon, EventLoop, EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition,
+    LogicalSize, Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta, PlatformWindow,
     PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection,
     WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
@@ -129,6 +129,10 @@ pub struct WindowOptions {
     pub resizable: bool,
     pub decorations: bool,
     pub transparent: bool,
+    /// Compositor-side background blur, applied once at creation. Requires
+    /// `transparent` and a compositor that supports it (e.g. KWin); `None`
+    /// elsewhere. See [`PlatformWindow::set_blur_region`](creamui_platform::PlatformWindow::set_blur_region).
+    pub blur: Option<BlurRegion>,
     /// Gives keyboard focus to the first focusable widget on the initial frame.
     pub focus_first: bool,
     pub role: WindowRole,
@@ -153,6 +157,7 @@ impl Default for WindowOptions {
             resizable: true,
             decorations: true,
             transparent: false,
+            blur: None,
             focus_first: false,
             role: WindowRole::Normal,
             close_behavior: CloseBehavior::Close,
@@ -178,6 +183,12 @@ impl WindowOptions {
     /// especially on Wayland where compositors may ignore late moves.
     pub fn at_position(mut self, x: i32, y: i32) -> Self {
         self.position = Some((x, y));
+        self
+    }
+
+    /// Requests compositor-side background blur behind `region`.
+    pub fn blurred(mut self, region: BlurRegion) -> Self {
+        self.blur = Some(region);
         self
     }
 
@@ -969,6 +980,15 @@ impl WindowHandle {
             } else {
                 WindowLevel::Normal
             });
+        }
+    }
+
+    /// Requests (or clears, with `None`) compositor-side background blur
+    /// behind the window. Unsupported outside Wayland compositors that
+    /// implement `org_kde_kwin_blur` (e.g. KWin) — a no-op elsewhere.
+    pub fn set_blur_region(&self, region: Option<BlurRegion>) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_blur_region(region);
         }
     }
 
@@ -1799,6 +1819,9 @@ impl AppHandler {
                 .create_window(attrs)
                 .expect("failed to create window"),
         };
+        if let Some(region) = spec.options.blur {
+            window.set_blur_region(Some(region));
+        }
         // Show the window immediately; the presenter's first frame replaces
         // the platform's placeholder surface moments later.
         window.set_visible(true);

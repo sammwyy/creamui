@@ -49,6 +49,12 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn drag_resize_window(&self, direction: ResizeDirection) -> Result<(), String>;
     fn set_cursor(&self, icon: CursorIcon);
     fn focus(&self);
+    /// Requests compositor-side background blur behind `region`, or clears
+    /// it with `None`. Default: unsupported, for backends/compositors with
+    /// no such protocol (the window stays plain-transparent instead).
+    fn set_blur_region(&self, region: Option<BlurRegion>) {
+        let _ = region;
+    }
     /// Starts a real drag-and-drop grab (e.g. a desktop icon dragged toward
     /// the dock or an external app), handed off to the compositor from
     /// `serial` — the input serial of the pointer-button-press that

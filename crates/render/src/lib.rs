@@ -22,6 +22,7 @@ mod window;
 
 pub use backend::RenderBackend;
 pub use creamui_platform as platform;
+pub use creamui_platform::BlurRegion;
 pub use devtools::{install_devtools, Devtools, FrameReport, WindowDevtools};
 pub use display_list::{damage, Bounds, Damage, DisplayList};
 #[cfg(not(target_arch = "wasm32"))]

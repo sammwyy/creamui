@@ -13,7 +13,7 @@ categories = ["gui"]
 [features]
 default = ["winit-adapter"]
 winit-adapter = []
-wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:xkbcommon"]
+wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:wayland-protocols-plasma", "dep:xkbcommon"]
 x11 = ["winit-adapter"]
 windows = ["winit-adapter"]
 
@@ -23,6 +23,7 @@ winit = { workspace = true }
 smithay-client-toolkit = { version = "0.19", optional = true }
 wayland-client = { version = "0.31", features = ["system"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
+wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
 xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

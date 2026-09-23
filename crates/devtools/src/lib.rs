@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
-/// Family used for devtools text. It falls back to CreamUI's bundled font
+/// Family used for devtools text. It falls back to CreamUI's system UI font
 /// unless the app registers a matching font first.
 pub const DEBUG_FONT_FAMILY: &str = "CreamUI Debug, monospace";
 

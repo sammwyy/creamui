@@ -9,11 +9,12 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::{env, fs};
 
-/// Family name the bundled DejaVu Sans font is registered under.
-pub const DEFAULT_FAMILY: &str = "sans-serif";
-
-const DEFAULT_REGULAR_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
-const DEFAULT_BOLD_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans-Bold.ttf");
+/// Generic UI family resolved from the operating system on first use.
+///
+/// CreamUI deliberately does not bundle a font. Shipping a full font makes
+/// every executable larger and, with `fontdue`, eagerly compiling every
+/// glyph outline can dominate a small application's resident memory.
+pub const DEFAULT_FAMILY: &str = "system-ui";
 
 /// Embeds a font file's bytes at compile time.
 #[macro_export]
@@ -45,16 +46,9 @@ struct Registry {
 
 impl Registry {
     fn with_defaults() -> Self {
-        let mut faces = HashMap::new();
-        faces.insert(
-            (DEFAULT_FAMILY.to_string(), FontWeight::Regular),
-            Rc::new(parse(DEFAULT_REGULAR_BYTES).expect("bundled font is a valid, fixed asset")),
-        );
-        faces.insert(
-            (DEFAULT_FAMILY.to_string(), FontWeight::Bold),
-            Rc::new(parse(DEFAULT_BOLD_BYTES).expect("bundled font is a valid, fixed asset")),
-        );
-        Registry { faces }
+        Registry {
+            faces: HashMap::new(),
+        }
     }
 }
 
@@ -95,37 +89,101 @@ pub fn register_file(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-/// Resolves a CSS-style comma-separated family stack against the registry:
-/// the first family with a face registered for `weight` wins. A family
-/// registered only at `Regular` still matches a `Bold` request. Falls back
-/// to [`DEFAULT_FAMILY`] if nothing in the stack matches.
+/// Resolves a CSS-style comma-separated family stack against the registry and
+/// the operating system. Faces are parsed only when their family and weight
+/// are first requested. A `Bold` request falls back to its family's regular
+/// face before trying [`DEFAULT_FAMILY`].
 pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
-    REGISTRY.with(|registry| {
-        let registry = registry.borrow();
-        for family in spec.split(',').map(str::trim).filter(|f| !f.is_empty()) {
-            if let Some(face) = registry.faces.get(&(family.to_string(), weight)) {
-                return face.clone();
-            }
-            if weight == FontWeight::Bold {
-                if let Some(face) = registry
-                    .faces
-                    .get(&(family.to_string(), FontWeight::Regular))
-                {
-                    return face.clone();
-                }
+    let families: Vec<&str> = spec
+        .split(',')
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .collect();
+    for family in &families {
+        if let Some(face) = registered_face(family, weight) {
+            return face;
+        }
+        if !is_generic_family(family) {
+            let _ = load_system_face(family, family, weight);
+            if let Some(face) = registered_face(family, weight) {
+                return face;
             }
         }
+    }
+    default_face(weight)
+}
+
+fn registered_face(family: &str, weight: FontWeight) -> Option<Rc<FontFace>> {
+    REGISTRY.with(|registry| {
+        let registry = registry.borrow();
         registry
             .faces
-            .get(&(DEFAULT_FAMILY.to_string(), weight))
+            .get(&(family.to_owned(), weight))
             .or_else(|| {
-                registry
-                    .faces
-                    .get(&(DEFAULT_FAMILY.to_string(), FontWeight::Regular))
+                (weight == FontWeight::Bold)
+                    .then(|| {
+                        registry
+                            .faces
+                            .get(&(family.to_owned(), FontWeight::Regular))
+                    })
+                    .flatten()
             })
-            .expect("DEFAULT_FAMILY is always registered")
-            .clone()
+            .cloned()
     })
+}
+
+fn default_face(weight: FontWeight) -> Rc<FontFace> {
+    if let Some(face) = registered_face(DEFAULT_FAMILY, weight) {
+        return face;
+    }
+    for family in system_font_candidates() {
+        if load_system_face(DEFAULT_FAMILY, family, weight) {
+            return registered_face(DEFAULT_FAMILY, weight)
+                .expect("a successfully loaded system face is registered");
+        }
+    }
+    if weight == FontWeight::Bold {
+        if let Some(face) = registered_face(DEFAULT_FAMILY, FontWeight::Regular) {
+            return face;
+        }
+        for family in system_font_candidates() {
+            if load_system_face(DEFAULT_FAMILY, family, FontWeight::Regular) {
+                return registered_face(DEFAULT_FAMILY, FontWeight::Regular)
+                    .expect("a successfully loaded system face is registered");
+            }
+        }
+    }
+    panic!(
+        "creamui-fonts: no usable system UI font was found; register one with register_file/register_bytes"
+    );
+}
+
+fn load_system_face(registry_family: &str, lookup_family: &str, weight: FontWeight) -> bool {
+    let Some(path) = find_system_font(lookup_family, weight) else {
+        return false;
+    };
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    register_bytes(registry_family, weight, bytes).is_ok()
+}
+
+fn is_generic_family(family: &str) -> bool {
+    matches!(
+        family.trim().to_ascii_lowercase().as_str(),
+        "system-ui" | "sans-serif" | "serif" | "monospace"
+    )
+}
+
+#[cfg(target_os = "windows")]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Segoe UI", "Arial"];
+#[cfg(target_os = "macos")]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Helvetica Neue", "Helvetica", "Arial"];
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"];
+
+fn system_font_candidates() -> &'static [&'static str] {
+    SYSTEM_FONT_CANDIDATES
 }
 
 /// The family stack [`resolve`] and [`use_font`] fall back to when no
@@ -149,20 +207,10 @@ pub fn set_preferred_family(family: Option<String>) {
 /// and the preferred family untouched and returns `false` when no
 /// matching font file is found on disk.
 pub fn use_system_font(family: &str) -> bool {
-    let Some(regular) = find_system_font(family, FontWeight::Regular) else {
-        return false;
-    };
-    let Ok(bytes) = fs::read(&regular) else {
-        return false;
-    };
-    if register_bytes(family, FontWeight::Regular, bytes).is_err() {
+    if !load_system_face(family, family, FontWeight::Regular) {
         return false;
     }
-    if let Some(bold) = find_system_font(family, FontWeight::Bold) {
-        if let Ok(bytes) = fs::read(bold) {
-            let _ = register_bytes(family, FontWeight::Bold, bytes);
-        }
-    }
+    let _ = load_system_face(family, family, FontWeight::Bold);
     set_preferred_family(Some(family.to_owned()));
     true
 }
@@ -178,11 +226,31 @@ fn match_font(index: &[(String, PathBuf)], family: &str, weight: FontWeight) -> 
         .filter(|(stem, _)| stem.starts_with(&target))
         .collect();
     let wants_bold = weight == FontWeight::Bold;
-    matches
+    let preferred_stems = if wants_bold {
+        [format!("{target}bold"), format!("{target}semibold")]
+    } else {
+        [target.clone(), format!("{target}regular")]
+    };
+    preferred_stems
         .iter()
-        .find(|(stem, _)| stem.contains("bold") == wants_bold)
-        .or_else(|| (!wants_bold).then(|| matches.first()).flatten())
-        .map(|(_, path)| path.clone())
+        .find_map(|preferred| {
+            matches
+                .iter()
+                .find(|(stem, _)| stem == preferred)
+                .map(|(_, path)| path.clone())
+        })
+        .or_else(|| {
+            matches
+                .iter()
+                .find(|(stem, _)| stem.contains("bold") == wants_bold)
+                .map(|(_, path)| path.clone())
+        })
+        .or_else(|| {
+            (!wants_bold)
+                .then(|| matches.first())
+                .flatten()
+                .map(|(_, path)| path.clone())
+        })
 }
 
 fn normalize_font_name(name: &str) -> String {
@@ -204,14 +272,32 @@ fn system_font_index() -> &'static [(String, PathBuf)] {
 }
 
 fn system_font_directories() -> Vec<PathBuf> {
-    let mut directories = vec![
+    let mut directories = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(windir) = env::var_os("WINDIR") {
+            directories.push(PathBuf::from(windir).join("Fonts"));
+        }
+        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+            directories.push(PathBuf::from(local_app_data).join("Microsoft/Windows/Fonts"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    directories.extend([
+        PathBuf::from("/System/Library/Fonts"),
+        PathBuf::from("/Library/Fonts"),
+    ]);
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    directories.extend([
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),
-    ];
+    ]);
     if let Some(home) = env::var_os("HOME") {
         let home = PathBuf::from(home);
         directories.push(home.join(".local/share/fonts"));
         directories.push(home.join(".fonts"));
+        #[cfg(target_os = "macos")]
+        directories.push(home.join("Library/Fonts"));
     }
     directories
 }
@@ -275,8 +361,16 @@ pub fn use_font(spec: impl AsRef<str>) -> FontHandle {
 mod tests {
     use super::*;
 
+    fn test_font_bytes() -> Vec<u8> {
+        let path = system_font_candidates()
+            .iter()
+            .find_map(|family| find_system_font(family, FontWeight::Regular))
+            .expect("tests need one of the supported system UI fonts");
+        fs::read(path).expect("system UI font remains readable")
+    }
+
     #[test]
-    fn resolves_the_bundled_default_family() {
+    fn resolves_the_system_default_family() {
         let face = resolve(DEFAULT_FAMILY, FontWeight::Regular);
         assert!(face.glyph_count() > 0);
     }
@@ -290,7 +384,7 @@ mod tests {
 
     #[test]
     fn css_style_stack_resolves_to_the_first_registered_family() {
-        register_bytes("Test Family A", FontWeight::Regular, DEFAULT_REGULAR_BYTES).unwrap();
+        register_bytes("Test Family A", FontWeight::Regular, test_font_bytes()).unwrap();
         let resolved = resolve(
             "Nonexistent, Test Family A, sans-serif",
             FontWeight::Regular,
@@ -301,7 +395,7 @@ mod tests {
 
     #[test]
     fn bold_falls_back_to_the_family_s_own_regular_before_the_default() {
-        register_bytes("Test Family B", FontWeight::Regular, DEFAULT_REGULAR_BYTES).unwrap();
+        register_bytes("Test Family B", FontWeight::Regular, test_font_bytes()).unwrap();
         let own_regular = resolve("Test Family B", FontWeight::Regular);
         let bold_request = resolve("Test Family B", FontWeight::Bold);
         assert!(Rc::ptr_eq(&own_regular, &bold_request));
@@ -328,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn preferred_family_defaults_to_the_bundled_family() {
+    fn preferred_family_defaults_to_the_system_family() {
         set_preferred_family(None);
         assert_eq!(preferred_family(), DEFAULT_FAMILY);
         set_preferred_family(Some("Inter".to_owned()));
@@ -361,6 +455,24 @@ mod tests {
         assert_eq!(
             match_font(&index, "Inter", FontWeight::Bold),
             Some(PathBuf::from("/fonts/Inter-Bold.ttf"))
+        );
+    }
+
+    #[test]
+    fn prefers_an_exact_latin_family_over_a_prefixed_cjk_variant() {
+        let index = vec![
+            (
+                normalize_font_name("NotoSansCJK-Regular"),
+                PathBuf::from("/fonts/NotoSansCJK-Regular.ttf"),
+            ),
+            (
+                normalize_font_name("NotoSans-Regular"),
+                PathBuf::from("/fonts/NotoSans-Regular.ttf"),
+            ),
+        ];
+        assert_eq!(
+            match_font(&index, "Noto Sans", FontWeight::Regular),
+            Some(PathBuf::from("/fonts/NotoSans-Regular.ttf"))
         );
     }
 

@@ -166,8 +166,8 @@ pub trait Painter {
     }
 
     /// Like [`Painter::fill_text_weight`], resolving `family` (a CSS-style
-    /// stack, e.g. `"Inter, sans-serif"`) against the font registry instead
-    /// of the bundled default. `None` behaves exactly like
+    /// stack, e.g. `"Inter, system-ui"`) against the font registry instead
+    /// of the system default. `None` behaves exactly like
     /// [`Painter::fill_text_weight`].
     #[allow(clippy::too_many_arguments)]
     fn fill_text_font(

@@ -322,6 +322,20 @@ pub trait Painter {
     /// Removes the most recently pushed clip. Must be paired 1:1 with
     /// [`Painter::push_clip`] calls. Default: a no-op.
     fn pop_clip(&mut self) {}
+
+    /// Like [`Painter::push_clip_rounded`] for the viewport of content
+    /// scrolled by `offset` (the content's origin sits at the viewport's
+    /// origin minus `offset`). Painters that retain frames can then move
+    /// already drawn content instead of redrawing it. Paired with
+    /// [`Painter::pop_scroll_layer`].
+    fn push_scroll_layer(&mut self, viewport: Rect, corner_radius: f32, offset: Point) {
+        let _ = offset;
+        self.push_clip_rounded(viewport, corner_radius);
+    }
+
+    fn pop_scroll_layer(&mut self) {
+        self.pop_clip();
+    }
 }
 
 /// A node in a CreamUI widget tree.

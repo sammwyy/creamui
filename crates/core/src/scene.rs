@@ -473,15 +473,16 @@ fn paint_instance(
 
     // Portal layers escape ancestor clips.
     let clips = instance.widget.clips_children() && mode != PaintMode::Absolute;
+    // Give a child's own border/outline overflow (e.g. a focus ring)
+    // headroom so this container's own tight-fit edge doesn't clip it.
+    let margin = instance
+        .children
+        .iter()
+        .map(|child| child.paint_overflow)
+        .fold(0.0f32, f32::max);
+    let clip_rect = rect.inflate(margin);
     let child_clip = if clips {
-        // Give a child's own border/outline overflow (e.g. a focus ring)
-        // headroom so this container's own tight-fit edge doesn't clip it.
-        let margin = instance
-            .children
-            .iter()
-            .map(|child| child.paint_overflow)
-            .fold(0.0f32, f32::max);
-        match rect.inflate(margin).intersect(effective_clip) {
+        match clip_rect.intersect(effective_clip) {
             Some(c) => c,
             None => return,
         }
@@ -489,8 +490,15 @@ fn paint_instance(
         effective_clip
     };
 
-    if clips {
-        painter.push_clip_rounded(child_clip, instance.widget.clip_corner_radius());
+    let scrolls = clips
+        && (instance.widget.on_scroll().is_some() || instance.widget.on_scroll_bounded().is_some());
+    // Painters intersect with the clip already in effect themselves; the
+    // container's own rect keeps the pushed clip independent of how far an
+    // enclosing scroll layer is scrolled.
+    if scrolls {
+        painter.push_scroll_layer(clip_rect, instance.widget.clip_corner_radius(), offset);
+    } else if clips {
+        painter.push_clip_rounded(clip_rect, instance.widget.clip_corner_radius());
     }
     let child_mode = if mode == PaintMode::Absolute && absolute {
         PaintMode::Flow
@@ -510,7 +518,9 @@ fn paint_instance(
             child_mode,
         );
     }
-    if clips {
+    if scrolls {
+        painter.pop_scroll_layer();
+    } else if clips {
         painter.pop_clip();
     }
 }

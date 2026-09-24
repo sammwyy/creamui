@@ -4,7 +4,8 @@
 use creamui_core::{BoxedWidget, PaintStyle, Painter, Rect, StateStyle, Style, Styled, Widget};
 use creamui_theme::Color;
 use creamui_widgets::layout::{Flex, Wrap};
-use creamui_widgets::raw::{RawText, RawView};
+use creamui_widgets::raw::{RawScrollView, RawText, RawView};
+use creamui_widgets::ScrollController;
 
 fn leaf_color(seed: usize) -> Color {
     let h = seed.wrapping_mul(2654435761);
@@ -191,6 +192,28 @@ pub fn chat_with_message(count: usize, changed_index: usize, changed_text: &str)
 /// A scrollable list of `count` chat message bubbles.
 pub fn chat(count: usize) -> BoxedWidget {
     chat_with_message(count, usize::MAX, "")
+}
+
+/// [`chat`] inside a `width` x `height` view scrolled by `controller`, on
+/// an opaque background.
+pub fn scrolled_chat(
+    count: usize,
+    width: f32,
+    height: f32,
+    controller: ScrollController,
+) -> BoxedWidget {
+    Box::new(
+        RawView::new(
+            Style::new()
+                .width(width)
+                .height(height)
+                .background(Color::rgb(245, 245, 248)),
+        )
+        .child(Box::new(
+            RawScrollView::controlled(Style::new().width(width).height(height), controller)
+                .child(chat(count)),
+        )),
+    )
 }
 
 /// A leaf that calls [`Painter::animation_time`] every paint, so the

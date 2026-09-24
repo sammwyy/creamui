@@ -48,7 +48,9 @@ use web_time::Instant;
 /// How long the text-input caret stays in each visibility phase while
 /// blinking (on, then off, then on again).
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
-const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+/// Frame period assumed when the platform cannot report the display's.
+const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+const REFRESH_QUERY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What happens when the user asks the window manager to close a window.
 ///
@@ -408,6 +410,15 @@ impl Presenter {
         }
     }
 
+    /// Whether presenting blocks until the display can take a new frame.
+    fn paces_presents(&self) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Presenter::Gpu(_) => true,
+            _ => false,
+        }
+    }
+
     fn needs_raster(&self) -> bool {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -555,17 +566,17 @@ impl Pipeline {
     }
 
     /// Presents the pending display list, touching only what changed since
-    /// the last presented one.
-    fn present(&self, presenter: Option<&mut Presenter>) {
+    /// the last presented one. Returns whether a frame reached `presenter`.
+    fn present(&self, presenter: Option<&mut Presenter>) -> bool {
         let mut frame = self.frame.borrow_mut();
         let Some(list) = frame.pending.take() else {
-            return;
+            return false;
         };
-        let damage = display_list::damage(frame.presented.as_ref(), &list);
-        if damage.is_none() {
+        let diff = display_list::diff(frame.presented.as_ref(), &list);
+        if diff.is_none() {
             frame.report = FrameReport::default();
             frame.recorder.recycle(list);
-            return;
+            return false;
         }
         let viewport = list.viewport();
         let needs_raster =
@@ -575,14 +586,15 @@ impl Pipeline {
             frame
                 .raster
                 .get_or_insert_with(|| Rasterizer::new(list.width, list.height))
-                .render(&list, &damage)
+                .apply(&list, &diff)
         } else {
-            damage
+            diff.changed(viewport)
         };
         let regions = damage.regions(viewport);
         frame.report.raster += started.elapsed();
 
         let started = Instant::now();
+        let reached_presenter = presenter.is_some();
         if let Some(presenter) = presenter {
             if let Some(window) = self.window.borrow().as_ref() {
                 window.pre_present_notify();
@@ -611,7 +623,7 @@ impl Pipeline {
                 frame.pending = Some(list);
                 drop(frame);
                 self.request_redraw();
-                return;
+                return false;
             }
         }
         frame.report.present += started.elapsed();
@@ -660,6 +672,7 @@ impl Pipeline {
         if let Some(old) = presented.replace(list) {
             recorder.recycle(old);
         }
+        reached_presenter
     }
 
     fn animated(&self) -> bool {
@@ -1276,6 +1289,12 @@ struct WindowState {
     modifiers: PlatformModifiers,
     next_blink: Instant,
     next_animation: Instant,
+    /// The last presented frame was handed to a presenter or platform that
+    /// holds the next one until the display refreshes, so an animation can
+    /// request it right away and stay in step with the display.
+    paced_present: bool,
+    frame_interval: Duration,
+    frame_interval_checked: Option<Instant>,
     next_devtools_refresh: Instant,
     pending_viewport: Option<Size>,
     /// The system cursor icon last set on the window, so `CursorMoved`
@@ -1703,7 +1722,18 @@ impl WindowState {
         if !ready {
             return;
         }
-        self.pipeline.present(self.presenter.as_mut());
+        let presented = self.pipeline.present(self.presenter.as_mut());
+        self.paced_present = presented
+            && (self
+                .presenter
+                .as_ref()
+                .is_some_and(Presenter::paces_presents)
+                || self
+                    .pipeline
+                    .window
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|window| window.paces_redraws()));
         if !self.first_present_logged {
             self.first_present_logged = true;
             log::debug!(
@@ -1711,6 +1741,23 @@ impl WindowState {
                 self.t_run.elapsed()
             );
         }
+    }
+
+    fn frame_interval(&mut self, now: Instant) -> Duration {
+        if self
+            .frame_interval_checked
+            .is_none_or(|checked| now - checked >= REFRESH_QUERY_INTERVAL)
+        {
+            self.frame_interval_checked = Some(now);
+            self.frame_interval = self
+                .pipeline
+                .window
+                .borrow()
+                .as_ref()
+                .and_then(|window| window.refresh_interval())
+                .unwrap_or(DEFAULT_FRAME_INTERVAL);
+        }
+        self.frame_interval
     }
 
     /// Fires time-driven repaints that are due and returns when the next one
@@ -1721,11 +1768,16 @@ impl WindowState {
             next_wake = Some(next_wake.map_or(at, |t: Instant| t.min(at)));
         };
         if self.pipeline.animated() {
-            if now >= self.next_animation {
-                self.next_animation = now + ANIMATION_FRAME_INTERVAL;
+            if std::mem::take(&mut self.paced_present) {
                 self.pipeline.invalidate_paint();
+            } else {
+                if now >= self.next_animation {
+                    let interval = self.frame_interval(now);
+                    self.next_animation = (self.next_animation + interval).max(now);
+                    self.pipeline.invalidate_paint();
+                }
+                wake_at(self.next_animation);
             }
-            wake_at(self.next_animation);
         }
         if let Some(interval) = self.pipeline.devtools_refresh() {
             if now >= self.next_devtools_refresh {
@@ -1766,8 +1818,12 @@ struct AppHandler {
     trays: Vec<InstalledTray>,
     #[cfg(all(feature = "tray", target_os = "linux"))]
     proxy: EventLoopProxy<AppEvent>,
-    /// One `wgpu::Instance` shared by every GPU window; `None` if no queued
-    /// window resolved to the GPU backend.
+    /// Instance, adapter and device being prepared off the UI thread,
+    /// taken by the first GPU window.
+    #[cfg(not(target_arch = "wasm32"))]
+    gpu_prepare: Option<std::thread::JoinHandle<crate::gpu::PreparedGpu>>,
+    /// One `wgpu::Instance` shared by every GPU window; `None` until the
+    /// first one is created.
     #[cfg(not(target_arch = "wasm32"))]
     gpu_instance: Option<Rc<wgpu::Instance>>,
     /// Adapter/device/queue negotiated by the first GPU window and reused
@@ -1853,7 +1909,16 @@ impl AppHandler {
         #[cfg(not(target_arch = "wasm32"))]
         let presenter = {
             if spec.options.backend == RenderBackend::Gpu && self.gpu_instance.is_none() {
-                self.gpu_instance = Some(Rc::new(crate::gpu::create_instance()));
+                let prepared = match self.gpu_prepare.take() {
+                    Some(handle) => handle.join().expect("GPU preparation thread panicked"),
+                    None => crate::gpu::PreparedGpu::instance_only(),
+                };
+                log::debug!("creamui-render: GPU instance ready: {:?}", t0.elapsed());
+                let (instance, context) = prepared.into_parts();
+                self.gpu_instance = Some(Rc::new(instance));
+                if self.gpu_context.is_none() {
+                    self.gpu_context = context;
+                }
             }
             match Presenter::new(
                 &window,
@@ -1897,6 +1962,9 @@ impl AppHandler {
             modifiers: PlatformModifiers::default(),
             next_blink: now + CARET_BLINK_INTERVAL,
             next_animation: now,
+            paced_present: false,
+            frame_interval: DEFAULT_FRAME_INTERVAL,
+            frame_interval_checked: None,
             next_devtools_refresh: now,
             pending_viewport: None,
             current_cursor: CursorIcon::Default,
@@ -2148,13 +2216,13 @@ fn run_windows(
         .iter()
         .any(|s| matches!(s.options.backend, RenderBackend::Gpu));
 
-    // `wgpu::Instance::new` doesn't depend on any window and costs
-    // ~100-200ms on Windows (Vulkan/DX12 loader + ICD enumeration) — kick it
-    // off now so it overlaps with the initial UI builds below instead of
-    // sitting on `resumed`'s critical path. One instance is shared by every
-    // GPU-backend window; skipped entirely if none of them need it.
+    // Creating the instance and requesting an adapter and device don't need
+    // a window and cost tens of milliseconds (loader, ICD enumeration,
+    // driver setup) — start them now so they overlap with the event loop
+    // and the first window's creation instead of sitting on the first
+    // frame's critical path. Skipped entirely if no window needs the GPU.
     #[cfg(not(target_arch = "wasm32"))]
-    let gpu_instance_handle = any_gpu.then(|| std::thread::spawn(crate::gpu::create_instance));
+    let gpu_prepare = any_gpu.then(|| std::thread::spawn(crate::gpu::prepare));
 
     let dump_frame_path = std::env::var("CUI_DUMP_FRAME").ok();
     let multiple_windows = specs.len() > 1;
@@ -2177,15 +2245,6 @@ fn run_windows(
         .expect("failed to create event loop");
     log::debug!("creamui-render: event loop created: {:?}", t_run.elapsed());
     event_loop.set_control_flow(ControlFlow::Wait);
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let gpu_instance = gpu_instance_handle.map(|handle| {
-        let instance = handle
-            .join()
-            .expect("gpu instance creation thread panicked");
-        log::debug!("creamui-render: gpu instance ready: {:?}", t_run.elapsed());
-        Rc::new(instance)
-    });
 
     let commands = Rc::new(RefCell::new(AppCommands {
         windows: Vec::new(),
@@ -2215,7 +2274,9 @@ fn run_windows(
         #[cfg(all(feature = "tray", target_os = "linux"))]
         proxy: event_loop.create_proxy(),
         #[cfg(not(target_arch = "wasm32"))]
-        gpu_instance,
+        gpu_prepare,
+        #[cfg(not(target_arch = "wasm32"))]
+        gpu_instance: None,
         #[cfg(not(target_arch = "wasm32"))]
         gpu_context: None,
     };
@@ -2351,6 +2412,9 @@ mod tests {
                 modifiers: PlatformModifiers::default(),
                 next_blink: now + CARET_BLINK_INTERVAL,
                 next_animation: now,
+                paced_present: false,
+                frame_interval: DEFAULT_FRAME_INTERVAL,
+                frame_interval_checked: None,
                 next_devtools_refresh: now,
                 pending_viewport: None,
                 current_cursor: CursorIcon::Default,

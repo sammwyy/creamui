@@ -4,6 +4,39 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Animations follow the display: after a frame reaches a presenter or
+  platform that holds the next one until the display refreshes (a GPU
+  surface, or winit on Wayland) the next frame is requested right away;
+  elsewhere a timer runs at the monitor's reported refresh rate instead of
+  a fixed 16 ms. Every widget in a frame reads the same animation time.
+  `PlatformWindow` gained `paces_redraws` and `refresh_interval`.
+- Scroll views record their content as a scroll layer
+  (`Painter::push_scroll_layer`/`pop_scroll_layer`) in its own content
+  space. The frame diff (`display_list::diff`) aligns rows entering and
+  leaving the viewport, and when one layer moved by whole pixels over a
+  solid backdrop the CPU rasterizer shifts its pixels
+  (`Rasterizer::scroll`/`apply`) and repaints only the exposed strip; the
+  GPU applies layer offsets in the vertex shader.
+- A clipping container passes its own rect to `Painter::push_clip_rounded`
+  instead of the rect already cut by enclosing clips, so its rounded corners
+  stay on its own edges when it is partly scrolled out of view.
+- Fixed partial CPU repaints antialiasing rounded corners differently from
+  full ones where a corner crossed the damage boundary.
+- The GPU renderer uploads only the instances, clip table and globals a
+  frame changed, finds a glyph's atlas slot without hashing, and uses
+  FxHash for the text and clip caches.
+- Text layouts no longer depend on their box height, so resizing a box
+  vertically reuses the layout (`TextSystem::layout` lost its `height`
+  parameter; `TextLayout::height` is the block height to center).
+- `Runtime::compute_layout` only syncs rects along changed nodes' ancestor
+  paths and subtrees that moved, and `Runtime::rebuild_hit_test` patches
+  moved entries in place, rebuilding only when membership changes.
+- Startup: the GPU adapter and device are requested on a background
+  thread while the first window is created, pipelines use a driver
+  pipeline cache persisted under the user cache directory, and the system
+  font index is cached there too, validated by directory modification
+  times.
+
 - Replaced `fontdue` with `swash`: fonts are memory-mapped and parsed on
   demand instead of copied and fully decoded, and text is shaped (kerning,
   ligatures, per-script runs) and broken at Unicode line-break

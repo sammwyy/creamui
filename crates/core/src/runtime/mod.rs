@@ -65,9 +65,17 @@ pub struct Runtime {
     /// Bumped once per [`Runtime::compute_layout`] call.
     layout_epoch: u64,
     last_viewport: Option<crate::Size>,
-    /// Set when a mutation marks any node's HIT_TEST/STRUCTURE dirty; lets
+    /// Nodes whose layout inputs changed since the last layout.
+    layout_roots: Vec<RuntimeNodeId>,
+    /// Makes the next rect sync visit every node, e.g. after the root moved.
+    full_layout_sync: bool,
+    /// Set when the hit-test list's membership or order may have changed
+    /// (structure, interactivity, focusability, positioning); lets
     /// [`Runtime::rebuild_hit_test`] skip the tree walk otherwise.
     hit_test_dirty: bool,
+    /// Listed nodes whose rect moved, patched in place when the list's
+    /// membership is otherwise unchanged.
+    hit_rects: Vec<RuntimeNodeId>,
     hit_entries: Vec<HitEntry>,
     focus_order: Vec<RuntimeNodeId>,
     pointer: PointerState,
@@ -94,7 +102,10 @@ impl Runtime {
             layout_dirty: false,
             layout_epoch: 0,
             last_viewport: None,
+            layout_roots: Vec::new(),
+            full_layout_sync: false,
             hit_test_dirty: false,
+            hit_rects: Vec::new(),
             hit_entries: Vec::new(),
             focus_order: Vec::new(),
             pointer: PointerState::default(),
@@ -120,6 +131,10 @@ impl Runtime {
     }
 
     pub fn set_root(&mut self, id: Option<RuntimeNodeId>) {
+        if self.root != id {
+            self.full_layout_sync = true;
+            self.hit_test_dirty = true;
+        }
         self.root = id;
     }
 
@@ -184,13 +199,30 @@ impl Runtime {
 
         self.layout_dirty = false;
         self.layout_epoch += 1;
+        self.mark_layout_paths();
         self.sync_layout_rects(root)
+    }
+
+    fn mark_layout_paths(&mut self) {
+        for id in std::mem::take(&mut self.layout_roots) {
+            let mut current = Some(id);
+            while let Some(node) = current.and_then(|id| self.nodes.get_mut(id)) {
+                if node.on_layout_path {
+                    break;
+                }
+                node.on_layout_path = true;
+                current = node.parent;
+            }
+        }
     }
 
     /// Iterative top-down pass (a deep tree can overflow the stack under
     /// recursion) computing each node's window-space rect from `taffy`'s
-    /// parent-relative output.
+    /// parent-relative output. A subtree is skipped when it is not on a
+    /// changed node's ancestor path and its root kept its rect: `taffy`
+    /// lays it out from the same inputs, so nothing inside it moved.
     fn sync_layout_rects(&mut self, root: RuntimeNodeId) -> Vec<crate::Rect> {
+        let full = std::mem::take(&mut self.full_layout_sync);
         let mut damage = Vec::new();
         let mut stack: Vec<(RuntimeNodeId, crate::Point)> = vec![(root, crate::Point::default())];
         while let Some((id, parent_origin)) = stack.pop() {
@@ -214,14 +246,18 @@ impl Runtime {
             let children: Vec<RuntimeNodeId> = node.children.as_slice().to_vec();
 
             let node = self.nodes.get_mut(id).expect("checked above");
-            if node.layout.rect != rect {
+            let on_path = std::mem::take(&mut node.on_layout_path);
+            let moved = node.layout.rect != rect;
+            if moved {
                 damage.push(node.layout.rect);
                 damage.push(rect);
                 node.layout.previous_rect = node.layout.rect;
                 node.layout.rect = rect;
                 node.layout.last_layout_epoch = self.layout_epoch;
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
-                self.hit_test_dirty = true;
+                if node.hit_slot.is_some() {
+                    self.hit_rects.push(id);
+                }
                 self.paint_queue.push(id);
                 // A clipping node's rect feeds its children's effective_clip.
                 // The node's own effective_clip is unaffected, so
@@ -237,7 +273,9 @@ impl Runtime {
                 }
             }
 
-            stack.extend(children.into_iter().map(|child| (child, child_origin)));
+            if full || on_path || moved {
+                stack.extend(children.into_iter().map(|child| (child, child_origin)));
+            }
         }
         damage
     }
@@ -414,6 +452,75 @@ impl Default for Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sized(width: f32, height: f32) -> taffy::style::Style {
+        taffy::style::Style {
+            size: taffy::geometry::Size {
+                width: taffy::style::Dimension::Length(width),
+                height: taffy::style::Dimension::Length(height),
+            },
+            ..Default::default()
+        }
+    }
+
+    const VIEWPORT: crate::Size = crate::Size {
+        width: 800.0,
+        height: 600.0,
+    };
+
+    #[test]
+    fn incremental_rect_sync_matches_a_full_one() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: taffy::style::Style {
+                flex_direction: taffy::style::FlexDirection::Column,
+                ..Default::default()
+            },
+        });
+        let mut leaves = Vec::new();
+        let mut nested = Vec::new();
+        for _ in 0..4 {
+            let row = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, row, None);
+            let leaf = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: leaf,
+                style: sized(20.0, 20.0),
+            });
+            tx.insert_child(row, leaf, None);
+            let inner = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: inner,
+                style: sized(10.0, 10.0),
+            });
+            tx.insert_child(row, inner, None);
+            leaves.push(leaf);
+            nested.push(inner);
+        }
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        let before = runtime.get(nested[3]).unwrap().layout.rect;
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetLayoutStyle {
+            node: leaves[0],
+            style: sized(20.0, 50.0),
+        });
+        drop(tx);
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(
+            runtime.get(nested[3]).unwrap().layout.rect.y,
+            before.y + 30.0
+        );
+
+        runtime.full_layout_sync = true;
+        runtime.layout_dirty = true;
+        assert!(runtime.compute_layout(VIEWPORT).is_empty());
+    }
 
     #[test]
     fn create_and_insert_child_link_both_directions() {

@@ -66,5 +66,34 @@ fn bench_layout_hit(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_layout_miss, bench_layout_hit);
+/// A label whose box grows one pixel taller every frame, as during a window
+/// resize.
+fn bench_resize_height(c: &mut Criterion) {
+    c.bench_function("text_shape/resize_height", |b| {
+        let mut recorder = SceneRecorder::new();
+        let mut tick = 0u32;
+        b.iter(|| {
+            tick = tick.wrapping_add(1);
+            begin(&mut recorder);
+            recorder.fill_text(
+                Rect {
+                    height: 20.0 + tick as f32,
+                    ..RECT
+                },
+                "a label that keeps its text while the window resizes",
+                Color::rgb(255, 255, 255),
+                16.0,
+                TextAlign::Start,
+            );
+            recorder.finish()
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_layout_miss,
+    bench_layout_hit,
+    bench_resize_height
+);
 criterion_main!(benches);

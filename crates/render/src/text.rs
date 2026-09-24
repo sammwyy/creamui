@@ -4,9 +4,9 @@
 
 use creamui_core::TextAlign;
 use creamui_fonts::{FontFace, FontWeight, HorizontalAlign, LayoutSettings};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use rustc_hash::{FxHashMap, FxHasher};
+use std::cell::{Cell, RefCell};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
@@ -35,6 +35,8 @@ pub struct GlyphBitmap {
     pub left: i32,
     pub top: i32,
     pub coverage: Box<[u8]>,
+    /// The GPU atlas (by id) and slot this glyph was last found in.
+    pub atlas_slot: Cell<Option<(u64, u32)>>,
 }
 
 pub struct PlacedGlyph {
@@ -44,11 +46,13 @@ pub struct PlacedGlyph {
     pub byte_offset: usize,
 }
 
-/// Glyphs positioned relative to the top-left of the text box they were
-/// laid out in, in physical pixels.
+/// Glyphs positioned relative to the top-left of the text block, in
+/// physical pixels. `height` is the block's line height total, which a
+/// caller centers within its own box.
 pub struct TextLayout {
     pub glyphs: Vec<PlacedGlyph>,
     pub ink: [i32; 4],
+    pub height: f32,
 }
 
 struct LayoutEntry {
@@ -56,7 +60,6 @@ struct LayoutEntry {
     text: Box<str>,
     size: u32,
     width: u32,
-    height: u32,
     align: TextAlign,
     layout: Rc<TextLayout>,
     used: u64,
@@ -65,8 +68,8 @@ struct LayoutEntry {
 pub struct TextSystem {
     faces: Vec<(Option<String>, bool, Rc<FontFace>)>,
     scaler: ScaleContext,
-    layouts: HashMap<u64, LayoutEntry>,
-    glyphs: HashMap<GlyphKey, (Rc<GlyphBitmap>, u64)>,
+    layouts: FxHashMap<u64, LayoutEntry>,
+    glyphs: FxHashMap<GlyphKey, (Rc<GlyphBitmap>, u64)>,
     frame: u64,
 }
 
@@ -81,8 +84,8 @@ impl TextSystem {
         Self {
             faces: Vec::new(),
             scaler: ScaleContext::new(),
-            layouts: HashMap::new(),
-            glyphs: HashMap::new(),
+            layouts: FxHashMap::default(),
+            glyphs: FxHashMap::default(),
             frame: 0,
         }
     }
@@ -137,6 +140,7 @@ impl TextSystem {
                 left: image.placement.left,
                 top: image.placement.top,
                 coverage: image.data.into_boxed_slice(),
+                atlas_slot: Cell::default(),
             },
             None => GlyphBitmap {
                 key,
@@ -145,15 +149,16 @@ impl TextSystem {
                 left: 0,
                 top: 0,
                 coverage: Box::default(),
+                atlas_slot: Cell::default(),
             },
         });
         self.glyphs.insert(key, (bitmap.clone(), frame));
         bitmap
     }
 
-    /// Lays out `text` at `size` pixels inside a `width` x `height` box,
-    /// centered vertically and aligned horizontally by `align`.
-    #[allow(clippy::too_many_arguments)]
+    /// Lays out `text` at `size` pixels, wrapped to `width` and aligned
+    /// horizontally within it by `align`. The box height is left to the
+    /// caller, so resizing a box vertically reuses the layout.
     pub fn layout(
         &mut self,
         family: Option<&str>,
@@ -161,30 +166,19 @@ impl TextSystem {
         text: &str,
         size: f32,
         width: f32,
-        height: f32,
         align: TextAlign,
     ) -> Rc<TextLayout> {
         let face = self.face(family, bold);
         let face_id = face.id();
-        let (size_bits, width_bits, height_bits) =
-            (size.to_bits(), width.to_bits(), height.to_bits());
-        let mut hasher = DefaultHasher::new();
-        (
-            face_id,
-            text,
-            size_bits,
-            width_bits,
-            height_bits,
-            align as u8,
-        )
-            .hash(&mut hasher);
+        let (size_bits, width_bits) = (size.to_bits(), width.to_bits());
+        let mut hasher = FxHasher::default();
+        (face_id, text, size_bits, width_bits, align as u8).hash(&mut hasher);
         let hash = hasher.finish();
         let frame = self.frame;
         if let Some(entry) = self.layouts.get_mut(&hash) {
             if entry.face == face_id
                 && entry.size == size_bits
                 && entry.width == width_bits
-                && entry.height == height_bits
                 && entry.align == align
                 && &*entry.text == text
             {
@@ -201,7 +195,7 @@ impl TextSystem {
             size,
             &LayoutSettings {
                 max_width: Some(width),
-                max_height: Some(height),
+                max_height: None,
                 horizontal_align: match align {
                     TextAlign::Start => HorizontalAlign::Left,
                     TextAlign::Center => HorizontalAlign::Center,
@@ -240,7 +234,11 @@ impl TextSystem {
         if glyphs.is_empty() {
             ink = [0; 4];
         }
-        let layout = Rc::new(TextLayout { glyphs, ink });
+        let layout = Rc::new(TextLayout {
+            glyphs,
+            ink,
+            height: shaped.height,
+        });
         self.layouts.insert(
             hash,
             LayoutEntry {
@@ -248,7 +246,6 @@ impl TextSystem {
                 text: text.into(),
                 size: size_bits,
                 width: width_bits,
-                height: height_bits,
                 align,
                 layout: layout.clone(),
                 used: frame,
@@ -290,11 +287,11 @@ mod tests {
     #[test]
     fn identical_requests_share_one_layout() {
         let mut text = TextSystem::new();
-        let a = text.layout(None, false, "Hello", 14.0, 200.0, 20.0, TextAlign::Start);
-        let b = text.layout(None, false, "Hello", 14.0, 200.0, 20.0, TextAlign::Start);
+        let a = text.layout(None, false, "Hello", 14.0, 200.0, TextAlign::Start);
+        let b = text.layout(None, false, "Hello", 14.0, 200.0, TextAlign::Start);
         assert!(Rc::ptr_eq(&a, &b));
         assert_eq!(a.glyphs.len(), 5);
-        let c = text.layout(None, true, "Hello", 14.0, 200.0, 20.0, TextAlign::Start);
+        let c = text.layout(None, true, "Hello", 14.0, 200.0, TextAlign::Start);
         assert!(!Rc::ptr_eq(&a, &c));
         assert!(Rc::ptr_eq(&a.glyphs[2].bitmap, &a.glyphs[3].bitmap));
     }
@@ -302,8 +299,8 @@ mod tests {
     #[test]
     fn alignment_moves_glyphs_inside_the_box() {
         let mut text = TextSystem::new();
-        let start = text.layout(None, false, "Hi", 14.0, 200.0, 20.0, TextAlign::Start);
-        let end = text.layout(None, false, "Hi", 14.0, 200.0, 20.0, TextAlign::End);
+        let start = text.layout(None, false, "Hi", 14.0, 200.0, TextAlign::Start);
+        let end = text.layout(None, false, "Hi", 14.0, 200.0, TextAlign::End);
         assert!(end.ink[0] > start.ink[0] + 100);
         assert!(end.ink[2] <= 200);
     }
@@ -311,7 +308,7 @@ mod tests {
     #[test]
     fn unused_entries_are_evicted() {
         let mut text = TextSystem::new();
-        text.layout(None, false, "gone", 14.0, 100.0, 20.0, TextAlign::Start);
+        text.layout(None, false, "gone", 14.0, 100.0, TextAlign::Start);
         for _ in 0..EVICT_UNUSED_FOR_FRAMES + EVICT_EVERY_FRAMES {
             text.end_frame();
         }

@@ -47,13 +47,11 @@
   two callers that toggle/reorder `Owner::child()` scopes repeatedly)
   weren't otherwise touched — they already call `dispose()` on removal,
   so they get the fix for free.
-- `Runtime::sync_layout_rects` (`crates/core/src/runtime/mod.rs`) walks
-  every node after every `compute_layout` call to find which rects moved —
-  O(whole tree), not O(affected branches), since nothing in the `taffy`
-  API used here reports which nodes it actually recomputed. Measured at
-  ~23.5ms for a 50,000-node tree after a single leaf's style change (see
-  `docs/performance/baseline.md`'s Phase 5 section). `taffy`'s own
-  recompute is cached and cheap; this post-pass is the remaining cost.
+- `Runtime::sync_layout_rects` (`crates/core/src/runtime/mod.rs`) only
+  descends along the ancestor paths of nodes whose layout inputs changed
+  and into subtrees whose root moved, but a container on such a path still
+  has all of its direct children visited, so a single change under a very
+  wide container stays O(that container's child count).
 - `RuntimeNode` always gets a `taffy` node at creation
   (`RuntimeTransaction::create_node`); REFACTOR.md 11.1's "not every
   logical runtime node necessarily needs a Taffy node forever" (flattening
@@ -71,10 +69,9 @@
   still only gates the `taffy` context *write* (unchanged — see the
   `setting_the_same_measure_fingerprint_twice_skips_the_second_write`
   test), a separate, already-existing optimization from this one.
-- `Runtime::rebuild_hit_test` walks every node to find interactive ones —
-  O(whole tree), not O(interactive nodes). ~787µs for a 50,000-node tree
-  with one interactive leaf (see `docs/performance/baseline.md`'s Phase 6
-  section).
+- `Runtime::rebuild_hit_test` patches moved entries in place, but still
+  walks every node when the hit list's membership or order changes
+  (structure, interactivity, focusability or positioning).
 - REFACTOR.md 12.2: `Runtime::rebuild_hit_test` (`crates/core/src/runtime/events.rs`)
   now mirrors the legacy `Scene`'s deferred Flow/Absolute two-pass paint
   for `hit_entries` — every normal-flow node is collected first, then
@@ -276,3 +273,12 @@
   never drop them, so they pay the encoded size on top of the decoded one.
 - The glyph atlas has no per-glyph eviction: when full it is cleared as a
   whole (if it holds glyphs not used this frame) and refilled on demand.
+- The custom Wayland runtime (`creamui-platform`'s `wayland` feature)
+  reports no display refresh rate and does not pace redraws with frame
+  callbacks, so animations on its CPU presenter run on a 60 Hz timer.
+- A scrolled frame's pixels are shifted instead of redrawn only when a
+  single scroll layer moved, by whole physical pixels, over a solid opaque
+  backdrop; otherwise the layer's viewport is redrawn.
+- Rows entering or leaving a scroll view change the GPU instance list at
+  both ends of the layer, so a scroll step still re-uploads the instances
+  between them.

@@ -1,7 +1,8 @@
-use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use winit::application::ApplicationHandler as WinitApplicationHandler;
 use winit::event::{
     ElementState, MouseButton as WinitMouseButton, MouseScrollDelta as WinitScrollDelta,
@@ -126,6 +127,18 @@ impl PlatformWindow for Window {
     }
     fn pre_present_notify(&self) {
         self.inner.pre_present_notify();
+    }
+    fn paces_redraws(&self) -> bool {
+        matches!(
+            self.inner.window_handle().map(|handle| handle.as_raw()),
+            Ok(RawWindowHandle::Wayland(_)
+                | RawWindowHandle::Web(_)
+                | RawWindowHandle::WebCanvas(_))
+        )
+    }
+    fn refresh_interval(&self) -> Option<Duration> {
+        let millihertz = self.inner.current_monitor()?.refresh_rate_millihertz()?;
+        (millihertz > 0).then(|| Duration::from_secs_f64(1000.0 / millihertz as f64))
     }
     fn close(&self) {}
     fn request_inner_size(&self, size: LogicalSize) {

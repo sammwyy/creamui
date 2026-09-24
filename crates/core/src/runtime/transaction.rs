@@ -76,6 +76,9 @@ impl<'a> RuntimeTransaction<'a> {
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {
             self.runtime.layout_dirty = true;
         }
+        if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::MEASURE | DirtyFlags::STRUCTURE) {
+            self.runtime.layout_roots.push(id);
+        }
         if flags.intersects(DirtyFlags::HIT_TEST | DirtyFlags::STRUCTURE) {
             self.runtime.hit_test_dirty = true;
         }
@@ -121,6 +124,7 @@ impl<'a> RuntimeTransaction<'a> {
             .expect("just inserted")
             .touched_stamp = self.stamp;
         self.runtime.layout_dirty = true;
+        self.runtime.layout_roots.push(id);
         self.runtime.paint_order_dirty = true;
         self.touched.push(id);
         id
@@ -198,11 +202,16 @@ impl<'a> RuntimeTransaction<'a> {
     pub fn apply(&mut self, mutation: Mutation) {
         match mutation {
             Mutation::SetLayoutStyle { node, style } => {
+                let mut repositioned = false;
                 let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
                     let changed = n.layout_style != style;
+                    repositioned = n.layout_style.position != style.position;
                     n.layout_style = style.clone();
                     changed
                 });
+                if repositioned {
+                    self.touch(node, DirtyFlags::HIT_TEST);
+                }
                 if changed {
                     if let Some(taffy_node) =
                         self.runtime.nodes.get(node).map(|n| n.layout.taffy_node)
@@ -321,8 +330,11 @@ impl<'a> RuntimeTransaction<'a> {
             }
             Mutation::SetEventHandlers { node, handlers } => {
                 if let Some(n) = self.runtime.nodes.get_mut(node) {
+                    let listed = (n.events.is_interactive(), n.events.focusable);
                     n.events = handlers;
-                    self.touch(node, DirtyFlags::HIT_TEST);
+                    if listed != (n.events.is_interactive(), n.events.focusable) {
+                        self.touch(node, DirtyFlags::HIT_TEST);
+                    }
                 }
             }
         }

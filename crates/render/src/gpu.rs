@@ -4,14 +4,17 @@
 //! Pipelines, the atlas and image textures live in [`GpuShared`], reused by
 //! every renderer on the same device.
 
-use crate::display_list::{Clip, DisplayList, ImagePrimitive, Primitive};
+use crate::display_list::{DisplayList, DrawItem, ImagePrimitive, LayerSpace, Primitive};
 use crate::text::{GlyphBitmap, GlyphKey};
 use bytemuck::{Pod, Zeroable};
 use creamui_platform::PlatformWindow;
 use creamui_theme::Color;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -31,6 +34,8 @@ const ATLAS_RESET_COOLDOWN_FRAMES: u64 = 60;
 const ATLAS_SHRINK_EVERY_FRAMES: u64 = 600;
 const IMAGE_CACHE_FRAMES: u64 = 300;
 const MIN_INSTANCE_CAPACITY: u64 = 256;
+
+static NEXT_ATLAS_ID: AtomicU64 = AtomicU64::new(1);
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -65,6 +70,121 @@ pub fn create_instance() -> wgpu::Instance {
     })
 }
 
+/// The instance plus, when an adapter was found, the adapter, device and
+/// queue a process renders with, requested before any window exists.
+pub struct PreparedGpu {
+    instance: wgpu::Instance,
+    device: Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)>,
+}
+
+impl PreparedGpu {
+    pub fn instance_only() -> Self {
+        PreparedGpu {
+            instance: create_instance(),
+            device: None,
+        }
+    }
+
+    pub fn into_parts(self) -> (wgpu::Instance, Option<GpuContext>) {
+        let context = self
+            .device
+            .map(|(adapter, device, queue)| GpuContext::new(adapter, device, queue));
+        (self.instance, context)
+    }
+}
+
+/// Creates the instance and requests an adapter and device without a
+/// surface, so the slow driver work can run on another thread while the
+/// first window is created. A window whose surface the adapter cannot
+/// present to requests its own (see [`GpuSurface::new`]).
+pub fn prepare() -> PreparedGpu {
+    let instance = create_instance();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    }));
+    let device = adapter.and_then(
+        |adapter| match pollster::block_on(request_device(&adapter)) {
+            Ok((device, queue)) => Some((adapter, device, queue)),
+            Err(err) => {
+                log::warn!("creamui-render: GPU device request failed: {err}");
+                None
+            }
+        },
+    );
+    PreparedGpu { instance, device }
+}
+
+fn user_cache_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    return std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    return std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Caches"));
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    return std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+}
+
+/// A driver pipeline cache persisted under the user's cache directory, so
+/// later runs skip most shader compilation when creating pipelines.
+struct PipelineCacheFile {
+    cache: wgpu::PipelineCache,
+    path: PathBuf,
+    saved_len: usize,
+}
+
+impl PipelineCacheFile {
+    fn open(adapter: &wgpu::Adapter, device: &wgpu::Device) -> Option<Self> {
+        if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+            return None;
+        }
+        let key = wgpu::util::pipeline_cache_key(&adapter.get_info())?;
+        let path = user_cache_dir()?.join("creamui").join(key);
+        let data = std::fs::read(&path).ok();
+        // SAFETY: the file only ever holds `PipelineCache::get_data` output
+        // for this key, which names the adapter and driver; with `fallback`
+        // the driver's own header check turns anything else into an empty
+        // cache.
+        let cache = unsafe {
+            device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+                label: Some("creamui-pipeline-cache"),
+                data: data.as_deref(),
+                fallback: true,
+            })
+        };
+        Some(PipelineCacheFile {
+            cache,
+            path,
+            saved_len: data.map_or(0, |data| data.len()),
+        })
+    }
+
+    fn save(&mut self) {
+        let Some(data) = self.cache.get_data() else {
+            return;
+        };
+        if data.len() == self.saved_len {
+            return;
+        }
+        let partial = self.path.with_extension("partial");
+        let result = self
+            .path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&partial, &data))
+            .and_then(|()| std::fs::rename(&partial, &self.path));
+        match result {
+            Ok(()) => self.saved_len = data.len(),
+            Err(err) => log::debug!(
+                "creamui-render: not saving the pipeline cache at {:?}: {err}",
+                self.path
+            ),
+        }
+    }
+}
+
 struct Shelf {
     y: u32,
     height: u32,
@@ -76,12 +196,17 @@ struct AtlasSlot {
     used: u64,
 }
 
+/// Glyphs remember their slot (see [`GlyphBitmap::atlas_slot`]), so a
+/// frame finds them without hashing; `entries` only serves glyphs whose
+/// remembered slot belongs to another atlas.
 struct GlyphAtlas {
+    id: u64,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     size: u32,
     shelves: Vec<Shelf>,
-    entries: HashMap<GlyphKey, AtlasSlot>,
+    slots: Vec<AtlasSlot>,
+    entries: FxHashMap<GlyphKey, u32>,
     created: u64,
 }
 
@@ -123,11 +248,13 @@ impl GlyphAtlas {
             ],
         });
         GlyphAtlas {
+            id: NEXT_ATLAS_ID.fetch_add(1, Ordering::Relaxed),
             texture,
             bind_group,
             size,
             shelves: Vec::new(),
-            entries: HashMap::new(),
+            slots: Vec::new(),
+            entries: FxHashMap::default(),
             created: frame,
         }
     }
@@ -161,7 +288,13 @@ impl GlyphAtlas {
         glyph: &GlyphBitmap,
         frame: u64,
     ) -> Option<[u32; 4]> {
-        if let Some(slot) = self.entries.get_mut(&glyph.key) {
+        let index = match glyph.atlas_slot.get() {
+            Some((atlas, index)) if atlas == self.id => Some(index),
+            _ => self.entries.get(&glyph.key).copied(),
+        };
+        if let Some(index) = index {
+            glyph.atlas_slot.set(Some((self.id, index)));
+            let slot = &mut self.slots[index as usize];
             slot.used = frame;
             return Some(slot.rect);
         }
@@ -188,19 +321,21 @@ impl GlyphAtlas {
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.gpu_upload_bytes += glyph.coverage.len() as u64);
         let rect = [x, y, glyph.width, glyph.height];
-        self.entries
-            .insert(glyph.key, AtlasSlot { rect, used: frame });
+        let index = self.slots.len() as u32;
+        self.slots.push(AtlasSlot { rect, used: frame });
+        self.entries.insert(glyph.key, index);
+        glyph.atlas_slot.set(Some((self.id, index)));
         Some(rect)
     }
 
     fn has_stale_entries(&self, frame: u64) -> bool {
-        self.entries.values().any(|slot| slot.used < frame)
+        self.slots.iter().any(|slot| slot.used < frame)
     }
 
     /// Texels (padding included) of the glyphs used since `since`.
     fn live_area(&self, since: u64) -> u64 {
-        self.entries
-            .values()
+        self.slots
+            .iter()
             .filter(|slot| slot.used >= since)
             .map(|slot| (slot.rect[2] as u64 + 1) * (slot.rect[3] as u64 + 1))
             .sum()
@@ -276,10 +411,19 @@ pub struct GpuShared {
     atlas: GlyphAtlas,
     images: HashMap<u64, ImageTexture>,
     frame: u64,
+    pipeline_cache: Option<PipelineCacheFile>,
 }
 
 impl GpuShared {
     pub fn new(device: Rc<wgpu::Device>, queue: Rc<wgpu::Queue>) -> Rc<RefCell<Self>> {
+        Self::with_pipeline_cache(device, queue, None)
+    }
+
+    fn with_pipeline_cache(
+        device: Rc<wgpu::Device>,
+        queue: Rc<wgpu::Queue>,
+        pipeline_cache: Option<PipelineCacheFile>,
+    ) -> Rc<RefCell<Self>> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("creamui-shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("gpu.wgsl").into()),
@@ -368,6 +512,7 @@ impl GpuShared {
             atlas,
             images: HashMap::new(),
             frame: 0,
+            pipeline_cache,
         }))
     }
 
@@ -375,6 +520,7 @@ impl GpuShared {
         if let Some((_, pipeline)) = self.pipelines.iter().find(|(f, _)| *f == format) {
             return pipeline.clone();
         }
+        let started = std::time::Instant::now();
         let pipeline = Rc::new(self.device.create_render_pipeline(
             &wgpu::RenderPipelineDescriptor {
                 label: Some("creamui-pipeline"),
@@ -413,9 +559,21 @@ impl GpuShared {
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
-                cache: None,
+                cache: self.pipeline_cache.as_ref().map(|file| &file.cache),
             },
         ));
+        log::debug!(
+            "creamui-render: {format:?} pipeline created in {:?}{}",
+            started.elapsed(),
+            if self.pipeline_cache.is_some() {
+                " with a pipeline cache"
+            } else {
+                ""
+            }
+        );
+        if let Some(file) = &mut self.pipeline_cache {
+            file.save();
+        }
         self.pipelines.push((format, pipeline.clone()));
         pipeline
     }
@@ -603,9 +761,14 @@ pub struct GpuRenderer {
     clip_texture: wgpu::Texture,
     clip_rows: u32,
     clip_texels: Vec<[f32; 4]>,
-    clip_ids: HashMap<[u32; 9], u32>,
-    last_clip: Option<(Clip, u32)>,
+    uploaded_clips: Vec<[f32; 4]>,
+    clip_ids: FxHashMap<[u32; 9], u32>,
+    last_clip: Option<(crate::display_list::Clip, u16, u32)>,
     instances: Vec<Instance>,
+    /// What `instance_buffer` holds, to upload only what a frame changed.
+    uploaded: Vec<Instance>,
+    last_upload: std::ops::Range<usize>,
+    viewport: [f32; 2],
     batches: Vec<Batch>,
     instance_buffer: wgpu::Buffer,
     frame_images: Vec<u64>,
@@ -639,9 +802,13 @@ impl GpuRenderer {
             clip_texture,
             clip_rows: 1,
             clip_texels: Vec::new(),
-            clip_ids: HashMap::new(),
+            uploaded_clips: Vec::new(),
+            clip_ids: FxHashMap::default(),
             last_clip: None,
             instances: Vec::new(),
+            uploaded: Vec::new(),
+            last_upload: 0..0,
+            viewport: [0.0; 2],
             batches: Vec::new(),
             instance_buffer,
             frame_images: Vec::new(),
@@ -657,11 +824,14 @@ impl GpuRenderer {
         self.format
     }
 
-    fn clip_index(&mut self, clip: &Clip) -> u32 {
+    /// Index of the item's screen clip and layer offset in the clip table.
+    fn clip_index(&mut self, item: &DrawItem, spaces: &[LayerSpace]) -> u32 {
         match self.last_clip {
-            Some((last, index)) if last == *clip => return index,
+            Some((last, layer, index)) if last == item.clip && layer == item.layer => return index,
             _ => {}
         }
+        let clip = item.screen_clip(spaces);
+        let [dx, dy] = spaces[item.layer as usize].offset;
         let b = clip.bounds;
         let (rounded, radius) = match clip.rounded {
             Some(r) => (
@@ -670,7 +840,7 @@ impl GpuRenderer {
             ),
             None => ([0.0; 4], 0.0),
         };
-        let texels = [[b.x0, b.y0, b.x1, b.y1], rounded, [radius, 0.0, 0.0, 0.0]];
+        let texels = [[b.x0, b.y0, b.x1, b.y1], rounded, [radius, dx, dy, 0.0]];
         let mut key = [0u32; 9];
         for (slot, value) in key.iter_mut().zip(texels.iter().flatten()) {
             *slot = value.to_bits();
@@ -680,7 +850,7 @@ impl GpuRenderer {
             self.clip_texels.extend(texels);
             next
         });
-        self.last_clip = Some((*clip, index));
+        self.last_clip = Some((item.clip, item.layer, index));
         index
     }
 
@@ -693,6 +863,7 @@ impl GpuRenderer {
         self.clip_ids.clear();
         self.last_clip = None;
         self.frame_images.clear();
+        let spaces = list.spaces();
         let mut batch_image: Option<u64> = None;
         let mut batch_start = 0u32;
         for item in &list.items {
@@ -708,7 +879,7 @@ impl GpuRenderer {
                 batch_start = self.instances.len() as u32;
             }
             batch_image = image;
-            let clip = self.clip_index(&item.clip) << KIND_BITS;
+            let clip = self.clip_index(item, &spaces) << KIND_BITS;
             match &item.primitive {
                 Primitive::Quad(quad) => {
                     let (kind, color, border_color, data) = match quad.gradient {
@@ -751,7 +922,7 @@ impl GpuRenderer {
                     });
                 }
                 Primitive::Text(run) => {
-                    let visible = item.visible_bounds();
+                    let visible = item.primitive.bounds().intersect(item.clip.bounds);
                     for glyph in &run.layout.glyphs {
                         let (x, y) = ((run.x + glyph.x) as f32, (run.y + glyph.y) as f32);
                         let (w, h) = (glyph.bitmap.width as f32, glyph.bitmap.height as f32);
@@ -815,7 +986,11 @@ impl GpuRenderer {
 
     fn upload_clips(&mut self, shared: &GpuShared) {
         let rows = (self.clip_ids.len() as u32).div_ceil(CLIPS_PER_ROW).max(1);
-        if rows > self.clip_rows {
+        let row_texels = (CLIPS_PER_ROW * TEXELS_PER_CLIP) as usize;
+        self.clip_texels
+            .resize(rows as usize * row_texels, [0.0; 4]);
+        let grown = rows > self.clip_rows;
+        if grown {
             self.clip_rows = rows.next_power_of_two();
             self.clip_texture = clip_texture(&self.device, self.clip_rows);
             self.globals_group = globals_group(
@@ -825,9 +1000,9 @@ impl GpuRenderer {
                 &self.clip_texture,
             );
         }
-        let row_texels = (CLIPS_PER_ROW * TEXELS_PER_CLIP) as usize;
-        self.clip_texels
-            .resize(rows as usize * row_texels, [0.0; 4]);
+        if !grown && self.clip_texels == self.uploaded_clips {
+            return;
+        }
         self.queue.write_texture(
             self.clip_texture.as_image_copy(),
             bytemuck::cast_slice(&self.clip_texels),
@@ -842,6 +1017,7 @@ impl GpuRenderer {
                 depth_or_array_layers: 1,
             },
         );
+        std::mem::swap(&mut self.clip_texels, &mut self.uploaded_clips);
     }
 
     fn prepare(&mut self, list: &DisplayList, shared: &mut GpuShared) {
@@ -858,27 +1034,62 @@ impl GpuRenderer {
         shared.evict_images();
         self.upload_clips(shared);
 
-        self.queue.write_buffer(
-            &self.globals,
-            0,
-            bytemuck::bytes_of(&Globals {
-                viewport: [list.width as f32, list.height as f32],
-                _pad: [0.0; 2],
-            }),
-        );
+        let viewport = [list.width as f32, list.height as f32];
+        if viewport != self.viewport {
+            self.viewport = viewport;
+            self.queue.write_buffer(
+                &self.globals,
+                0,
+                bytemuck::bytes_of(&Globals {
+                    viewport,
+                    _pad: [0.0; 2],
+                }),
+            );
+        }
+        self.upload_instances();
+    }
+
+    fn upload_instances(&mut self) {
         let needed = (self.instances.len() as u64)
             .next_power_of_two()
             .max(MIN_INSTANCE_CAPACITY);
         let capacity = self.instance_buffer.size() / std::mem::size_of::<Instance>() as u64;
-        if needed > capacity || capacity > needed * 4 {
+        let reallocated = needed > capacity || capacity > needed * 4;
+        if reallocated {
             self.instance_buffer = instance_buffer(&self.device, needed);
         }
-        if !self.instances.is_empty() {
-            let bytes = bytemuck::cast_slice(&self.instances);
+        let same = |a: &Instance, b: &Instance| bytemuck::bytes_of(a) == bytemuck::bytes_of(b);
+        let (new, old) = (&self.instances, &self.uploaded);
+        let start = if reallocated {
+            0
+        } else {
+            new.iter().zip(old).take_while(|(a, b)| same(a, b)).count()
+        };
+        let end = if reallocated || new.len() != old.len() {
+            new.len()
+        } else {
+            new.len()
+                - new[start..]
+                    .iter()
+                    .rev()
+                    .zip(old[start..].iter().rev())
+                    .take_while(|(a, b)| same(a, b))
+                    .count()
+        };
+        if start < end {
+            let bytes = bytemuck::cast_slice(&new[start..end]);
             #[cfg(feature = "perf-metrics")]
             creamui_core::metrics::record(|m| m.gpu_upload_bytes += bytes.len() as u64);
-            self.queue.write_buffer(&self.instance_buffer, 0, bytes);
+            let offset = (start * std::mem::size_of::<Instance>()) as u64;
+            self.queue
+                .write_buffer(&self.instance_buffer, offset, bytes);
         }
+        log::trace!(
+            "creamui-render: uploaded instances {start}..{end} of {}",
+            new.len()
+        );
+        self.last_upload = start..end;
+        std::mem::swap(&mut self.instances, &mut self.uploaded);
     }
 
     /// Renders `list` into `target`, clearing it first.
@@ -932,7 +1143,7 @@ impl GpuRenderer {
     }
 
     pub fn instance_count(&self) -> usize {
-        self.instances.len()
+        self.uploaded.len()
     }
 
     pub fn batch_count(&self) -> usize {
@@ -1006,7 +1217,7 @@ async fn request_device(
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("creamui-device"),
-                required_features: wgpu::Features::empty(),
+                required_features: adapter.features() & wgpu::Features::PIPELINE_CACHE,
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
@@ -1037,19 +1248,24 @@ impl GpuContext {
             force_fallback_adapter: false,
         }))
         .ok_or("no compatible GPU adapter")?;
-        let info = adapter.get_info();
         let (device, queue) =
             pollster::block_on(request_device(&adapter)).map_err(|e| format!("device: {e}"))?;
+        Ok(Self::new(adapter, device, queue))
+    }
+
+    fn new(adapter: wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue) -> Self {
         device.on_uncaptured_error(Box::new(|err| {
             log::error!("creamui-render: wgpu error: {err}");
         }));
+        let info = adapter.get_info();
+        let pipeline_cache = PipelineCacheFile::open(&adapter, &device);
         let (device, queue) = (Rc::new(device), Rc::new(queue));
-        Ok(GpuContext {
+        GpuContext {
+            shared: GpuShared::with_pipeline_cache(device.clone(), queue, pipeline_cache),
             adapter,
-            shared: GpuShared::new(device.clone(), queue),
             device,
             adapter_name: format!("{} ({:?})", info.name, info.backend),
-        })
+        }
     }
 }
 
@@ -1063,9 +1279,10 @@ pub struct GpuSurface {
 }
 
 impl GpuSurface {
-    /// `gpu_context` is filled in on the first call and reused on every
-    /// later one, so only the first GPU window in a process requests its
-    /// own adapter and device.
+    /// `gpu_context` is reused when its adapter can present to this window
+    /// and otherwise replaced by one requested for this window's surface,
+    /// so usually only the first GPU window in a process (or [`prepare`])
+    /// pays for `request_adapter`/`request_device`.
     pub fn new(
         window: Arc<dyn PlatformWindow>,
         instance: &wgpu::Instance,
@@ -1077,6 +1294,15 @@ impl GpuSurface {
         let surface = instance
             .create_surface(window)
             .map_err(|e| format!("surface: {e}"))?;
+        if let Some(context) = gpu_context {
+            if !context.adapter.is_surface_supported(&surface) {
+                log::warn!(
+                    "creamui-render: {} cannot present to this window; requesting another adapter",
+                    context.adapter_name
+                );
+                *gpu_context = None;
+            }
+        }
         if gpu_context.is_none() {
             *gpu_context = Some(GpuContext::request(instance, &surface)?);
         }
@@ -1373,6 +1599,52 @@ mod tests {
     }
 
     #[test]
+    fn scroll_layers_match_the_cpu_rasterizer() {
+        let Some(mut gpu) = headless() else { return };
+        let mut r = SceneRecorder::new();
+        r.begin(96, 64, 1.0, Color::rgb(20, 20, 24), ColorScheme::default());
+        r.fill_rect(rect(0.0, 0.0, 96.0, 64.0), Color::rgb(230, 230, 230), 0.0);
+        let offset = 13.0;
+        r.push_scroll_layer(
+            rect(8.0, 8.0, 80.0, 48.0),
+            6.0,
+            creamui_core::Point { x: 0.0, y: offset },
+        );
+        for i in 0..6 {
+            let y = 8.0 + i as f32 * 12.0 - offset;
+            r.fill_rect(rect(10.0, y, 70.0, 10.0), Color::rgb(40, 80, 200), 3.0);
+            r.stroke_line(
+                Point {
+                    x: 12.0,
+                    y: y + 5.0,
+                },
+                Point {
+                    x: 70.0,
+                    y: y + 5.0,
+                },
+                Color::rgb(250, 200, 0),
+                2.0,
+            );
+        }
+        r.pop_scroll_layer();
+        let list = r.finish();
+        let gpu_pixels = gpu.render_to_pixels(&list);
+        let mut cpu = Rasterizer::new(list.width, list.height);
+        cpu.render(&list, &Damage::Full);
+        let differing = gpu_pixels
+            .chunks_exact(4)
+            .zip(cpu.pixmap().data().chunks_exact(4))
+            .filter(|(g, c)| g.iter().zip(*c).any(|(a, b)| a.abs_diff(*b) > 48))
+            .count();
+        assert!(
+            differing * 50 < gpu_pixels.len() / 4,
+            "{differing} pixels differ"
+        );
+        let row = ((8.0 + 12.0 - offset + 2.0) as usize * 96 + 40) * 4;
+        assert_eq!(&gpu_pixels[row..row + 4], &[40, 80, 200, 255]);
+    }
+
+    #[test]
     fn batches_only_split_on_images() {
         let Some(mut gpu) = headless() else { return };
         gpu.render(&scene());
@@ -1412,6 +1684,7 @@ mod tests {
             left: 0,
             top: 0,
             coverage: vec![255; (size * size) as usize].into_boxed_slice(),
+            atlas_slot: std::cell::Cell::default(),
         }
     }
 
@@ -1433,7 +1706,7 @@ mod tests {
             .unwrap();
         assert!(shared.make_atlas_room());
         assert_eq!(shared.atlas.size, INITIAL_ATLAS_SIZE);
-        assert!(shared.atlas.entries.is_empty());
+        assert!(shared.atlas.slots.is_empty());
 
         shared
             .atlas
@@ -1441,6 +1714,26 @@ mod tests {
             .unwrap();
         assert!(shared.make_atlas_room());
         assert_eq!(shared.atlas.size, INITIAL_ATLAS_SIZE * 2);
+    }
+
+    #[test]
+    fn glyphs_remember_their_slot_per_atlas() {
+        let Some(gpu) = headless() else { return };
+        let mut shared = gpu.renderer().shared.borrow_mut();
+        let queue = shared.queue.clone();
+        let glyph = bitmap(7, 8);
+        let rect = shared.atlas.get_or_insert(&queue, &glyph, 1).unwrap();
+        assert_eq!(glyph.atlas_slot.get(), Some((shared.atlas.id, 0)));
+
+        let other_device = headless().unwrap();
+        let mut other = other_device.renderer().shared.borrow_mut();
+        let other_queue = other.queue.clone();
+        other.atlas.get_or_insert(&other_queue, &glyph, 1).unwrap();
+        assert_eq!(glyph.atlas_slot.get(), Some((other.atlas.id, 0)));
+
+        assert_eq!(shared.atlas.get_or_insert(&queue, &glyph, 2), Some(rect));
+        assert_eq!(shared.atlas.slots.len(), 1);
+        assert_eq!(shared.atlas.slots[0].used, 2);
     }
 
     #[test]
@@ -1540,15 +1833,35 @@ mod tests {
         let list = scene();
         let target = gpu.render(&list);
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-        let glyphs = shared.borrow().atlas.entries.len();
+        let glyphs = shared.borrow().atlas.slots.len();
         second.render(&list, &view);
-        assert_eq!(shared.borrow().atlas.entries.len(), glyphs);
+        assert_eq!(shared.borrow().atlas.slots.len(), glyphs);
         assert_eq!(shared.borrow().images.len(), 1);
         assert_eq!(shared.borrow().pipelines.len(), 1);
         let id = *shared.borrow().images.keys().next().unwrap();
         assert_eq!(shared.borrow().images[&id].holders, 2);
         drop(second);
         assert_eq!(shared.borrow().images[&id].holders, 1);
+    }
+
+    #[test]
+    fn only_the_changed_instances_are_uploaded() {
+        let Some(mut gpu) = headless() else { return };
+        let frame = |color| {
+            let mut r = SceneRecorder::new();
+            r.begin(64, 64, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+            for i in 0..10 {
+                let color = if i == 4 { color } else { Color::rgb(1, 2, 3) };
+                r.fill_rect(rect(i as f32, 0.0, 1.0, 1.0), color, 0.0);
+            }
+            r.finish()
+        };
+        gpu.render(&frame(Color::rgb(9, 9, 9)));
+        assert_eq!(gpu.renderer().last_upload, 0..10);
+        gpu.render(&frame(Color::rgb(8, 8, 8)));
+        assert_eq!(gpu.renderer().last_upload, 4..5);
+        gpu.render(&frame(Color::rgb(8, 8, 8)));
+        assert!(gpu.renderer().last_upload.is_empty());
     }
 
     #[test]

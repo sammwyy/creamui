@@ -52,8 +52,13 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
         i32(clip_index / CLIPS_PER_ROW),
     );
 
+    let clip_extra = textureLoad(clips, clip_texel + vec2<i32>(2, 0), 0);
+    var offset = clip_extra.yz;
+    if kind == KIND_GLYPH {
+        offset = round(offset);
+    }
     let corner = vec2<f32>(f32(index & 1u), f32((index >> 1u) & 1u));
-    let b = instance.bounds;
+    let b = instance.bounds + vec4<f32>(offset, offset);
     var pixel = mix(b.xy, b.zw, corner);
     if kind == KIND_GLYPH {
         pixel.x += (1.0 - corner.y) * (b.w - b.y) * instance.shape.z;
@@ -70,10 +75,12 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     out.color = premultiply(instance.color);
     out.border_color = premultiply(instance.border_color);
     out.data = instance.data;
+    if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD {
+        out.data += vec4<f32>(offset, offset);
+    }
     out.clip = textureLoad(clips, clip_texel, 0);
     out.rounded_clip = textureLoad(clips, clip_texel + vec2<i32>(1, 0), 0);
-    let clip_radius = textureLoad(clips, clip_texel + vec2<i32>(2, 0), 0).x;
-    out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, clip_radius);
+    out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, clip_extra.x);
     return out;
 }
 

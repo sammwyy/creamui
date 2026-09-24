@@ -179,6 +179,12 @@ pub struct RuntimeNode {
     /// stamp (stamps start at `1`), so a freshly created node is correctly
     /// "not yet touched".
     pub(super) touched_stamp: u64,
+    /// Set on every ancestor of a node whose layout inputs changed since the
+    /// last layout, so the rect sync only walks those paths and the
+    /// subtrees that actually moved.
+    pub(super) on_layout_path: bool,
+    /// This node's index in [`super::Runtime`]'s hit-test list, if listed.
+    pub(super) hit_slot: Option<u32>,
 }
 
 impl RuntimeNode {
@@ -208,6 +214,8 @@ impl RuntimeNode {
             events: EventState::default(),
             paint: super::paint::PaintState::default(),
             touched_stamp: 0,
+            on_layout_path: false,
+            hit_slot: None,
         }
     }
 }

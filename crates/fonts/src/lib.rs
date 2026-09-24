@@ -269,15 +269,106 @@ fn normalize_font_name(name: &str) -> String {
         .to_ascii_lowercase()
 }
 
+type FontIndex = Vec<(String, PathBuf)>;
+
+const INDEX_CACHE_HEADER: &str = "creamui-font-index 1";
+
 fn system_font_index() -> &'static [(String, PathBuf)] {
-    static INDEX: OnceLock<Vec<(String, PathBuf)>> = OnceLock::new();
+    static INDEX: OnceLock<FontIndex> = OnceLock::new();
     INDEX.get_or_init(|| {
+        let roots = system_font_directories();
+        let cache = user_cache_dir().map(|dir| dir.join("creamui").join("font-index"));
+        if let Some(entries) = cache.as_deref().and_then(|path| load_index(path, &roots)) {
+            return entries;
+        }
         let mut entries = Vec::new();
-        for directory in system_font_directories() {
-            collect_font_files(&directory, &mut entries);
+        let mut directories = Vec::new();
+        for root in &roots {
+            collect_font_files(root, &mut entries, &mut directories);
+        }
+        if let Some(path) = cache {
+            if let Err(err) = save_index(&path, &roots, &directories, &entries) {
+                log::debug!("creamui-fonts: not caching the font index at {path:?}: {err}");
+            }
         }
         entries
     })
+}
+
+fn user_cache_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    return env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    return env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Caches"));
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    return env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+}
+
+fn modified_nanos(path: &Path) -> Option<u128> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    Some(
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+    )
+}
+
+/// Reads a cached index, valid while the same roots are searched and no
+/// directory it walked has been modified (a directory's modification time
+/// changes whenever an entry is added to or removed from it).
+fn load_index(path: &Path, roots: &[PathBuf]) -> Option<FontIndex> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    if lines.next()? != INDEX_CACHE_HEADER {
+        return None;
+    }
+    let mut cached_roots = Vec::new();
+    let mut entries = Vec::new();
+    for line in lines {
+        let mut fields = line.splitn(3, '\t');
+        match (fields.next()?, fields.next()?, fields.next()?) {
+            ("r", _, root) => cached_roots.push(PathBuf::from(root)),
+            ("d", modified, directory) => {
+                let current = modified_nanos(Path::new(directory)).map(|m| m.to_string());
+                if current.as_deref().unwrap_or("-") != modified {
+                    return None;
+                }
+            }
+            ("f", stem, font) => entries.push((stem.to_owned(), PathBuf::from(font))),
+            _ => return None,
+        }
+    }
+    (cached_roots == roots).then_some(entries)
+}
+
+fn save_index(
+    path: &Path,
+    roots: &[PathBuf],
+    directories: &[PathBuf],
+    entries: &[(String, PathBuf)],
+) -> std::io::Result<()> {
+    let mut text = format!("{INDEX_CACHE_HEADER}\n");
+    let paths = roots
+        .iter()
+        .map(|root| ("r", String::new(), root))
+        .chain(roots.iter().chain(directories).map(|directory| {
+            let modified = modified_nanos(directory).map_or("-".to_owned(), |m| m.to_string());
+            ("d", modified, directory)
+        }))
+        .chain(entries.iter().map(|(stem, font)| ("f", stem.clone(), font)));
+    for (kind, value, path) in paths {
+        let Some(path) = path.to_str() else {
+            return Err(std::io::Error::other("non-UTF-8 font path"));
+        };
+        text.push_str(&format!("{kind}\t{value}\t{path}\n"));
+    }
+    fs::create_dir_all(path.parent().expect("cache file lives in a directory"))?;
+    let partial = path.with_extension("partial");
+    fs::write(&partial, text)?;
+    fs::rename(partial, path)
 }
 
 fn system_font_directories() -> Vec<PathBuf> {
@@ -311,14 +402,24 @@ fn system_font_directories() -> Vec<PathBuf> {
     directories
 }
 
-fn collect_font_files(directory: &Path, entries: &mut Vec<(String, PathBuf)>) {
+fn collect_font_files(
+    directory: &Path,
+    entries: &mut Vec<(String, PathBuf)>,
+    directories: &mut Vec<PathBuf>,
+) {
     let Ok(read_dir) = fs::read_dir(directory) else {
         return;
     };
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_font_files(&path, entries);
+        let is_dir = match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => path.is_dir(),
+            Ok(kind) => kind.is_dir(),
+            Err(_) => false,
+        };
+        if is_dir {
+            directories.push(path.clone());
+            collect_font_files(&path, entries, directories);
             continue;
         }
         let is_font = path
@@ -533,10 +634,38 @@ mod tests {
         fs::write(root.join("notes.txt"), b"ignore me").unwrap();
 
         let mut entries = Vec::new();
-        collect_font_files(&root, &mut entries);
+        let mut directories = Vec::new();
+        collect_font_files(&root, &mut entries, &mut directories);
         entries.sort();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|(stem, _)| stem == "sample"));
+        assert_eq!(directories, vec![nested]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_index_cache_is_reused_until_a_walked_directory_changes() {
+        let root = std::env::temp_dir().join(format!("creamui-fonts-cache-{}", std::process::id()));
+        let fonts = root.join("fonts");
+        let nested = fonts.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("Sample.ttf"), b"not a real font").unwrap();
+        let cache = root.join("cache").join("font-index");
+        let roots = vec![fonts.clone(), root.join("missing")];
+
+        let mut entries = Vec::new();
+        let mut directories = Vec::new();
+        for root in &roots {
+            collect_font_files(root, &mut entries, &mut directories);
+        }
+        save_index(&cache, &roots, &directories, &entries).unwrap();
+        assert_eq!(load_index(&cache, &roots), Some(entries));
+        assert_eq!(load_index(&cache, &roots[..1]), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(nested.join("Other.ttf"), b"not a real font").unwrap();
+        assert_eq!(load_index(&cache, &roots), None);
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -24,7 +24,7 @@ pub use backend::RenderBackend;
 pub use creamui_platform as platform;
 pub use creamui_platform::BlurRegion;
 pub use devtools::{install_devtools, Devtools, FrameReport, WindowDevtools};
-pub use display_list::{damage, Bounds, Damage, DisplayList};
+pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, ScrollBlit};
 #[cfg(not(target_arch = "wasm32"))]
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;

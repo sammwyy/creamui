@@ -18,6 +18,7 @@ pub use self::winit::{
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -33,6 +34,15 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     /// Called right before a frame is handed to the compositor, so the
     /// platform can throttle redraws to the display.
     fn pre_present_notify(&self) {}
+    /// Whether redraws requested after [`PlatformWindow::pre_present_notify`]
+    /// are delivered at most once per display refresh.
+    fn paces_redraws(&self) -> bool {
+        false
+    }
+    /// The refresh period of the display showing this window, when known.
+    fn refresh_interval(&self) -> Option<Duration> {
+        None
+    }
     fn close(&self);
     fn request_inner_size(&self, size: LogicalSize);
     fn set_outer_position(&self, position: LogicalPosition);

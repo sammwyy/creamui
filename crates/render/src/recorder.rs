@@ -3,7 +3,7 @@
 
 use crate::display_list::{
     Bounds, Clip, DisplayList, DrawItem, ImagePrimitive, Line, Primitive, Quad, QuadGradient,
-    RoundedClip, TextRun,
+    RoundedClip, ScrollLayer, TextRun,
 };
 use crate::text::TextSystem;
 use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
@@ -18,18 +18,44 @@ type RecorderInstant = std::time::Instant;
 type RecorderInstant = web_time::Instant;
 
 const TRANSPARENT: Color = Color::rgba(0, 0, 0, 0);
+/// The clip of content directly inside a scroll layer, whose visible part
+/// the layer's viewport decides.
+const UNBOUNDED: Bounds = Bounds {
+    x0: -1.0e7,
+    y0: -1.0e7,
+    x1: 1.0e7,
+    y1: 1.0e7,
+};
+
+/// Content coordinates are rounded to 1/256 px so the same content maps
+/// to bit-identical items at any scroll offset.
+fn snap(value: f32) -> f32 {
+    (value * 256.0).round() / 256.0
+}
+
+#[derive(Clone, Copy)]
+struct ClipState {
+    /// Recorded with items, in the current layer's content space.
+    clip: Clip,
+    /// What is visible on screen, for culling.
+    visible: Bounds,
+    layer: u16,
+    /// Screen position of the current layer's content origin.
+    translation: [f32; 2],
+}
 
 pub struct SceneRecorder {
     text: Rc<RefCell<TextSystem>>,
     list: DisplayList,
     spare: Vec<DrawItem>,
-    clips: Vec<Clip>,
+    clips: Vec<ClipState>,
     scale: f32,
     color_scheme: ColorScheme,
     pub pointer: Option<Point>,
     pub press_origin: Option<Point>,
     animated: bool,
     started: RecorderInstant,
+    frame_time: f32,
 }
 
 impl Default for SceneRecorder {
@@ -51,6 +77,7 @@ impl SceneRecorder {
             press_origin: None,
             animated: false,
             started: RecorderInstant::now(),
+            frame_time: 0.0,
         }
     }
 
@@ -71,14 +98,21 @@ impl SceneRecorder {
             height: height.max(1),
             clear,
             items,
+            layers: Vec::new(),
         };
         self.scale = scale.max(0.01);
         self.color_scheme = color_scheme;
         self.animated = false;
+        self.frame_time = self.started.elapsed().as_secs_f32();
         self.clips.clear();
-        self.clips.push(Clip {
-            bounds: self.list.viewport(),
-            rounded: None,
+        self.clips.push(ClipState {
+            clip: Clip {
+                bounds: self.list.viewport(),
+                rounded: None,
+            },
+            visible: self.list.viewport(),
+            layer: 0,
+            translation: [0.0; 2],
         });
     }
 
@@ -105,22 +139,55 @@ impl SceneRecorder {
         self.text.borrow()
     }
 
-    fn clip(&self) -> Clip {
+    fn state(&self) -> ClipState {
         *self.clips.last().expect("begin pushes the viewport clip")
     }
 
+    fn visible(&self, bounds: Bounds) -> bool {
+        let state = self.state();
+        !bounds
+            .translate(state.translation)
+            .intersect(state.visible)
+            .is_empty()
+    }
+
     fn push(&mut self, primitive: Primitive) {
-        let clip = self.clip();
-        if primitive.bounds().intersect(clip.bounds).is_empty() {
+        if !self.visible(primitive.bounds()) {
             return;
         }
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.display_items += 1);
-        self.list.items.push(DrawItem { primitive, clip });
+        let state = self.state();
+        self.list.items.push(DrawItem {
+            primitive,
+            clip: state.clip,
+            layer: state.layer,
+        });
     }
 
+    /// `rect`, in logical screen pixels, in the current layer's physical
+    /// content space.
     fn bounds(&self, rect: Rect) -> Bounds {
-        Bounds::from_rect(rect, self.scale)
+        let screen = Bounds::from_rect(rect, self.scale);
+        let [x, y] = self.state().translation;
+        if self.state().layer == 0 {
+            return screen;
+        }
+        Bounds {
+            x0: snap(screen.x0 - x),
+            y0: snap(screen.y0 - y),
+            x1: snap(screen.x1 - x),
+            y1: snap(screen.y1 - y),
+        }
+    }
+
+    fn point(&self, point: Point) -> [f32; 2] {
+        let [x, y] = self.state().translation;
+        let (px, py) = (point.x * self.scale, point.y * self.scale);
+        if self.state().layer == 0 {
+            return [px, py];
+        }
+        [snap(px - x), snap(py - y)]
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -140,7 +207,7 @@ impl SceneRecorder {
             return;
         }
         let bounds = self.bounds(rect);
-        if bounds.intersect(self.clip().bounds).is_empty() {
+        if !self.visible(bounds) {
             return;
         }
         let layout = self.text.borrow_mut().layout(
@@ -149,16 +216,16 @@ impl SceneRecorder {
             text,
             font_size * self.scale,
             bounds.width().max(0.0),
-            bounds.height().max(0.0),
             align,
         );
         if layout.glyphs.is_empty() {
             return;
         }
+        let top = ((bounds.height() - layout.height) * 0.5).floor() as i32;
         self.push(Primitive::Text(TextRun {
             layout,
             x: bounds.x0.round() as i32,
-            y: bounds.y0.round() as i32,
+            y: bounds.y0.round() as i32 + top,
             color,
             selection,
             italic,
@@ -179,20 +246,21 @@ impl Painter for SceneRecorder {
         self.hovered(rect) && self.press_origin.is_some_and(|point| rect.contains(point))
     }
 
+    /// The same instant for every widget in a frame, so animations stay in
+    /// step with each other however long the frame takes to record.
     fn animation_time(&mut self) -> f32 {
         self.animated = true;
-        self.started.elapsed().as_secs_f32()
+        self.frame_time
     }
 
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, width: f32) {
         if color.a == 0 || width <= 0.0 {
             return;
         }
-        let s = self.scale;
         self.push(Primitive::Line(Line {
-            from: [from.x * s, from.y * s],
-            to: [to.x * s, to.y * s],
-            width: width * s,
+            from: self.point(from),
+            to: self.point(to),
+            width: width * self.scale,
             color,
         }));
     }
@@ -390,7 +458,7 @@ impl Painter for SceneRecorder {
     }
 
     fn push_clip_rounded(&mut self, rect: Rect, corner_radius: f32) {
-        let parent = self.clip();
+        let parent = self.state();
         let bounds = self.bounds(rect).round();
         let rounded = if corner_radius > 0.0 {
             Some(RoundedClip {
@@ -401,12 +469,18 @@ impl Painter for SceneRecorder {
                     .max(0.0),
             })
         } else {
-            parent.rounded
+            parent.clip.rounded
         };
-        let bounds = parent.bounds.intersect(bounds);
-        self.clips.push(Clip {
-            bounds,
-            rounded: rounded.filter(|r| !r.inner().contains(bounds)),
+        let clipped = parent.clip.bounds.intersect(bounds);
+        self.clips.push(ClipState {
+            clip: Clip {
+                bounds: clipped,
+                rounded: rounded.filter(|r| !r.inner().contains(clipped)),
+            },
+            visible: parent
+                .visible
+                .intersect(bounds.translate(parent.translation)),
+            ..parent
         });
     }
 
@@ -414,6 +488,39 @@ impl Painter for SceneRecorder {
         if self.clips.len() > 1 {
             self.clips.pop();
         }
+    }
+
+    fn push_scroll_layer(&mut self, viewport: Rect, corner_radius: f32, offset: Point) {
+        let parent = self.state();
+        let viewport = self.bounds(viewport).round();
+        let offset = [-offset.x * self.scale, -offset.y * self.scale];
+        self.list.layers.push(ScrollLayer {
+            parent: parent.layer,
+            viewport,
+            radius: (corner_radius * self.scale)
+                .min(viewport.width() / 2.0)
+                .min(viewport.height() / 2.0)
+                .max(0.0),
+            offset,
+        });
+        self.clips.push(ClipState {
+            clip: Clip {
+                bounds: UNBOUNDED,
+                rounded: None,
+            },
+            visible: parent
+                .visible
+                .intersect(viewport.translate(parent.translation)),
+            layer: self.list.layers.len() as u16,
+            translation: [
+                parent.translation[0] + offset[0],
+                parent.translation[1] + offset[1],
+            ],
+        });
+    }
+
+    fn pop_scroll_layer(&mut self) {
+        self.pop_clip();
     }
 }
 
@@ -500,6 +607,28 @@ mod tests {
             Bounds::new(0.0, 0.0, 200.0, 100.0)
         );
         assert!(list.items[1].clip.rounded.is_none());
+    }
+
+    #[test]
+    fn taller_boxes_reuse_the_layout_and_center_it() {
+        let list = record(1.0, |p| {
+            for height in [20.0, 60.0] {
+                p.fill_text(
+                    rect(0.0, 0.0, 100.0, height),
+                    "Hi",
+                    Color::rgb(9, 9, 9),
+                    12.0,
+                    TextAlign::Start,
+                );
+            }
+        });
+        let (Primitive::Text(short), Primitive::Text(tall)) =
+            (&list.items[0].primitive, &list.items[1].primitive)
+        else {
+            panic!("expected two text runs");
+        };
+        assert!(Rc::ptr_eq(&short.layout, &tall.layout));
+        assert_eq!(tall.y - short.y, 20);
     }
 
     #[test]

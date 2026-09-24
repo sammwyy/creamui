@@ -14,6 +14,6 @@ register_bytes("Inter", FontWeight::Bold, include_font!("./Inter-Bold.ttf").to_v
 let font = use_font("Inter, system-ui");
 ```
 
-`register_file` loads from disk at runtime instead. `resolve` (family, weight) -> face is what `use_font` calls under the hood, for non-hook call sites.
+`register_file` loads from disk at runtime instead. Files are memory-mapped and parsed on demand, so only the tables and glyphs actually used become resident. `layout` shapes and wraps text with a face; it is what both widget measurement and the renderer use. `resolve` (family, weight) -> face is what `use_font` calls under the hood, for non-hook call sites.
 
 Part of [CreamUI](https://github.com/sammwyy/creamui), licensed under Apache-2.0.

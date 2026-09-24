@@ -266,3 +266,13 @@
   `_KDE_NET_WM_BLUR_BEHIND_REGION` atom and the winit/Windows/macOS
   backends stay a no-op. The FFI/dynamic C ABI does not expose `blur`
   either (`window_options_from_c` always passes `None`).
+- `creamui_fonts::layout` shapes and places every run left-to-right: there
+  is no bidirectional reordering, so right-to-left scripts are displayed
+  in logical order.
+- Text uses a single face per run: characters the resolved face lacks are
+  drawn as its `.notdef` glyph, with no fallback to other installed fonts.
+- `ImageData::from_bytes`/`from_path` keep the encoded bytes so decoded
+  pixels can be dropped after a GPU upload; windows on the CPU backend
+  never drop them, so they pay the encoded size on top of the decoded one.
+- The glyph atlas has no per-glyph eviction: when full it is cleared as a
+  whole (if it holds glyphs not used this frame) and refilled on demand.

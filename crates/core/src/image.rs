@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -13,14 +13,41 @@ pub struct RgbaImage {
     id: u64,
     width: u32,
     height: u32,
-    pixels: Arc<[u8]>,
+    store: Arc<PixelStore>,
+}
+
+type Reload = dyn Fn() -> Vec<u8> + Send + Sync;
+
+struct PixelStore {
+    decoded: Mutex<Option<Arc<[u8]>>>,
+    reload: Option<Box<Reload>>,
 }
 
 impl RgbaImage {
     /// Returns `None` unless `pixels` holds exactly `width * height * 4`
     /// premultiplied bytes.
     pub fn new(width: u32, height: u32, pixels: impl Into<Arc<[u8]>>) -> Option<Self> {
-        let pixels = pixels.into();
+        Self::with_store(width, height, pixels.into(), None)
+    }
+
+    /// Like [`RgbaImage::new`], but the decoded pixels can be dropped with
+    /// [`RgbaImage::discard_pixels`] and are rebuilt by calling `reload`
+    /// the next time they are needed. `reload` must reproduce `pixels`.
+    pub fn reloadable(
+        width: u32,
+        height: u32,
+        pixels: impl Into<Arc<[u8]>>,
+        reload: impl Fn() -> Vec<u8> + Send + Sync + 'static,
+    ) -> Option<Self> {
+        Self::with_store(width, height, pixels.into(), Some(Box::new(reload)))
+    }
+
+    fn with_store(
+        width: u32,
+        height: u32,
+        pixels: Arc<[u8]>,
+        reload: Option<Box<Reload>>,
+    ) -> Option<Self> {
         let expected = (width as usize)
             .checked_mul(height as usize)?
             .checked_mul(4)?;
@@ -28,7 +55,10 @@ impl RgbaImage {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
             width,
             height,
-            pixels,
+            store: Arc::new(PixelStore {
+                decoded: Mutex::new(Some(pixels)),
+                reload,
+            }),
         })
     }
 
@@ -44,17 +74,51 @@ impl RgbaImage {
         self.height
     }
 
-    pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+    /// The premultiplied pixels, reloading them if they were discarded.
+    pub fn pixels(&self) -> Arc<[u8]> {
+        let mut decoded = self
+            .store
+            .decoded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        decoded
+            .get_or_insert_with(|| {
+                let reload = self
+                    .store
+                    .reload
+                    .as_ref()
+                    .expect("only reloadable images discard their pixels");
+                let pixels: Arc<[u8]> = reload().into();
+                assert_eq!(
+                    pixels.len(),
+                    self.width as usize * self.height as usize * 4,
+                    "reloaded image changed size"
+                );
+                pixels
+            })
+            .clone()
     }
 
-    /// Rewrites every pixel in place, assigning a fresh identity.
-    pub fn map_pixels(mut self, f: impl Fn(&mut [u8])) -> Self {
-        Arc::make_mut(&mut self.pixels)
-            .chunks_exact_mut(4)
-            .for_each(f);
-        self.id = NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed);
-        self
+    /// Drops the decoded pixels of a [`RgbaImage::reloadable`] image, for
+    /// every clone sharing them. Returns whether anything was dropped.
+    pub fn discard_pixels(&self) -> bool {
+        if self.store.reload.is_none() {
+            return false;
+        }
+        self.store
+            .decoded
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .is_some()
+    }
+
+    /// Rewrites every pixel in place, assigning a fresh identity. The result
+    /// is not reloadable.
+    pub fn map_pixels(self, f: impl Fn(&mut [u8])) -> Self {
+        let mut pixels = self.pixels().to_vec();
+        pixels.chunks_exact_mut(4).for_each(f);
+        Self::new(self.width, self.height, pixels).expect("same dimensions as the source image")
     }
 }
 
@@ -86,7 +150,30 @@ mod tests {
         assert_eq!(image.id(), clone.id());
         let edited = clone.map_pixels(|px| px[0] = 9);
         assert_ne!(edited.id(), image.id());
-        assert_eq!(edited.pixels(), &[9, 2, 3, 4]);
-        assert_eq!(image.pixels(), &[1, 2, 3, 4]);
+        assert_eq!(&*edited.pixels(), &[9, 2, 3, 4]);
+        assert_eq!(&*image.pixels(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn only_reloadable_images_discard_and_rebuild_their_pixels() {
+        let plain = RgbaImage::new(1, 1, vec![1, 2, 3, 4]).unwrap();
+        assert!(!plain.discard_pixels());
+        assert_eq!(&*plain.pixels(), &[1, 2, 3, 4]);
+
+        let reloads = Arc::new(AtomicU64::new(0));
+        let image = RgbaImage::reloadable(1, 1, vec![5, 6, 7, 8], {
+            let reloads = reloads.clone();
+            move || {
+                reloads.fetch_add(1, Ordering::Relaxed);
+                vec![5, 6, 7, 8]
+            }
+        })
+        .unwrap();
+        let clone = image.clone();
+        assert!(image.discard_pixels());
+        assert!(!clone.discard_pixels());
+        assert_eq!(&*clone.pixels(), &[5, 6, 7, 8]);
+        assert_eq!(&*image.pixels(), &[5, 6, 7, 8]);
+        assert_eq!(reloads.load(Ordering::Relaxed), 1);
     }
 }

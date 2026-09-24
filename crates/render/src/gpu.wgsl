@@ -4,24 +4,27 @@ struct Globals {
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
-@group(0) @binding(1) var atlas: texture_2d<f32>;
-@group(0) @binding(2) var image_sampler: sampler;
-@group(1) @binding(0) var image: texture_2d<f32>;
+@group(0) @binding(1) var clips: texture_2d<f32>;
+@group(1) @binding(0) var atlas: texture_2d<f32>;
+@group(1) @binding(1) var image_sampler: sampler;
+@group(2) @binding(0) var image: texture_2d<f32>;
 
 const KIND_QUAD: f32 = 0.0;
 const KIND_LINE: f32 = 1.0;
 const KIND_GLYPH: f32 = 2.0;
 const KIND_GRADIENT_QUAD: f32 = 4.0;
 
+const KIND_BITS: u32 = 4u;
+const CLIPS_PER_ROW: u32 = 256u;
+const TEXELS_PER_CLIP: u32 = 3u;
+
 struct Instance {
     @location(0) bounds: vec4<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) border_color: vec4<f32>,
-    @location(3) data: vec4<f32>,
-    @location(4) clip: vec4<f32>,
-    @location(5) rounded_clip: vec4<f32>,
-    @location(6) params: vec4<f32>,
-    @location(7) extra: vec4<f32>,
+    @location(1) data: vec4<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) border_color: vec4<f32>,
+    @location(4) shape: vec3<f32>,
+    @location(5) tag: u32,
 };
 
 struct Varyings {
@@ -36,13 +39,24 @@ struct Varyings {
     @location(7) @interpolate(flat) params: vec4<f32>,
 };
 
+fn premultiply(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(color.rgb * color.a, color.a);
+}
+
 @vertex
 fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
+    let kind = f32(instance.tag & ((1u << KIND_BITS) - 1u));
+    let clip_index = instance.tag >> KIND_BITS;
+    let clip_texel = vec2<i32>(
+        i32((clip_index % CLIPS_PER_ROW) * TEXELS_PER_CLIP),
+        i32(clip_index / CLIPS_PER_ROW),
+    );
+
     let corner = vec2<f32>(f32(index & 1u), f32((index >> 1u) & 1u));
     let b = instance.bounds;
     var pixel = mix(b.xy, b.zw, corner);
-    if instance.params.x == KIND_GLYPH {
-        pixel.x += (1.0 - corner.y) * (b.w - b.y) * instance.extra.x;
+    if kind == KIND_GLYPH {
+        pixel.x += (1.0 - corner.y) * (b.w - b.y) * instance.shape.z;
     }
     var out: Varyings;
     out.position = vec4<f32>(
@@ -53,12 +67,13 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     );
     out.uv = corner;
     out.bounds = b;
-    out.color = instance.color;
-    out.border_color = instance.border_color;
+    out.color = premultiply(instance.color);
+    out.border_color = premultiply(instance.border_color);
     out.data = instance.data;
-    out.clip = instance.clip;
-    out.rounded_clip = instance.rounded_clip;
-    out.params = instance.params;
+    out.clip = textureLoad(clips, clip_texel, 0);
+    out.rounded_clip = textureLoad(clips, clip_texel + vec2<i32>(1, 0), 0);
+    let clip_radius = textureLoad(clips, clip_texel + vec2<i32>(2, 0), 0).x;
+    out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, clip_radius);
     return out;
 }
 

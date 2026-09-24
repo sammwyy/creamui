@@ -1,7 +1,14 @@
 //! Global font registry: register font files, then resolve a CSS-style
 //! family stack (`"Inter, sans-serif"`) to a loaded face.
 
-use fontdue::{Font as FontFace, FontSettings};
+mod face;
+mod layout;
+
+pub use face::{FontFace, LineMetrics};
+pub use layout::{
+    layout, CharPosition, HorizontalAlign, LayoutSettings, Line, PositionedGlyph, TextLayout,
+};
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,9 +18,9 @@ use std::{env, fs};
 
 /// Generic UI family resolved from the operating system on first use.
 ///
-/// CreamUI deliberately does not bundle a font. Shipping a full font makes
-/// every executable larger and, with `fontdue`, eagerly compiling every
-/// glyph outline can dominate a small application's resident memory.
+/// CreamUI deliberately does not bundle a font: shipping one makes every
+/// executable larger, while system fonts are already on disk and are
+/// memory-mapped rather than copied.
 pub const DEFAULT_FAMILY: &str = "system-ui";
 
 /// Embeds a font file's bytes at compile time.
@@ -57,10 +64,6 @@ thread_local! {
     static PREFERRED_FAMILY: RefCell<Option<String>> = RefCell::new(None);
 }
 
-fn parse(bytes: &[u8]) -> Result<FontFace, FontError> {
-    FontFace::from_bytes(bytes, FontSettings::default()).map_err(|e| FontError(e.to_string()))
-}
-
 /// Registers `bytes` as `family`'s face for `weight`, replacing any face
 /// previously registered for that (family, weight) pair.
 pub fn register_bytes(
@@ -68,25 +71,29 @@ pub fn register_bytes(
     weight: FontWeight,
     bytes: impl AsRef<[u8]>,
 ) -> Result<(), FontError> {
-    let face = parse(bytes.as_ref())?;
-    REGISTRY.with(|registry| {
-        registry
-            .borrow_mut()
-            .faces
-            .insert((family.into(), weight), Rc::new(face));
-    });
+    register_face(family.into(), weight, FontFace::from_bytes(bytes.as_ref())?);
     Ok(())
 }
 
-/// Reads `path` from disk and registers it.
+/// Memory-maps `path` and registers it.
 pub fn register_file(
     family: impl Into<String>,
     weight: FontWeight,
     path: impl AsRef<Path>,
 ) -> std::io::Result<()> {
-    let bytes = std::fs::read(path)?;
-    register_bytes(family, weight, bytes)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let face = FontFace::from_path(path.as_ref())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    register_face(family.into(), weight, face);
+    Ok(())
+}
+
+fn register_face(family: String, weight: FontWeight, face: FontFace) {
+    REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .faces
+            .insert((family, weight), Rc::new(face));
+    });
 }
 
 /// Resolves a CSS-style comma-separated family stack against the registry and
@@ -103,9 +110,15 @@ pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
         if let Some(face) = registered_face(family, weight) {
             return face;
         }
-        if !is_generic_family(family) {
-            let _ = load_system_face(family, family, weight);
-            if let Some(face) = registered_face(family, weight) {
+        if is_generic_family(family) {
+            continue;
+        }
+        if load_system_face(family, family, weight) {
+            return registered_face(family, weight)
+                .expect("a successfully loaded system face is registered");
+        }
+        if weight == FontWeight::Bold {
+            if let Some(face) = registered_face(family, FontWeight::Regular) {
                 return face;
             }
         }
@@ -115,40 +128,26 @@ pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
 
 fn registered_face(family: &str, weight: FontWeight) -> Option<Rc<FontFace>> {
     REGISTRY.with(|registry| {
-        let registry = registry.borrow();
         registry
+            .borrow()
             .faces
             .get(&(family.to_owned(), weight))
-            .or_else(|| {
-                (weight == FontWeight::Bold)
-                    .then(|| {
-                        registry
-                            .faces
-                            .get(&(family.to_owned(), FontWeight::Regular))
-                    })
-                    .flatten()
-            })
             .cloned()
     })
 }
 
 fn default_face(weight: FontWeight) -> Rc<FontFace> {
-    if let Some(face) = registered_face(DEFAULT_FAMILY, weight) {
-        return face;
-    }
-    for family in system_font_candidates() {
-        if load_system_face(DEFAULT_FAMILY, family, weight) {
-            return registered_face(DEFAULT_FAMILY, weight)
-                .expect("a successfully loaded system face is registered");
-        }
-    }
-    if weight == FontWeight::Bold {
-        if let Some(face) = registered_face(DEFAULT_FAMILY, FontWeight::Regular) {
+    let weights: &[FontWeight] = match weight {
+        FontWeight::Regular => &[FontWeight::Regular],
+        FontWeight::Bold => &[FontWeight::Bold, FontWeight::Regular],
+    };
+    for &weight in weights {
+        if let Some(face) = registered_face(DEFAULT_FAMILY, weight) {
             return face;
         }
         for family in system_font_candidates() {
-            if load_system_face(DEFAULT_FAMILY, family, FontWeight::Regular) {
-                return registered_face(DEFAULT_FAMILY, FontWeight::Regular)
+            if load_system_face(DEFAULT_FAMILY, family, weight) {
+                return registered_face(DEFAULT_FAMILY, weight)
                     .expect("a successfully loaded system face is registered");
             }
         }
@@ -162,10 +161,20 @@ fn load_system_face(registry_family: &str, lookup_family: &str, weight: FontWeig
     let Some(path) = find_system_font(lookup_family, weight) else {
         return false;
     };
-    let Ok(bytes) = fs::read(path) else {
-        return false;
-    };
-    register_bytes(registry_family, weight, bytes).is_ok()
+    match FontFace::from_path(&path) {
+        Ok(face) => {
+            log::debug!(
+                "creamui-fonts: mapped {} as {registry_family} {weight:?}",
+                path.display()
+            );
+            register_face(registry_family.to_owned(), weight, face);
+            true
+        }
+        Err(err) => {
+            log::warn!("creamui-fonts: skipping {err}");
+            false
+        }
+    }
 }
 
 fn is_generic_family(family: &str) -> bool {
@@ -399,6 +408,13 @@ mod tests {
         let own_regular = resolve("Test Family B", FontWeight::Regular);
         let bold_request = resolve("Test Family B", FontWeight::Bold);
         assert!(Rc::ptr_eq(&own_regular, &bold_request));
+    }
+
+    #[test]
+    fn bold_loads_its_own_system_face_after_the_regular_one() {
+        let regular = resolve(DEFAULT_FAMILY, FontWeight::Regular);
+        let bold = resolve(DEFAULT_FAMILY, FontWeight::Bold);
+        assert!(!Rc::ptr_eq(&regular, &bold));
     }
 
     #[test]

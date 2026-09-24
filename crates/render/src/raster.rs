@@ -217,8 +217,12 @@ fn draw_image(
 ) {
     let (width, height) = (image.image.width(), image.image.height());
     let frame = images.frame;
+    let pixels;
     let source = match image.tint {
-        None => PixmapRef::from_bytes(image.image.pixels(), width, height),
+        None => {
+            pixels = image.image.pixels();
+            PixmapRef::from_bytes(&pixels, width, height)
+        }
         Some(tint) => {
             let (pixmap, used) = images
                 .tinted

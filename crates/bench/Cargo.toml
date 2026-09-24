@@ -19,6 +19,8 @@ creamui-theme = { workspace = true }
 creamui-render = { workspace = true, features = ["perf-metrics", "logger"] }
 
 [dev-dependencies]
+creamui-fonts = { workspace = true }
+creamui-image = { workspace = true, features = ["jpeg"] }
 criterion = { version = "0.5", default-features = false }
 
 [[bench]]

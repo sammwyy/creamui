@@ -8,7 +8,9 @@ use crate::display_list::{
 use crate::text::TextSystem;
 use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
 use creamui_theme::{Color, ColorScheme};
+use std::cell::{Ref, RefCell};
 use std::ops::Range;
+use std::rc::Rc;
 
 #[cfg(not(target_arch = "wasm32"))]
 type RecorderInstant = std::time::Instant;
@@ -18,7 +20,7 @@ type RecorderInstant = web_time::Instant;
 const TRANSPARENT: Color = Color::rgba(0, 0, 0, 0);
 
 pub struct SceneRecorder {
-    text: TextSystem,
+    text: Rc<RefCell<TextSystem>>,
     list: DisplayList,
     spare: Vec<DrawItem>,
     clips: Vec<Clip>,
@@ -39,7 +41,7 @@ impl Default for SceneRecorder {
 impl SceneRecorder {
     pub fn new() -> Self {
         SceneRecorder {
-            text: TextSystem::new(),
+            text: TextSystem::shared(),
             list: DisplayList::new(1, 1, TRANSPARENT),
             spare: Vec::new(),
             clips: Vec::new(),
@@ -82,7 +84,7 @@ impl SceneRecorder {
 
     /// Ends the frame started by [`SceneRecorder::begin`].
     pub fn finish(&mut self) -> DisplayList {
-        self.text.end_frame();
+        self.text.borrow_mut().end_frame();
         std::mem::replace(&mut self.list, DisplayList::new(1, 1, TRANSPARENT))
     }
 
@@ -99,8 +101,8 @@ impl SceneRecorder {
         self.animated
     }
 
-    pub fn text(&self) -> &TextSystem {
-        &self.text
+    pub fn text(&self) -> Ref<'_, TextSystem> {
+        self.text.borrow()
     }
 
     fn clip(&self) -> Clip {
@@ -141,7 +143,7 @@ impl SceneRecorder {
         if bounds.intersect(self.clip().bounds).is_empty() {
             return;
         }
-        let layout = self.text.layout(
+        let layout = self.text.borrow_mut().layout(
             family,
             bold,
             text,

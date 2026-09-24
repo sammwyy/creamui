@@ -311,7 +311,7 @@ impl RawTextArea {
         }
     }
 
-    /// Bounded width, letting `fontdue` wrap long lines onto new visual
+    /// Bounded width, letting the text layout wrap long lines onto new visual
     /// rows; selection is highlighted per glyph since rows no longer line
     /// up with source lines.
     fn paint_wrapped(&self, painter: &mut dyn Painter, text_rect: Rect, text: &str, color: Color) {
@@ -920,7 +920,7 @@ impl Widget for RawTextInput {
             width: (rect.width - padding * 2.0).max(0.0),
             height: rect.height,
         };
-        // Unwrapped: a bounded width here would let fontdue word-wrap onto a second row.
+        // Unwrapped: a bounded width here would word-wrap onto a second row.
         let unbounded = Rect {
             x: text_rect.x - self.horizontal_scroll(text_rect.width),
             width: crate::text_metrics::unbounded_width(),

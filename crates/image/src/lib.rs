@@ -11,6 +11,7 @@ use creamui_core::layout::Dimension;
 use creamui_core::{Painter, Rect, RgbaImage, Style, Styled, Widget};
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
 #[cfg(feature = "svg")]
@@ -30,6 +31,26 @@ pub enum ImageFit {
     None,
 }
 
+fn premultiply(pixels: &mut [u8]) {
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = pixel[3] as u16;
+        pixel[0] = (pixel[0] as u16 * alpha / 255) as u8;
+        pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
+        pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
+    }
+}
+
+/// Decodes to premultiplied RGBA8.
+fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ImageError> {
+    let rgba = image_rs::load_from_memory(bytes)
+        .map_err(ImageError::Decode)?
+        .to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut pixels = rgba.into_raw();
+    premultiply(&mut pixels);
+    Ok((width, height, pixels))
+}
+
 /// A decoded RGBA image ready for reuse across widget-tree rebuilds.
 #[derive(Clone)]
 pub struct ImageData {
@@ -39,16 +60,33 @@ pub struct ImageData {
 impl ImageData {
     /// Decodes PNG, JPEG, or WebP bytes when its corresponding crate feature
     /// is enabled.
+    ///
+    /// The encoded bytes are kept so a renderer that has uploaded the image
+    /// can drop the much larger decoded pixels and decode again on demand.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ImageError> {
-        let image = image_rs::load_from_memory(bytes).map_err(ImageError::Decode)?;
-        let rgba = image.to_rgba8();
-        Self::from_rgba(rgba.width(), rgba.height(), rgba.into_raw())
+        Self::from_encoded(bytes.into())
     }
 
     /// Reads and decodes an image from the local filesystem.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let bytes = std::fs::read(path).map_err(ImageError::Io)?;
-        Self::from_bytes(&bytes)
+        Self::from_encoded(bytes.into())
+    }
+
+    fn from_encoded(bytes: Arc<[u8]>) -> Result<Self, ImageError> {
+        let (width, height, pixels) = decode(&bytes)?;
+        let length = pixels.len();
+        RgbaImage::reloadable(width, height, pixels, move || {
+            decode(&bytes)
+                .expect("bytes that decoded once decode again")
+                .2
+        })
+        .map(|image| Self { image })
+        .ok_or(ImageError::InvalidPixels {
+            width,
+            height,
+            length,
+        })
     }
 
     /// Creates image data from straight-alpha RGBA8 pixels.
@@ -64,12 +102,7 @@ impl ImageData {
                 length,
             });
         }
-        for pixel in pixels.chunks_exact_mut(4) {
-            let alpha = pixel[3] as u16;
-            pixel[0] = (pixel[0] as u16 * alpha / 255) as u8;
-            pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
-            pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
-        }
+        premultiply(&mut pixels);
         RgbaImage::new(width, height, pixels)
             .map(|image| Self { image })
             .ok_or(ImageError::InvalidPixels {
@@ -85,7 +118,7 @@ impl ImageData {
     pub fn height(&self) -> u32 {
         self.image.height()
     }
-    pub fn pixels(&self) -> &[u8] {
+    pub fn pixels(&self) -> Arc<[u8]> {
         self.image.pixels()
     }
     pub fn image(&self) -> &RgbaImage {
@@ -278,13 +311,30 @@ mod tests {
         let data = ImageData::from_rgba(1, 1, vec![255, 0, 0, 128])
             .unwrap()
             .tinted(creamui_theme::Color::rgb(0, 255, 0));
-        let [r, g, b, a] = data.pixels() else {
+        let [r, g, b, a] = data.pixels()[..] else {
             unreachable!()
         };
-        assert_eq!(*r, 0);
-        assert!(*g > 0, "green channel should carry the tint");
-        assert_eq!(*b, 0);
-        assert_eq!(*a, 128, "alpha must survive the tint unchanged");
+        assert_eq!(r, 0);
+        assert!(g > 0, "green channel should carry the tint");
+        assert_eq!(b, 0);
+        assert_eq!(a, 128, "alpha must survive the tint unchanged");
+    }
+
+    #[test]
+    fn decoded_images_reload_after_discarding_their_pixels() {
+        let mut png = Vec::new();
+        image_rs::RgbaImage::from_fn(3, 2, |x, y| {
+            image_rs::Rgba([x as u8 * 80, y as u8 * 90, 7, 200])
+        })
+        .write_to(
+            &mut std::io::Cursor::new(&mut png),
+            image_rs::ImageFormat::Png,
+        )
+        .unwrap();
+        let data = ImageData::from_bytes(&png).unwrap();
+        let original = data.pixels();
+        assert!(data.image().discard_pixels());
+        assert_eq!(data.pixels(), original);
     }
 
     #[cfg(feature = "svg")]

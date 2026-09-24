@@ -1,5 +1,5 @@
 //! Cost of recording text: a repeated label must cost a cache lookup, not a
-//! `fontdue` layout pass.
+//! layout pass.
 
 use creamui_core::{Painter, Rect, TextAlign};
 use creamui_render::SceneRecorder;

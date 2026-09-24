@@ -39,7 +39,7 @@ creamui-reactive = { workspace = true }
 creamui-tray = { workspace = true, optional = true }
 creamui-platform = { workspace = true }
 tiny-skia = { workspace = true }
-fontdue = "0.9"
+swash = "0.2"
 bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, optional = true }

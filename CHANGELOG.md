@@ -4,6 +4,28 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Replaced `fontdue` with `swash`: fonts are memory-mapped and parsed on
+  demand instead of copied and fully decoded, and text is shaped (kerning,
+  ligatures, per-script runs) and broken at Unicode line-break
+  opportunities by `creamui_fonts::layout`, shared by measurement and
+  painting. `FontFace` is now `creamui_fonts::FontFace`.
+- Fixed `creamui_fonts::resolve` returning a family's regular face for bold
+  requests once the regular one had been loaded, so system bold faces were
+  never used.
+- GPU windows on one device share the shader, pipelines, glyph atlas and
+  image textures (`GpuShared`); `GpuRenderer::new` takes the shared
+  resources. Instances shrank from 128 to 56 bytes by packing colors and
+  moving clips into a per-frame lookup texture. A full glyph atlas is
+  cleared of stale glyphs before it grows and shrinks again when mostly
+  unused, and the instance buffer shrinks after large frames.
+- Images are uploaded downscaled to the size they are drawn at, and
+  `ImageData` loaded from bytes or a path drops its decoded pixels after
+  upload, decoding again only if they are needed. `RgbaImage::pixels`
+  returns an `Arc<[u8]>`; `RgbaImage::reloadable` and
+  `RgbaImage::discard_pixels` were added.
+- The text layout and glyph caches are shared by every window on the UI
+  thread.
+
 - Replaced CPU-raster-then-upload rendering with a retained display list:
   widgets record primitives, consecutive frames are diffed into damage,
   and only changed pixels are redrawn and presented. The GPU backend now

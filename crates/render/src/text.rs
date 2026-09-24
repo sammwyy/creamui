@@ -1,25 +1,39 @@
-//! Text layout and glyph rasterization via `fontdue`, cached across frames
-//! so an unchanged label costs one hash lookup per paint.
+//! Text layout and glyph rasterization, cached across frames and shared by
+//! every window on the UI thread, so an unchanged label costs one hash
+//! lookup per paint and each glyph is rasterized once per process.
 
 use creamui_core::TextAlign;
-use creamui_fonts::FontWeight;
-use fontdue::layout::{
-    CoordinateSystem, GlyphRasterConfig, HorizontalAlign, Layout, LayoutSettings, TextStyle,
-    VerticalAlign,
-};
-use fontdue::Font as Face;
+use creamui_fonts::{FontFace, FontWeight, HorizontalAlign, LayoutSettings};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
+use swash::scale::{Render, ScaleContext, Source};
+use swash::zeno::Format;
 
 const EVICT_EVERY_FRAMES: u64 = 120;
 const EVICT_UNUSED_FOR_FRAMES: u64 = 600;
 
+thread_local! {
+    static SHARED: Rc<RefCell<TextSystem>> = Rc::new(RefCell::new(TextSystem::new()));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GlyphKey {
+    pub face: u64,
+    pub glyph: u16,
+    pub px: u32,
+}
+
 /// One rasterized glyph coverage mask, shared by every layout using it.
+/// `left`/`top` place it relative to the glyph's pen position on the
+/// baseline.
 pub struct GlyphBitmap {
-    pub key: GlyphRasterConfig,
+    pub key: GlyphKey,
     pub width: u32,
     pub height: u32,
+    pub left: i32,
+    pub top: i32,
     pub coverage: Box<[u8]>,
 }
 
@@ -38,7 +52,7 @@ pub struct TextLayout {
 }
 
 struct LayoutEntry {
-    face: usize,
+    face: u64,
     text: Box<str>,
     size: u32,
     width: u32,
@@ -49,10 +63,10 @@ struct LayoutEntry {
 }
 
 pub struct TextSystem {
-    faces: Vec<(Option<String>, bool, Rc<Face>)>,
-    layout: Layout,
+    faces: Vec<(Option<String>, bool, Rc<FontFace>)>,
+    scaler: ScaleContext,
     layouts: HashMap<u64, LayoutEntry>,
-    glyphs: HashMap<GlyphRasterConfig, (Rc<GlyphBitmap>, u64)>,
+    glyphs: HashMap<GlyphKey, (Rc<GlyphBitmap>, u64)>,
     frame: u64,
 }
 
@@ -66,14 +80,19 @@ impl TextSystem {
     pub fn new() -> Self {
         Self {
             faces: Vec::new(),
-            layout: Layout::new(CoordinateSystem::PositiveYDown),
+            scaler: ScaleContext::new(),
             layouts: HashMap::new(),
             glyphs: HashMap::new(),
             frame: 0,
         }
     }
 
-    fn face(&mut self, family: Option<&str>, bold: bool) -> Rc<Face> {
+    /// The text system every window on this thread records with.
+    pub fn shared() -> Rc<RefCell<TextSystem>> {
+        SHARED.with(Rc::clone)
+    }
+
+    fn face(&mut self, family: Option<&str>, bold: bool) -> Rc<FontFace> {
         if let Some((_, _, face)) = self
             .faces
             .iter()
@@ -95,6 +114,43 @@ impl TextSystem {
         face
     }
 
+    fn glyph(&mut self, face: &FontFace, key: GlyphKey, size: f32) -> Rc<GlyphBitmap> {
+        let frame = self.frame;
+        if let Some((bitmap, used)) = self.glyphs.get_mut(&key) {
+            *used = frame;
+            return bitmap.clone();
+        }
+        let mut scaler = self
+            .scaler
+            .builder(face.font_ref())
+            .size(size)
+            .hint(false)
+            .build();
+        let image = Render::new(&[Source::Outline])
+            .format(Format::Alpha)
+            .render(&mut scaler, key.glyph);
+        let bitmap = Rc::new(match image {
+            Some(image) => GlyphBitmap {
+                key,
+                width: image.placement.width,
+                height: image.placement.height,
+                left: image.placement.left,
+                top: image.placement.top,
+                coverage: image.data.into_boxed_slice(),
+            },
+            None => GlyphBitmap {
+                key,
+                width: 0,
+                height: 0,
+                left: 0,
+                top: 0,
+                coverage: Box::default(),
+            },
+        });
+        self.glyphs.insert(key, (bitmap.clone(), frame));
+        bitmap
+    }
+
     /// Lays out `text` at `size` pixels inside a `width` x `height` box,
     /// centered vertically and aligned horizontally by `align`.
     #[allow(clippy::too_many_arguments)]
@@ -109,7 +165,7 @@ impl TextSystem {
         align: TextAlign,
     ) -> Rc<TextLayout> {
         let face = self.face(family, bold);
-        let face_id = Rc::as_ptr(&face) as usize;
+        let face_id = face.id();
         let (size_bits, width_bits, height_bits) =
             (size.to_bits(), width.to_bits(), height.to_bits());
         let mut hasher = DefaultHasher::new();
@@ -139,45 +195,35 @@ impl TextSystem {
 
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.text_layouts += 1);
-        self.layout.reset(&LayoutSettings {
-            max_width: Some(width),
-            max_height: Some(height),
-            horizontal_align: match align {
-                TextAlign::Start => HorizontalAlign::Left,
-                TextAlign::Center => HorizontalAlign::Center,
-                TextAlign::End => HorizontalAlign::Right,
+        let shaped = creamui_fonts::layout(
+            &face,
+            text,
+            size,
+            &LayoutSettings {
+                max_width: Some(width),
+                max_height: Some(height),
+                horizontal_align: match align {
+                    TextAlign::Start => HorizontalAlign::Left,
+                    TextAlign::Center => HorizontalAlign::Center,
+                    TextAlign::End => HorizontalAlign::Right,
+                },
             },
-            vertical_align: VerticalAlign::Middle,
-            ..LayoutSettings::default()
-        });
-        self.layout
-            .append(&[face.as_ref()], &TextStyle::new(text, size, 0));
+        );
 
         let mut ink = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
-        let mut glyphs = Vec::with_capacity(self.layout.glyphs().len());
-        for g in self.layout.glyphs() {
-            if g.width == 0 || g.height == 0 {
+        let mut glyphs = Vec::with_capacity(shaped.glyphs.len());
+        for g in &shaped.glyphs {
+            let key = GlyphKey {
+                face: face_id,
+                glyph: g.id,
+                px: size_bits,
+            };
+            let bitmap = self.glyph(&face, key, size);
+            if bitmap.width == 0 || bitmap.height == 0 {
                 continue;
             }
-            let bitmap = match self.glyphs.get_mut(&g.key) {
-                Some((bitmap, used)) => {
-                    *used = frame;
-                    bitmap.clone()
-                }
-                None => {
-                    let (metrics, coverage) = face.rasterize_config(g.key);
-                    let bitmap = Rc::new(GlyphBitmap {
-                        key: g.key,
-                        width: metrics.width as u32,
-                        height: metrics.height as u32,
-                        coverage: coverage.into_boxed_slice(),
-                    });
-                    self.glyphs.insert(g.key, (bitmap.clone(), frame));
-                    bitmap
-                }
-            };
-            let x = g.x.round() as i32;
-            let y = g.y.round() as i32;
+            let x = g.x.round() as i32 + bitmap.left;
+            let y = g.y.round() as i32 - bitmap.top;
             ink = [
                 ink[0].min(x),
                 ink[1].min(y),

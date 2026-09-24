@@ -29,7 +29,8 @@ platform-x11 = ["creamui-platform/x11", "creamui-render/platform-x11"]
 platform-windows = ["creamui-platform/windows", "creamui-render/platform-windows"]
 perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics", "creamui-devtools?/perf-metrics"]
 system-theme = ["creamui-render/system-theme", "dep:creamui-theme-loader"]
-full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray"]
+logger = ["creamui-render/logger"]
+full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray", "logger"]
 
 [dependencies]
 creamui-core = { workspace = true }

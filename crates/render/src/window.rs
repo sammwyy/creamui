@@ -345,6 +345,7 @@ impl creamui_core::Widget for BlankWidget {
 
 /// Enables verbose logging when `CUI_DEBUG=1` is set in the environment,
 /// without overriding an explicit `RUST_LOG`.
+#[cfg(feature = "logger")]
 fn init_logging() {
     if std::env::var("CUI_DEBUG").as_deref() == Ok("1") && std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "creamui_render=debug,creamui_core=debug");
@@ -2122,6 +2123,7 @@ fn run_windows(
         PANIC_HANDLER.with(|cell| *cell.borrow_mut() = Some(handler));
     }
 
+    #[cfg(feature = "logger")]
     init_logging();
     let t_run = Instant::now();
     log::debug!("creamui-render: run() start with {} window(s)", specs.len());

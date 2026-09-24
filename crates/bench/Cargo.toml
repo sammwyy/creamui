@@ -16,7 +16,7 @@ creamui_ffi = { package = "creamui-ffi", version = "0.1.1", path = "../ffi" }
 creamui-reactive = { workspace = true }
 creamui-widgets = { workspace = true }
 creamui-theme = { workspace = true }
-creamui-render = { workspace = true, features = ["perf-metrics"] }
+creamui-render = { workspace = true, features = ["perf-metrics", "logger"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }

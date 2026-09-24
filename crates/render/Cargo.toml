@@ -27,6 +27,8 @@ tray = ["dep:creamui-tray", "creamui-tray/linux-status-notifier"]
 # layouts, CPU raster, GPU upload, draw calls).
 perf-metrics = ["creamui-core/perf-metrics", "dep:tracing"]
 system-theme = ["dep:creamui-theme-loader"]
+# Installs `env_logger` so `RUST_LOG` and `CUI_DEBUG=1` print engine logs.
+logger = ["dep:env_logger"]
 
 [dependencies]
 creamui-core = { workspace = true }
@@ -40,7 +42,7 @@ tiny-skia = { workspace = true }
 fontdue = "0.9"
 bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"
-env_logger = "0.11"
+env_logger = { version = "0.11", default-features = false, optional = true }
 tracing = { version = "0.1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

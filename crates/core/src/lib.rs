@@ -18,7 +18,7 @@ mod widget;
 pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT_MAX_RECTS};
 pub use geometry::{Point, Rect, Size};
 pub use image::RgbaImage;
-pub use scene::{render_frame, Renderer, Scene};
+pub use scene::{render_frame, FocusId, Renderer, Scene};
 pub use style::{
     Background, Border, BoxShadow, ColorToken, ColorValue, EdgeValues, InteractionState,
     InteractionStyles, LengthValue, LinearGradient, PaintStyle, RadialGradient, ResolvedStyle,
@@ -26,8 +26,8 @@ pub use style::{
 };
 pub use virtualize::{visible_range, HeightIndex};
 pub use widget::{
-    BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled, TextAlign,
-    Widget, WidgetKey, WindowDragHandle,
+    keyed, BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled,
+    TextAlign, Widget, WidgetKey, WindowDragHandle,
 };
 
 /// Taffy's layout-only primitives. [`crate::Style`] is CreamUI's common

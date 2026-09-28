@@ -1,11 +1,16 @@
 use crate::geometry::{Point, Rect, Size};
 use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter, WidgetKey};
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use taffy::prelude::{AvailableSpace, Dimension, TaffyTree};
 use taffy::style::Position;
 
 type Tree = TaffyTree<MeasureFn>;
+
+/// Identity of a focusable widget in a retained renderer tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusId(taffy::NodeId);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PaintMode {
@@ -246,7 +251,7 @@ struct PaintOutputs {
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
+    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
     /// `(visible_rect, full_rect, handler)` — hit-testing uses the
     /// clip-visible portion, but the handler is called with the widget's
     /// full (unclipped) rect so e.g. a slider can divide by its own real
@@ -260,13 +265,19 @@ struct PaintOutputs {
 
 /// Context threaded through [`paint_instance`] to identify and paint the
 /// frame's currently focused widget (see [`Renderer::render_focused`]).
-/// `focused_index` refers to the same ordinal space as [`Scene::focusables`]
-/// (assigned in paint order); `counter` tracks that ordinal as it walks the
-/// tree so it can tell when it's standing on the focused widget itself.
+/// The first paint can use an ordinal before a scene exists. Later paints
+/// resolve that ordinal to a retained node identity before walking the tree.
 struct FocusContext {
-    focused_index: Option<usize>,
+    focused_id: Option<FocusId>,
+    initial_index: Option<usize>,
     caret_visible: bool,
     counter: usize,
+}
+
+impl FocusContext {
+    fn is_focused(&self, node_id: taffy::NodeId) -> bool {
+        self.focused_id == Some(FocusId(node_id)) || self.initial_index == Some(self.counter)
+    }
 }
 
 #[cfg(test)]
@@ -373,7 +384,7 @@ fn paint_instance(
             .style_state()
             .with_hovered(painter.hovered(rect))
             .with_pressed(painter.pressed(rect))
-            .with_focused(focusable && focus.focused_index == Some(focus.counter));
+            .with_focused(focusable && focus.is_focused(instance.node_id));
         let colors = painter.color_scheme();
         let resolved = instance.style.resolve(states);
         let radius = resolved.paint.corner_radius.unwrap_or(0.0);
@@ -436,7 +447,7 @@ fn paint_instance(
     if paint_self && instance.widget.focusable() {
         if let Some(on_key) = instance.widget.on_key() {
             let visible = rect.intersect(effective_clip);
-            if visible.is_some() && focus.focused_index == Some(focus.counter) {
+            if visible.is_some() && focus.is_focused(instance.node_id) {
                 instance.widget.paint_focused_overlay_with_content(
                     painter,
                     rect,
@@ -445,7 +456,8 @@ fn paint_instance(
                 );
             }
             focus.counter += 1;
-            out.focusables.push((visible, on_key));
+            out.focusables
+                .push((FocusId(instance.node_id), visible, on_key));
         }
     }
 
@@ -566,16 +578,16 @@ fn paint_instance(
 ///
 /// Regions are ordered parent-before-child, so hit-testing walks them in
 /// reverse to prefer the most specific (topmost) match, and are already
-/// clipped to whatever a scrollable ancestor actually shows. Indices into
-/// [`Scene::focusables`]/[`Scene::draggables`]/[`Scene`]'s scrollables are
-/// only stable across renders while the widget tree's shape doesn't change
-/// — see `scene::reconcile`'s docs on structural (not keyed) reconciliation.
+/// clipped to whatever a scrollable ancestor actually shows. Focus indices
+/// are positions in this scene's tab order; use [`Scene::focus_id_at`] and
+/// [`Scene::focus_index`] to carry focus between frames. Dynamic sibling
+/// lists need [`Widget::key`](crate::Widget::key) for stable identity.
 pub struct Scene {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
+    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
@@ -584,6 +596,18 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Identity at a position in this scene's tab order.
+    pub fn focus_id_at(&self, index: usize) -> Option<FocusId> {
+        self.focusables.get(index).map(|(id, _, _)| *id)
+    }
+
+    /// Current tab position of a retained focusable widget.
+    pub fn focus_index(&self, id: FocusId) -> Option<usize> {
+        self.focusables
+            .iter()
+            .position(|(candidate, _, _)| *candidate == id)
+    }
+
     /// Cycle through visible keyboard controls in layout order.
     pub fn next_focus(&self, current: Option<usize>, backwards: bool) -> Option<usize> {
         let count = self.focusables.len();
@@ -623,13 +647,13 @@ impl Scene {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (rect, _))| rect.is_some_and(|rect| rect.contains(point)))
+            .find(|(_, (_, rect, _))| rect.is_some_and(|rect| rect.contains(point)))
             .map(|(index, _)| index)
     }
 
     /// The keyboard handler at `index`, if it still exists this render.
     pub fn on_key_at(&self, index: usize) -> Option<&Rc<dyn Fn(KeyInput)>> {
-        self.focusables.get(index).map(|(_, handler)| handler)
+        self.focusables.get(index).map(|(_, _, handler)| handler)
     }
 
     /// Returns the index (into this scene's draggables) of the topmost
@@ -720,6 +744,7 @@ pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
     viewport: Size,
+    previous_focus_order: RefCell<Vec<FocusId>>,
 }
 
 impl Renderer {
@@ -728,6 +753,7 @@ impl Renderer {
             tree: TaffyTree::new(),
             root: None,
             viewport: Size::default(),
+            previous_focus_order: RefCell::new(Vec::new()),
         }
     }
 
@@ -815,11 +841,19 @@ impl Renderer {
         let clip = viewport_rect(self.viewport);
         painter.push_clip(clip);
         let mut out = PaintOutputs::default();
+        let previous_order = self.previous_focus_order.borrow();
+        let focused_id = focused_index.and_then(|index| previous_order.get(index).copied());
         let mut focus = FocusContext {
-            focused_index,
+            focused_id,
+            initial_index: if previous_order.is_empty() {
+                focused_index
+            } else {
+                None
+            },
             caret_visible,
             counter: 0,
         };
+        drop(previous_order);
         for mode in [PaintMode::Flow, PaintMode::Absolute] {
             paint_instance(
                 &self.tree,
@@ -834,6 +868,8 @@ impl Renderer {
             );
         }
         painter.pop_clip();
+        *self.previous_focus_order.borrow_mut() =
+            out.focusables.iter().map(|(id, _, _)| *id).collect();
         Some(Scene {
             hits: out.hits,
             hits_at: out.hits_at,
@@ -1429,6 +1465,48 @@ mod tests {
             0,
             "a hidden widget paints no focus overlay"
         );
+    }
+
+    #[test]
+    fn focus_follows_keyed_widget_when_siblings_change() {
+        let keys: Vec<_> = (0..3).map(|_| Rc::new(std::cell::Cell::new(0))).collect();
+        let overlays: Vec<_> = (0..3).map(|_| Rc::new(std::cell::Cell::new(0))).collect();
+        let build = |order: &[usize]| -> BoxedWidget {
+            Box::new(Root {
+                children: order
+                    .iter()
+                    .map(|&i| {
+                        crate::keyed(
+                            FocusRow {
+                                keys: keys[i].clone(),
+                                overlays: overlays[i].clone(),
+                            },
+                            i as u64,
+                        )
+                    })
+                    .collect(),
+            })
+        };
+        let mut renderer = Renderer::new();
+        let first =
+            renderer.render_focused(build(&[1, 2]), VIEWPORT, &mut NoopPainter, Some(1), true);
+        let focused = first.focus_id_at(1).unwrap();
+
+        let inserted =
+            renderer.render_focused(build(&[0, 1, 2]), VIEWPORT, &mut NoopPainter, Some(1), true);
+        assert_eq!(inserted.focus_index(focused), Some(2));
+        assert_eq!(overlays[2].get(), 2);
+        assert_eq!(overlays[1].get(), 0);
+
+        let removed =
+            renderer.render_focused(build(&[0, 2]), VIEWPORT, &mut NoopPainter, Some(2), true);
+        assert_eq!(removed.focus_index(focused), Some(1));
+        assert_eq!(overlays[2].get(), 3);
+        assert_eq!(overlays[0].get(), 0);
+
+        let gone = renderer.render_focused(build(&[0]), VIEWPORT, &mut NoopPainter, Some(1), true);
+        assert_eq!(gone.focus_index(focused), None);
+        assert_eq!(overlays[0].get(), 0);
     }
 
     #[test]

@@ -551,7 +551,18 @@ impl Pipeline {
             ..
         } = &mut *frame;
         recorder.begin(width, height, scale as f32, self.clear_color, colors);
+        let previous_focus = scene.as_ref().and_then(|scene| {
+            self.focused
+                .get()
+                .and_then(|index| scene.focus_id_at(index))
+        });
         if let Some(next) = renderer.paint(recorder, self.focused.get(), self.caret_visible.get()) {
+            if scene.is_some() {
+                self.focused
+                    .set(previous_focus.and_then(|id| next.focus_index(id)));
+            } else if self.focused.get().is_some() && next.focus_id_at(0).is_none() {
+                self.focused.set(None);
+            }
             *scene = Some(next);
         }
         if let Some(devtools) = devtools.as_ref() {
@@ -2567,6 +2578,111 @@ mod tests {
 
         assert_eq!(clicks.get(), 1);
         assert_eq!(keys.get(), "x");
+    }
+
+    struct FocusTestRoot {
+        children: Vec<BoxedWidget>,
+    }
+
+    impl creamui_core::Widget for FocusTestRoot {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style::default().into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+    }
+
+    struct FocusTestLeaf {
+        keys: Rc<Cell<usize>>,
+    }
+
+    impl creamui_core::Widget for FocusTestLeaf {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(20.0),
+                    height: creamui_core::layout::Dimension::Length(20.0),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn focusable(&self) -> bool {
+            true
+        }
+
+        fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+            let keys = self.keys.clone();
+            Some(Rc::new(move |_| keys.set(keys.get() + 1)))
+        }
+    }
+
+    #[test]
+    fn window_keeps_keyboard_focus_on_keyed_control_after_insert_and_remove() {
+        let order = Rc::new(RefCell::new(vec![1, 2]));
+        let keys: Vec<_> = (0..3).map(|_| Rc::new(Cell::new(0))).collect();
+        let mut harness = WindowEventHarness::new({
+            let order = order.clone();
+            let keys = keys.clone();
+            move |_| {
+                Box::new(FocusTestRoot {
+                    children: order
+                        .borrow()
+                        .iter()
+                        .map(|&id| {
+                            creamui_core::keyed(
+                                FocusTestLeaf {
+                                    keys: keys[id].clone(),
+                                },
+                                id as u64,
+                            )
+                        })
+                        .collect(),
+                })
+            }
+        });
+        harness.state.pipeline.focused.set(Some(1));
+        harness.state.pipeline.invalidate_paint();
+        harness.state.redraw();
+
+        *order.borrow_mut() = vec![0, 1, 2];
+        harness.state.pipeline.build();
+        harness.state.redraw();
+        assert_eq!(harness.state.pipeline.focused.get(), Some(2));
+        harness.key(KeyInput {
+            key: Key::Enter,
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(keys[2].get(), 1);
+        assert_eq!(keys[1].get(), 0);
+
+        *order.borrow_mut() = vec![0, 2];
+        harness.state.pipeline.build();
+        harness.state.redraw();
+        assert_eq!(harness.state.pipeline.focused.get(), Some(1));
+        harness.key(KeyInput {
+            key: Key::Enter,
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(keys[2].get(), 2);
+
+        *order.borrow_mut() = vec![0];
+        harness.state.pipeline.build();
+        harness.state.redraw();
+        assert_eq!(harness.state.pipeline.focused.get(), None);
+        harness.key(KeyInput {
+            key: Key::Enter,
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(keys[0].get(), 0);
     }
 
     struct DraggableWidget {

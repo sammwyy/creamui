@@ -666,3 +666,111 @@ pub trait Styled: Widget + Sized {
 }
 
 pub type BoxedWidget = Box<dyn Widget>;
+
+/// Assigns a stable sibling key to any widget without changing its layout.
+/// Use this for controls in lists whose items can be inserted or removed.
+pub fn keyed(widget: impl Widget + 'static, key: impl Into<WidgetKey>) -> BoxedWidget {
+    Box::new(KeyedWidget {
+        widget,
+        key: key.into(),
+    })
+}
+
+struct KeyedWidget<W> {
+    widget: W,
+    key: WidgetKey,
+}
+
+impl<W: Widget> Widget for KeyedWidget<W> {
+    fn style(&self) -> crate::Style {
+        self.widget.style()
+    }
+    fn style_state(&self) -> crate::StyleState {
+        self.widget.style_state()
+    }
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.widget.paint(painter, rect)
+    }
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.widget.paint_content(painter, rect, content)
+    }
+    fn legacy_node_kind(&self) -> Option<crate::runtime::NodeKind> {
+        self.widget.legacy_node_kind()
+    }
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        self.widget.children()
+    }
+    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+        self.widget.on_click()
+    }
+    fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        self.widget.on_click_at()
+    }
+    fn measure(&self) -> Option<MeasureFn> {
+        self.widget.measure()
+    }
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.widget.measure_fingerprint()
+    }
+    fn key(&self) -> Option<WidgetKey> {
+        Some(self.key.clone())
+    }
+    fn focusable(&self) -> bool {
+        self.widget.focusable()
+    }
+    fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+        self.widget.on_key()
+    }
+    fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag()
+    }
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_with_content(content)
+    }
+    fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_start()
+    }
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_start_with_content(content)
+    }
+    fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
+        self.widget.on_drag_end()
+    }
+    fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.widget.on_scroll()
+    }
+    fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
+        self.widget.on_scroll_bounded()
+    }
+    fn on_content_overflow(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.widget.on_content_overflow()
+    }
+    fn clips_children(&self) -> bool {
+        self.widget.clips_children()
+    }
+    fn clip_corner_radius(&self) -> f32 {
+        self.widget.clip_corner_radius()
+    }
+    fn scroll_offset(&self) -> Point {
+        self.widget.scroll_offset()
+    }
+    fn cursor_icon(&self) -> Option<CursorIcon> {
+        self.widget.cursor_icon()
+    }
+    fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
+        self.widget.on_hover()
+    }
+    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, visible: bool) {
+        self.widget.paint_focused_overlay(painter, rect, visible)
+    }
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        visible: bool,
+    ) {
+        self.widget
+            .paint_focused_overlay_with_content(painter, rect, content, visible)
+    }
+}

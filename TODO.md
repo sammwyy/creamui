@@ -101,6 +101,3 @@ Current limitations and work still to do. Implemented changes belong in
 - Give the custom Wayland runtime a refresh-rate report or pacing through
   frame callbacks. It currently exposes neither, so CPU animations use the
   default 60 Hz timer.
-- Keep keyboard focus attached to a widget when another focusable control
-  is inserted or removed before it. The legacy tree stores focus as an
-  index into `Scene::focusables`.

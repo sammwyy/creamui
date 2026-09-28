@@ -661,6 +661,28 @@ mod tests {
     }
 
     #[test]
+    fn explicit_dimensions_override_aspect_ratio_and_auto_restores_it() {
+        let mut runtime = Runtime::new();
+        let root = full_size_root(&mut runtime);
+        runtime.set_root(Some(root));
+        for (height, expected) in [
+            (crate::LengthValue::Px(40.0), 40.0),
+            (crate::LengthValue::Auto, 80.0),
+        ] {
+            runtime.transaction().apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: crate::Style::new()
+                    .width(160.0)
+                    .height(height)
+                    .aspect_ratio(2.0)
+                    .layout,
+            });
+            runtime.compute_layout(size(640.0, 480.0));
+            assert_eq!(runtime.get(root).unwrap().layout.rect.height, expected);
+        }
+    }
+
+    #[test]
     fn creating_the_root_produces_damage_on_first_compute() {
         let mut runtime = Runtime::new();
         let root = full_size_root(&mut runtime);

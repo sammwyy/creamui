@@ -218,6 +218,7 @@ fn viewport_rect(viewport: Size) -> Rect {
 }
 
 fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
+    style = crate::style::normalize_aspect_ratio(style);
     if style.min_size.width == Dimension::Auto {
         style.min_size.width = Dimension::Length(0.0);
     }

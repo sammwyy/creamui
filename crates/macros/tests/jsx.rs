@@ -11,6 +11,53 @@ use creamui_widgets::layout::{Align, Justify, Track, Wrap};
 #[derive(Default)]
 struct TextPainter(Vec<String>);
 
+#[derive(Default)]
+struct BoundsPainter(Vec<Rect>);
+
+impl Painter for BoundsPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.0.push(rect);
+    }
+    fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
+    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
+}
+
+fn painted_bounds(widget: impl Widget + 'static) -> Vec<Rect> {
+    let mut painter = BoundsPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 640.0,
+            height: 480.0,
+        },
+        &mut painter,
+    );
+    painter.0
+}
+
+#[test]
+fn aspect_ratio_sizes_native_and_jsx_widgets() {
+    use creamui_core::Styled;
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(CommonStyle::new())
+        .width(160.0)
+        .aspect_ratio(16.0 / 9.0)
+        .background(Color::rgb(1, 2, 3));
+    let jsx = jsx! {
+        <RawView width={160.0} aspect_ratio={16.0 / 9.0} background={Color::rgb(1, 2, 3)} />
+    };
+    let bounds = painted_bounds(native);
+    assert_eq!(bounds, painted_bounds(jsx));
+    assert_eq!(bounds[0].width, 160.0);
+    assert_eq!(bounds[0].height, 90.0);
+
+    let explicit = jsx! {
+        <RawView width={160.0} height={40.0} aspect_ratio={2.0} background={Color::rgb(1, 2, 3)} />
+    };
+    assert_eq!(painted_bounds(explicit)[0].height, 40.0);
+}
+
 #[component]
 fn CounterLabel(value: i32) -> BoxedWidget {
     Box::new(jsx! { <Text>{format!("Custom: {value}")}</Text> })

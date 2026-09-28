@@ -216,7 +216,10 @@ impl<'a> RuntimeTransaction<'a> {
                     if let Some(taffy_node) =
                         self.runtime.nodes.get(node).map(|n| n.layout.taffy_node)
                     {
-                        let _ = self.runtime.taffy.set_style(taffy_node, style);
+                        let _ = self
+                            .runtime
+                            .taffy
+                            .set_style(taffy_node, crate::style::normalize_aspect_ratio(style));
                         #[cfg(feature = "perf-metrics")]
                         crate::metrics::record(|m| m.taffy_style_writes += 1);
                     }

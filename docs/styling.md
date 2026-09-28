@@ -16,3 +16,9 @@ let card = Style::new()
 There is intentionally no parser for stylesheets, selectors, specificity, cascade, inheritance, media queries, or CSS shorthands. For example, `padding: "8px 12px"` is not a supported declaration; use `.padding(...)` or the directional properties instead. Reusable styles are ordinary Rust values, and later builders or JSX inline props override the earlier declaration.
 
 Use `creamui_core::layout::Style` directly only for advanced Taffy configuration that has no common `StyleProp` yet.
+
+`aspect-ratio` accepts a positive number, a ratio such as `"16 / 9"`, or `"auto"`.
+It supplies the missing dimension when width or height is automatic; explicit
+width and height take precedence. Native styles and widgets support
+`.aspect_ratio(16.0 / 9.0)` (or `None` to clear it), and JSX accepts
+`<RawView width={320.0} aspect_ratio={16.0 / 9.0} />`.

@@ -534,6 +534,7 @@ macro_rules! creamui_style_property_schema {
             MinHeight(crate::LengthValue) => "min-height" |target, value| { target.layout.min_size.height = value.dimension(); } => min_height(value: impl Into<crate::LengthValue>) |style| { style.layout.min_size.height = value.into().dimension(); };
             MaxWidth(crate::LengthValue) => "max-width" |target, value| { target.layout.max_size.width = value.dimension(); } => max_width(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.width = value.into().dimension(); };
             MaxHeight(crate::LengthValue) => "max-height" |target, value| { target.layout.max_size.height = value.dimension(); } => max_height(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.height = value.into().dimension(); };
+            AspectRatio(Option<f32>) => "aspect-ratio" |target, value| { target.layout.aspect_ratio = value; } => aspect_ratio(value: impl Into<Option<f32>>) |style| { style.layout.aspect_ratio = value.into(); };
             Display(crate::layout::Display) => "display" |target, value| { target.layout.display = value; } => display(value: crate::layout::Display) |style| { style.layout.display = value; };
             FlexDirection(crate::layout::FlexDirection) => "flex-direction" |target, value| { target.layout.flex_direction = value; } => flex_direction(value: crate::layout::FlexDirection) |style| { style.layout.flex_direction = value; };
             FlexWrap(crate::layout::FlexWrap) => "flex-wrap" |target, value| { target.layout.flex_wrap = value; } => flex_wrap(value: crate::layout::FlexWrap) |style| { style.layout.flex_wrap = value; };
@@ -763,6 +764,15 @@ impl Style {
         }
         ResolvedStyle { paint, typography }
     }
+}
+
+pub(crate) fn normalize_aspect_ratio(mut style: crate::layout::Style) -> crate::layout::Style {
+    if style.size.width != crate::layout::Dimension::Auto
+        && style.size.height != crate::layout::Dimension::Auto
+    {
+        style.aspect_ratio = None;
+    }
+    style
 }
 
 impl From<crate::layout::Style> for Style {
@@ -1015,6 +1025,27 @@ impl StyleProp {
             "min-height" => Ok(Self::MinHeight(value.parse()?)),
             "max-width" => Ok(Self::MaxWidth(value.parse()?)),
             "max-height" => Ok(Self::MaxHeight(value.parse()?)),
+            "aspect-ratio" => {
+                let value = value.trim();
+                if value == "auto" {
+                    return Ok(Self::AspectRatio(None));
+                }
+                let positive = |part: &str| {
+                    part.trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|number| number.is_finite() && *number > 0.0)
+                        .ok_or_else(|| StyleParseError(format!("invalid aspect-ratio `{value}`")))
+                };
+                let ratio = match value.split_once('/') {
+                    Some((width, height)) => positive(width)? / positive(height)?,
+                    None => positive(value)?,
+                };
+                if !ratio.is_finite() || ratio <= 0.0 {
+                    return Err(StyleParseError(format!("invalid aspect-ratio `{value}`")));
+                }
+                Ok(Self::AspectRatio(Some(ratio)))
+            }
             "display" => Ok(Self::Display(match value.trim() {
                 "block" => crate::layout::Display::Block,
                 "flex" => crate::layout::Display::Flex,
@@ -1114,6 +1145,32 @@ impl Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aspect_ratio_parses_ratios_numbers_and_auto() {
+        for value in ["16 / 9", "16/9", " 1.7777778 "] {
+            let style = Style::new().property(StyleProp::parse("aspect-ratio", value).unwrap());
+            assert_eq!(style.layout.aspect_ratio, Some(16.0 / 9.0));
+        }
+        let style = Style::new()
+            .aspect_ratio(2.0)
+            .property(StyleProp::parse("aspect-ratio", "auto").unwrap());
+        assert_eq!(style.layout.aspect_ratio, None);
+        for value in [
+            "",
+            "0",
+            "-1",
+            "1/0",
+            "1/-2",
+            "1/2/3",
+            "NaN",
+            "inf",
+            "2px",
+            "1e38/1e-38",
+        ] {
+            assert!(StyleProp::parse("aspect-ratio", value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn pressed_cascades_over_hover_and_base_without_touching_layout() {

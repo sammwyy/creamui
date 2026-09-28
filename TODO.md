@@ -5,6 +5,9 @@
 - CPU linear gradients interpolate unpremultiplied colors in tiny-skia,
   while GPU linear gradients interpolate premultiplied colors. Align their
   interpolation when stop alpha values differ, as radial gradients do.
+- Raw text inputs and text areas still paint and position their caret using
+  fixed internal padding. Their text and caret geometry should use resolved
+  style padding and borders when styled through JSX or the common builders.
 
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old

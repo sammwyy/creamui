@@ -83,3 +83,7 @@ interpolation. Each gradient records a single quad; translucent CPU rendering
 only visits the affected pixels. Custom `Painter` implementations can override
 `fill_radial_gradient`; its default fallback paints the average color, as for
 linear gradients.
+
+The [JSX styling gallery](../examples/jsx-styles/README.md) demonstrates these
+properties together. The `universal-styles` example shows the native builder
+API.

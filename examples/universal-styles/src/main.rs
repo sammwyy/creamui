@@ -1,11 +1,15 @@
 //! Reusable and inline common styles on arbitrary widgets. Run with
 //! `cargo run -p universal-styles`.
 
-use creamui_core::layout::{AlignItems, Display, FlexDirection, JustifyContent, Style as Layout};
-use creamui_core::{BoxedWidget, ColorToken, Size, StateStyle, Style, Styled, TextAlign};
+use creamui_core::layout::{
+    AlignItems, BoxSizing, Display, FlexDirection, JustifyContent, Style as Layout,
+};
+use creamui_core::{
+    BoxShadow, BoxedWidget, ColorToken, Size, StateStyle, Style, Styled, TextAlign,
+};
 use creamui_reactive::Signal;
 use creamui_render::{run, WindowOptions};
-use creamui_theme::Theme;
+use creamui_theme::{Color, Theme};
 use creamui_widgets::{RawButton, RawText, RawView};
 
 fn action_style() -> Style {
@@ -37,7 +41,7 @@ fn main() {
         WindowOptions {
             title: "CreamUI — Universal styles".into(),
             width: 520,
-            height: 340,
+            height: 440,
             theme: Theme::dark(),
             ..Default::default()
         },
@@ -62,6 +66,28 @@ fn main() {
             .height(32.0)
             .background(ColorToken::SurfaceHover)
             .corner_radius(6.0);
+            let card = RawView::new(
+                Style::new()
+                    .width(220.0)
+                    .height(72.0)
+                    .box_sizing(BoxSizing::BorderBox)
+                    .padding("12px 16px")
+                    .background("linear-gradient(135deg, #243c63, #172439)")
+                    .border(ColorToken::Accent, 2.0)
+                    .corner_radius(10.0)
+                    .box_shadow(BoxShadow::new(
+                        0.0,
+                        8.0,
+                        14.0,
+                        0.0,
+                        Color::rgba(0, 0, 0, 90),
+                    )),
+            )
+            .child(Box::new(RawText::new(
+                "Native style",
+                Theme::dark().text_primary,
+                15.0,
+            )));
 
             Box::new(
                 RawView::new(Layout {
@@ -77,6 +103,7 @@ fn main() {
                 })
                 .with_children(vec![
                     Box::new(title),
+                    Box::new(card),
                     action("Increment", &shared, move || increment.update(|n| *n += 1)),
                     action("Reset", &shared, move || reset.set(0)),
                     Box::new(count),

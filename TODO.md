@@ -7,10 +7,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Extend radial backgrounds beyond two-stop, farthest-corner circles to
   ellipses, explicit radii, additional color stops, and repeating gradients.
-- Align CPU and GPU linear-gradient interpolation when stop alpha values
-  differ. Tiny-skia interpolates unpremultiplied colors for linear gradients;
-  the GPU interpolates premultiplied colors. Radial gradients already have a
-  CPU path that matches the GPU.
 - Make `RawTextInput` and `RawTextArea` use resolved style padding and borders
   for text, selection, and caret geometry. They still use fixed internal
   padding of 8 and 12 pixels, respectively.

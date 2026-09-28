@@ -1638,6 +1638,39 @@ mod tests {
     }
 
     #[test]
+    fn linear_gradients_match_cpu_with_alpha_scale_and_scroll() {
+        let Some(mut gpu) = headless() else { return };
+        for end_alpha in [255, 40, 0] {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(96, 64, 2.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+            recorder.push_scroll_layer(rect(4.0, 4.0, 40.0, 24.0), 0.0, Point { x: 0.0, y: 5.0 });
+            recorder.fill_linear_gradient(
+                rect(4.0, -1.0, 40.0, 36.0),
+                Color::rgb(255, 30, 0),
+                Color::rgba(0, 60, 255, end_alpha),
+                90.0,
+                0.0,
+            );
+            recorder.pop_clip();
+            let list = recorder.finish();
+            let gpu_pixels = gpu.render_to_pixels(&list);
+            let mut cpu = Rasterizer::new(list.width, list.height);
+            cpu.render(&list, &Damage::Full);
+            let worst = gpu_pixels
+                .iter()
+                .zip(cpu.pixmap().data())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(
+                worst <= 3,
+                "alpha={end_alpha}: worst channel difference {worst} on {}",
+                gpu.adapter_name()
+            );
+        }
+    }
+
+    #[test]
     fn scroll_layers_match_the_cpu_rasterizer() {
         let Some(mut gpu) = headless() else { return };
         let mut r = SceneRecorder::new();

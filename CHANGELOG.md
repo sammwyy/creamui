@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- CPU linear gradients with different stop alpha values now interpolate
+  premultiplied colors, matching the GPU through transparent stops.
 - Animations follow the display: after a frame reaches a presenter or
   platform that holds the next one until the display refreshes (a GPU
   surface, or winit on Wayland) the next frame is requested right away;

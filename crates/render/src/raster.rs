@@ -481,11 +481,11 @@ fn push_rounded_rect(pb: &mut PathBuilder, b: Bounds, radius: f32) {
 }
 
 fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Option<&Mask>) {
-    let translucent_radial = quad
+    let translucent_gradient = quad
         .gradient
-        .filter(|gradient| gradient.radial && gradient.start_color.a != gradient.end_color.a);
-    if let Some(gradient) = translucent_radial {
-        draw_translucent_radial(target, quad, gradient, transform, mask);
+        .filter(|gradient| gradient.start_color.a != gradient.end_color.a);
+    if let Some(gradient) = translucent_gradient {
+        draw_translucent_gradient(target, quad, gradient, transform, mask);
     } else if quad.background.a > 0 || quad.gradient.is_some() {
         let paint = quad_paint(quad);
         if quad.radius <= 0.01 {
@@ -521,7 +521,7 @@ fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Op
     }
 }
 
-fn draw_translucent_radial(
+fn draw_translucent_gradient(
     target: &mut PixmapMut,
     quad: &Quad,
     gradient: QuadGradient,
@@ -544,13 +544,15 @@ fn draw_translucent_radial(
         target.height() as f32,
     ));
     let (x0, y0, x1, y1) = pixel_span(visible);
-    let center = [
+    let start_point = [
         gradient.start[0] + transform.tx,
         gradient.start[1] + transform.ty,
     ];
-    let radius = (gradient.end[0] - gradient.start[0])
-        .hypot(gradient.end[1] - gradient.start[1])
-        .max(1e-6);
+    let direction = [
+        gradient.end[0] - gradient.start[0],
+        gradient.end[1] - gradient.start[1],
+    ];
+    let length_squared = (direction[0] * direction[0] + direction[1] * direction[1]).max(1e-6);
     let premultiply = |color: Color| {
         let alpha = color.a as f32 / 255.0;
         [
@@ -573,8 +575,16 @@ fn draw_translucent_radial(
             if coverage == 0.0 {
                 continue;
             }
-            let t = (x as f32 + 0.5 - center[0]).hypot(y as f32 + 0.5 - center[1]) / radius;
-            let t = t.min(1.0);
+            let offset = [
+                x as f32 + 0.5 - start_point[0],
+                y as f32 + 0.5 - start_point[1],
+            ];
+            let t = if gradient.radial {
+                offset[0].hypot(offset[1]) / length_squared.sqrt()
+            } else {
+                (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
+            }
+            .clamp(0.0, 1.0);
             let alpha = (start[3] + (end[3] - start[3]) * t) * coverage / 255.0;
             let pixel = &mut pixels[index * 4..index * 4 + 4];
             for channel in 0..4 {
@@ -791,6 +801,23 @@ mod tests {
         raster.render(&recorder.finish(), &Damage::Full);
         assert_eq!(rgba(&raster, 10, 15), [128, 0, 0, 128]);
         assert_eq!(rgba(&raster, 30, 15), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn linear_gradient_transparency_uses_premultiplied_colors() {
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(40, 30, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+        recorder.fill_linear_gradient(
+            rect(0.0, 0.0, 40.0, 30.0),
+            Color::rgb(255, 0, 0),
+            Color::rgba(0, 0, 255, 0),
+            90.0,
+            0.0,
+        );
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&recorder.finish(), &Damage::Full);
+        assert_eq!(rgba(&raster, 19, 15), [131, 0, 0, 131]);
+        assert_eq!(rgba(&raster, 39, 15), [3, 0, 0, 3]);
     }
 
     #[test]

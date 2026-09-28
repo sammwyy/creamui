@@ -1,7 +1,8 @@
 use crate::ImageData;
 use creamui_core::runtime::{ImageFit, Mutation, RuntimeNodeId};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,6 +16,12 @@ pub enum LoadOutcome {
 pub struct ResourceReady {
     pub id: ResourceId,
     pub outcome: LoadOutcome,
+}
+
+enum LoadJob {
+    Bytes(ResourceId, Vec<u8>),
+    Path(ResourceId, PathBuf),
+    Stop,
 }
 
 impl ResourceReady {
@@ -38,44 +45,68 @@ impl ResourceReady {
 /// runtime mutation and texture upload is left to the caller.
 pub struct BackgroundImageLoader {
     next_id: u64,
-    sender: Sender<ResourceReady>,
+    jobs: SyncSender<LoadJob>,
     receiver: Receiver<ResourceReady>,
+    workers: Vec<JoinHandle<()>>,
 }
 
 impl BackgroundImageLoader {
     pub fn new() -> Self {
+        const QUEUE_CAPACITY: usize = 32;
+        let (jobs, job_receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         let (sender, receiver) = mpsc::channel();
+        let job_receiver = std::sync::Arc::new(std::sync::Mutex::new(job_receiver));
+        let worker_count = std::thread::available_parallelism()
+            .map_or(2, |parallelism| parallelism.get().clamp(1, 4));
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let jobs = job_receiver.clone();
+            let sender = sender.clone();
+            workers.push(std::thread::spawn(move || loop {
+                let job = jobs
+                    .lock()
+                    .expect("background image job queue lock poisoned")
+                    .recv();
+                let Ok(job) = job else { break };
+                let (id, outcome) = match job {
+                    LoadJob::Bytes(id, bytes) => (
+                        id,
+                        ImageData::from_bytes(&bytes)
+                            .map(LoadOutcome::Ready)
+                            .unwrap_or_else(|err| LoadOutcome::Failed(err.to_string())),
+                    ),
+                    LoadJob::Path(id, path) => (
+                        id,
+                        ImageData::from_path(&path)
+                            .map(LoadOutcome::Ready)
+                            .unwrap_or_else(|err| LoadOutcome::Failed(err.to_string())),
+                    ),
+                    LoadJob::Stop => break,
+                };
+                let _ = sender.send(ResourceReady { id, outcome });
+            }));
+        }
         BackgroundImageLoader {
             next_id: 0,
-            sender,
+            jobs,
             receiver,
+            workers,
         }
     }
 
     pub fn load_bytes(&mut self, bytes: Vec<u8>) -> ResourceId {
         let id = self.issue_id();
-        let sender = self.sender.clone();
-        std::thread::spawn(move || {
-            let outcome = match ImageData::from_bytes(&bytes) {
-                Ok(data) => LoadOutcome::Ready(data),
-                Err(err) => LoadOutcome::Failed(err.to_string()),
-            };
-            let _ = sender.send(ResourceReady { id, outcome });
-        });
+        self.jobs
+            .send(LoadJob::Bytes(id, bytes))
+            .expect("background image workers have stopped");
         id
     }
 
     pub fn load_path(&mut self, path: impl Into<PathBuf>) -> ResourceId {
         let id = self.issue_id();
-        let sender = self.sender.clone();
-        let path = path.into();
-        std::thread::spawn(move || {
-            let outcome = match ImageData::from_path(&path) {
-                Ok(data) => LoadOutcome::Ready(data),
-                Err(err) => LoadOutcome::Failed(err.to_string()),
-            };
-            let _ = sender.send(ResourceReady { id, outcome });
-        });
+        self.jobs
+            .send(LoadJob::Path(id, path.into()))
+            .expect("background image workers have stopped");
         id
     }
 
@@ -92,6 +123,17 @@ impl BackgroundImageLoader {
         let id = ResourceId(self.next_id);
         self.next_id += 1;
         id
+    }
+}
+
+impl Drop for BackgroundImageLoader {
+    fn drop(&mut self) {
+        for _ in &self.workers {
+            let _ = self.jobs.send(LoadJob::Stop);
+        }
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 

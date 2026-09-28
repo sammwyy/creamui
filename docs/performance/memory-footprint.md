@@ -87,7 +87,31 @@ the tables show the median, in kB.
 - **-76% anonymous memory** without images (9.1 MB → 2.2 MB).
 - With the image, the saving on fonts is offset by the 3.9 MB of encoded
   bytes `ImageData` now keeps; the CPU backend never drops decoded pixels
-  (see `TODO.md`).
+  (see the current measurement below).
+
+### CPU image retention decision (2026-09-28)
+
+Rebuilt `memory_footprint` in release mode on the current tree and ran each
+CPU scenario three times under Xvfb using the same
+`/usr/share/wallpapers/Flow/contents/images/5120x2880.jpg`. The table shows
+median `RssAnon` from `/proc/self/status`, in KiB:
+
+| CPU windows | Without image | With image | Difference |
+|---|---:|---:|---:|
+| 1 | 2,356 | 66,048 | 63,692 |
+| 6 | 7,056 | 69,404 | 62,348 |
+
+The JPEG is 3,907,925 bytes (3,816 KiB); its decoded 5120×2880 RGBA
+pixels are 58,982,400 bytes (57,600 KiB). The retained encoded copy adds
+6.6% over the decoded pixel size per unique image. Six windows share the
+same `ImageData`, so the image memory does not grow sixfold. Process memory
+also includes decoder and allocator effects, so the table's differences
+are not an isolated measurement of the encoded allocation.
+
+Keep the encoded bytes for now. `ImageData` can be shared by CPU and GPU
+windows; the GPU upload path discards decoded pixels and needs the bytes to
+reload them. The measured 3.8 MiB per unique image does not justify a
+backend-specific image representation or changing that sharing contract.
 
 ### CPU cost
 

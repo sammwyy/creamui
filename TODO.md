@@ -12,8 +12,6 @@ Current limitations and work still to do. Implemented changes belong in
   on each call.
 - Add bidirectional reordering for right-to-left text and fallback to other
   installed faces when the selected face lacks a glyph.
-- Measure the cost of keeping both encoded bytes and decoded pixels for
-  `ImageData` on CPU windows. GPU uploads can discard decoded pixels.
 
 ## Persistent runtime
 

@@ -22,6 +22,54 @@ pub struct CColor {
     pub a: u8,
 }
 
+/// The color tokens consumed when a runtime paint fragment is rebuilt.
+///
+/// This intentionally contains only colors: unlike [`CTheme`], it does not
+/// include typography, spacing, or corner-radius tokens.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CColorScheme {
+    pub surface: CColor,
+    pub surface_elevated: CColor,
+    pub surface_hover: CColor,
+    pub accent: CColor,
+    pub accent_hover: CColor,
+    pub accent_pressed: CColor,
+    pub selection_background: CColor,
+    pub selection_text: CColor,
+    pub text_primary: CColor,
+    pub text_secondary: CColor,
+    pub text_disabled: CColor,
+    pub border: CColor,
+    pub border_strong: CColor,
+    pub danger: CColor,
+    pub warning: CColor,
+    pub success: CColor,
+}
+
+impl CColorScheme {
+    pub const fn from_theme(theme: CTheme) -> Self {
+        Self {
+            surface: theme.surface,
+            surface_elevated: theme.surface_elevated,
+            surface_hover: theme.surface_hover,
+            accent: theme.accent,
+            accent_hover: theme.accent_hover,
+            accent_pressed: theme.accent_pressed,
+            selection_background: theme.selection_background,
+            selection_text: theme.selection_text,
+            text_primary: theme.text_primary,
+            text_secondary: theme.text_secondary,
+            text_disabled: theme.text_disabled,
+            border: theme.border,
+            border_strong: theme.border_strong,
+            danger: theme.danger,
+            warning: theme.warning,
+            success: theme.success,
+        }
+    }
+}
+
 impl CColor {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         CColor { r, g, b, a: 255 }
@@ -311,6 +359,56 @@ pub const CUI_NODE_NONE: CNode = u64::MAX;
 
 pub const CUI_NODE_KIND_CONTAINER: c_int = 0;
 pub const CUI_NODE_KIND_TEXT: c_int = 1;
+
+pub const CUI_PAINT_PUSH_CLIP: c_int = 0;
+pub const CUI_PAINT_PUSH_ROUNDED_CLIP: c_int = 1;
+pub const CUI_PAINT_POP_CLIP: c_int = 2;
+pub const CUI_PAINT_PUSH_TRANSFORM: c_int = 3;
+pub const CUI_PAINT_POP_TRANSFORM: c_int = 4;
+pub const CUI_PAINT_QUAD: c_int = 5;
+pub const CUI_PAINT_LINEAR_GRADIENT: c_int = 6;
+pub const CUI_PAINT_RADIAL_GRADIENT: c_int = 7;
+pub const CUI_PAINT_BORDER: c_int = 8;
+pub const CUI_PAINT_TEXT: c_int = 9;
+pub const CUI_PAINT_IMAGE: c_int = 10;
+
+/// One retained paint operation. Fields not used by `kind` are zeroed.
+/// `text` points into the runtime and remains valid until the node is mutated
+/// or removed; copy it if it must outlive the next runtime operation.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CPaintOp {
+    pub kind: c_int,
+    pub rect: CRect,
+    pub color: CColor,
+    pub color2: CColor,
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+    pub angle_degrees: f32,
+    pub text: *const c_char,
+}
+
+impl Default for CPaintOp {
+    fn default() -> Self {
+        CPaintOp {
+            kind: -1,
+            rect: CRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            color: CColor::rgba(0, 0, 0, 0),
+            color2: CColor::rgba(0, 0, 0, 0),
+            x: 0.0,
+            y: 0.0,
+            radius: 0.0,
+            angle_degrees: 0.0,
+            text: std::ptr::null(),
+        }
+    }
+}
 
 /// Window creation options. `title` must be a valid NUL-terminated UTF-8
 /// string for the duration of the call it's passed to.

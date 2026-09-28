@@ -4,9 +4,11 @@
 //! [`crate::SignalI32`] and friends, [`crate::run`]/[`crate::AppBuilder`])
 //! is a safe wrapper around a resolved, verified-present function pointer.
 
-use creamui_abi::{CColor, CStyle, CTheme, CWindowOptions};
+use creamui_abi::{
+    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CWindowOptions, CUI_NODE_NONE,
+};
 use libloading::{Library, Symbol};
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
 use std::fmt;
 use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
@@ -88,6 +90,25 @@ pub(crate) type AppBuilderAddWindowFn = unsafe extern "C" fn(
     *mut c_void,
 );
 pub(crate) type AppBuilderRunFn = unsafe extern "C" fn(*mut c_void);
+pub(crate) type CuiRuntimeNewFn = unsafe extern "C" fn() -> *mut c_void;
+pub(crate) type CuiRuntimeFreeFn = unsafe extern "C" fn(*mut c_void);
+pub(crate) type CuiCreateNodeFn = unsafe extern "C" fn(*mut c_void, c_int) -> CNode;
+pub(crate) type CuiSetRootFn = unsafe extern "C" fn(*mut c_void, CNode);
+pub(crate) type CuiInsertChildFn = unsafe extern "C" fn(*mut c_void, CNode, CNode, CNode);
+pub(crate) type CuiRemoveSubtreeFn = unsafe extern "C" fn(*mut c_void, CNode);
+pub(crate) type CuiSetTextFn = unsafe extern "C" fn(*mut c_void, CNode, *const c_char);
+pub(crate) type CuiComputeLayoutFn = unsafe extern "C" fn(*mut c_void, f32, f32);
+pub(crate) type CuiGetRectFn = unsafe extern "C" fn(*const c_void, CNode) -> CRect;
+pub(crate) type CuiRebuildPaintFn = unsafe extern "C" fn(*mut c_void, CColorScheme);
+pub(crate) type CuiPaintOpCountFn = unsafe extern "C" fn(*const c_void, CNode) -> usize;
+pub(crate) type CuiGetPaintOpFn = unsafe extern "C" fn(*const c_void, CNode, usize) -> CPaintOp;
+pub(crate) type CuiSetClickCallbackFn = unsafe extern "C" fn(
+    *mut c_void,
+    CNode,
+    Option<extern "C" fn(CNode, *mut c_void)>,
+    *mut c_void,
+);
+pub(crate) type CuiDispatchClickFn = unsafe extern "C" fn(*const c_void, CNode) -> bool;
 
 /// Every resolved symbol this crate needs. Private — callers only ever see
 /// [`Runtime`]'s safe methods and the free functions in [`crate::widget`]/
@@ -133,6 +154,20 @@ pub(crate) struct Symbols {
     pub(crate) app_builder_new: AppBuilderNewFn,
     pub(crate) app_builder_add_window: AppBuilderAddWindowFn,
     pub(crate) app_builder_run: AppBuilderRunFn,
+    pub(crate) cui_runtime_new: CuiRuntimeNewFn,
+    pub(crate) cui_runtime_free: CuiRuntimeFreeFn,
+    pub(crate) cui_create_node: CuiCreateNodeFn,
+    pub(crate) cui_set_root: CuiSetRootFn,
+    pub(crate) cui_insert_child: CuiInsertChildFn,
+    pub(crate) cui_remove_subtree: CuiRemoveSubtreeFn,
+    pub(crate) cui_set_text: CuiSetTextFn,
+    pub(crate) cui_compute_layout: CuiComputeLayoutFn,
+    pub(crate) cui_get_rect: CuiGetRectFn,
+    pub(crate) cui_rebuild_paint: CuiRebuildPaintFn,
+    pub(crate) cui_paint_op_count: CuiPaintOpCountFn,
+    pub(crate) cui_get_paint_op: CuiGetPaintOpFn,
+    pub(crate) cui_set_click_callback: CuiSetClickCallbackFn,
+    pub(crate) cui_dispatch_click: CuiDispatchClickFn,
 }
 
 /// Failure to load the `cdylib` or resolve one of its expected symbols.
@@ -213,6 +248,20 @@ impl Symbols {
                 app_builder_new: resolve!(lib, "creamui_app_builder_new"),
                 app_builder_add_window: resolve!(lib, "creamui_app_builder_add_window"),
                 app_builder_run: resolve!(lib, "creamui_app_builder_run"),
+                cui_runtime_new: resolve!(lib, "cui_runtime_new"),
+                cui_runtime_free: resolve!(lib, "cui_runtime_free"),
+                cui_create_node: resolve!(lib, "cui_create_node"),
+                cui_set_root: resolve!(lib, "cui_set_root"),
+                cui_insert_child: resolve!(lib, "cui_insert_child"),
+                cui_remove_subtree: resolve!(lib, "cui_remove_subtree"),
+                cui_set_text: resolve!(lib, "cui_set_text"),
+                cui_compute_layout: resolve!(lib, "cui_compute_layout"),
+                cui_get_rect: resolve!(lib, "cui_get_rect"),
+                cui_rebuild_paint: resolve!(lib, "cui_rebuild_paint"),
+                cui_paint_op_count: resolve!(lib, "cui_paint_op_count"),
+                cui_get_paint_op: resolve!(lib, "cui_get_paint_op"),
+                cui_set_click_callback: resolve!(lib, "cui_set_click_callback"),
+                cui_dispatch_click: resolve!(lib, "cui_dispatch_click"),
             })
         }
     }
@@ -289,5 +338,87 @@ impl Runtime {
     /// Returns the bundled default light theme's tokens.
     pub fn theme_light(&self) -> CTheme {
         unsafe { (self.sym.theme_light)() }
+    }
+}
+
+/// Safe owner of an ABI-v2 retained runtime tree. The tree lives in the
+/// loaded `creamui` library and is freed before that library handle drops.
+pub struct RuntimeTree {
+    rt: Rc<Runtime>,
+    ptr: *mut c_void,
+}
+
+impl RuntimeTree {
+    pub fn new(rt: &Rc<Runtime>) -> Self {
+        let ptr = unsafe { (rt.sym.cui_runtime_new)() };
+        assert!(!ptr.is_null(), "cui_runtime_new returned null");
+        RuntimeTree {
+            rt: rt.clone(),
+            ptr,
+        }
+    }
+
+    pub fn create_node(&self, kind: c_int) -> CNode {
+        unsafe { (self.rt.sym.cui_create_node)(self.ptr, kind) }
+    }
+
+    pub fn set_root(&mut self, node: Option<CNode>) {
+        unsafe { (self.rt.sym.cui_set_root)(self.ptr, node.unwrap_or(CUI_NODE_NONE)) };
+    }
+
+    pub fn insert_child(&mut self, parent: CNode, child: CNode, before: Option<CNode>) {
+        unsafe {
+            (self.rt.sym.cui_insert_child)(self.ptr, parent, child, before.unwrap_or(CUI_NODE_NONE))
+        };
+    }
+
+    pub fn remove_subtree(&mut self, node: CNode) {
+        unsafe { (self.rt.sym.cui_remove_subtree)(self.ptr, node) };
+    }
+
+    pub fn set_text(&mut self, node: CNode, text: &str) {
+        let text = CString::new(text).expect("runtime text cannot contain NUL");
+        unsafe { (self.rt.sym.cui_set_text)(self.ptr, node, text.as_ptr()) };
+    }
+
+    pub fn compute_layout(&mut self, width: f32, height: f32) {
+        unsafe { (self.rt.sym.cui_compute_layout)(self.ptr, width, height) };
+    }
+
+    pub fn rect(&self, node: CNode) -> CRect {
+        unsafe { (self.rt.sym.cui_get_rect)(self.ptr.cast_const(), node) }
+    }
+
+    pub fn rebuild_paint(&mut self, colors: CColorScheme) {
+        unsafe { (self.rt.sym.cui_rebuild_paint)(self.ptr, colors) };
+    }
+
+    pub fn paint_op_count(&self, node: CNode) -> usize {
+        unsafe { (self.rt.sym.cui_paint_op_count)(self.ptr.cast_const(), node) }
+    }
+
+    pub fn paint_op(&self, node: CNode, index: usize) -> CPaintOp {
+        unsafe { (self.rt.sym.cui_get_paint_op)(self.ptr.cast_const(), node, index) }
+    }
+
+    /// Installs a raw C callback. The caller owns the callback userdata and
+    /// must keep it valid until it clears the callback or drops this tree.
+    pub unsafe fn set_click_callback(
+        &mut self,
+        node: CNode,
+        callback: Option<extern "C" fn(CNode, *mut c_void)>,
+        userdata: *mut c_void,
+    ) {
+        (self.rt.sym.cui_set_click_callback)(self.ptr, node, callback, userdata);
+    }
+
+    pub fn dispatch_click(&self, node: CNode) -> bool {
+        unsafe { (self.rt.sym.cui_dispatch_click)(self.ptr.cast_const(), node) }
+    }
+}
+
+impl Drop for RuntimeTree {
+    fn drop(&mut self) {
+        unsafe { (self.rt.sym.cui_runtime_free)(self.ptr) };
     }
 }

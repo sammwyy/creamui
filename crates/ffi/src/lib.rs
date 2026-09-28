@@ -43,7 +43,9 @@ use std::os::raw::c_int;
 // the consuming side of this ABI so the two can never drift out of sync.
 // Re-exported here so existing code importing them from `creamui_ffi`
 // (this crate's public name) keeps working unchanged.
-pub use creamui_abi::{CColor, CDimension, CStyle, CTheme, CTypographyStyle, CWindowOptions};
+pub use creamui_abi::{
+    CColor, CColorScheme, CDimension, CPaintOp, CStyle, CTheme, CTypographyStyle, CWindowOptions,
+};
 pub use creamui_abi::{CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU};
 
 /// Opaque handle to a reactive `i32` value.

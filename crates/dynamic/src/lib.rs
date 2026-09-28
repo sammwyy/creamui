@@ -43,7 +43,11 @@ mod value;
 mod widget;
 mod window;
 
-pub use runtime::{LoadError, Runtime};
+pub use creamui_abi::{
+    CColorScheme, CNode, CPaintOp, CRect, CUI_NODE_KIND_CONTAINER, CUI_NODE_KIND_TEXT,
+    CUI_NODE_NONE,
+};
+pub use runtime::{LoadError, Runtime, RuntimeTree};
 pub use signal::{SignalF32, SignalI32, SignalString};
 pub use value::{Color, Dimension, RenderBackend, Size, Style, Theme, WindowOptions};
 pub use value::{

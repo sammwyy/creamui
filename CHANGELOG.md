@@ -7,6 +7,8 @@ All notable changes to CreamUI will be documented in this file.
 - Text shaping selects another installed font per missing glyph cluster, and
   the CPU/GPU glyph caches rasterize it with that face. Registered font
   changes invalidate the affected layout caches.
+- Text layout applies Unicode bidirectional visual ordering after line
+  breaking while keeping source-byte positions stable for editing.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

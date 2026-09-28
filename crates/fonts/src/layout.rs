@@ -4,9 +4,11 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
+use swash::shape::Direction;
 use swash::shape::ShapeContext;
 use swash::text::cluster::{Boundary, CharCluster, CharInfo, Parser, Token, Whitespace};
 use swash::text::{analyze, Codepoint, Script};
+use unicode_bidi::BidiInfo;
 
 /// Line fitting tolerates this much overflow so that text measured at one
 /// scale and laid out at another does not wrap on float rounding alone.
@@ -142,6 +144,8 @@ pub struct CharPosition {
     pub ch: char,
     pub x: f32,
     pub advance: f32,
+    /// Whether the character's leading caret edge is on its right.
+    pub rtl: bool,
     pub line: usize,
 }
 
@@ -205,7 +209,7 @@ fn script_runs(text: &str) -> Vec<(Range<usize>, Script)> {
     runs
 }
 
-fn shape(face: &FontFace, text: &str, px: f32) -> Shaped {
+fn shape(face: &FontFace, text: &str, px: f32, bidi: &BidiInfo<'_>) -> Shaped {
     let font = face.font_ref();
     let tokens: Vec<Token> = text
         .char_indices()
@@ -226,7 +230,22 @@ fn shape(face: &FontFace, text: &str, px: f32) -> Shaped {
     SHAPER.with(|context| {
         let mut context = context.borrow_mut();
         let mut cluster = CharCluster::new();
+        let mut runs = Vec::new();
         for (range, script) in script_runs(text) {
+            let mut start = range.start;
+            let mut rtl = bidi.levels[start].is_rtl();
+            for (offset, _) in text[range.clone()].char_indices().skip(1) {
+                let offset = range.start + offset;
+                let next_rtl = bidi.levels[offset].is_rtl();
+                if next_rtl != rtl {
+                    runs.push((start..offset, script, rtl));
+                    start = offset;
+                    rtl = next_rtl;
+                }
+            }
+            runs.push((start..range.end, script, rtl));
+        }
+        for (range, script, rtl) in runs {
             let first = tokens.partition_point(|token| (token.offset as usize) < range.start);
             let last = tokens.partition_point(|token| (token.offset as usize) < range.end);
             let mut parser = Parser::new(script, tokens[first..last].iter().copied());
@@ -259,7 +278,16 @@ fn shape(face: &FontFace, text: &str, px: f32) -> Shaped {
                 } else {
                     shaped.fallback_faces[face_index - 1].font_ref()
                 };
-                let mut shaper = context.builder(selected).script(script).size(px).build();
+                let mut shaper = context
+                    .builder(selected)
+                    .script(script)
+                    .direction(if rtl {
+                        Direction::RightToLeft
+                    } else {
+                        Direction::LeftToRight
+                    })
+                    .size(px)
+                    .build();
                 for (cluster, _) in &prepared[start_index..end_index] {
                     shaper.add_cluster(cluster);
                 }
@@ -337,13 +365,45 @@ fn break_lines(clusters: &[Cluster], max_width: f32) -> Vec<usize> {
     starts
 }
 
+fn visual_clusters(bidi: &BidiInfo<'_>, clusters: &[Cluster]) -> Vec<(usize, bool)> {
+    let Some(first) = clusters.first() else {
+        return Vec::new();
+    };
+    let line = first.source.start..clusters.last().unwrap().source.end;
+    let mut order = Vec::with_capacity(clusters.len());
+    for paragraph in &bidi.paragraphs {
+        let start = line.start.max(paragraph.range.start);
+        let end = line.end.min(paragraph.range.end);
+        if start >= end {
+            continue;
+        }
+        let (levels, runs) = bidi.visual_runs(paragraph, start..end);
+        for run in runs {
+            let rtl = levels[run.start].is_rtl();
+            let mut indices: Vec<_> = clusters
+                .iter()
+                .enumerate()
+                .filter(|(_, cluster)| run.contains(&cluster.source.start))
+                .map(|(index, _)| index)
+                .collect();
+            if rtl {
+                indices.reverse();
+            }
+            order.extend(indices.into_iter().map(|index| (index, rtl)));
+        }
+    }
+    debug_assert_eq!(order.len(), clusters.len());
+    order
+}
+
 /// Lays `text` out with `face` at `px` pixels per em, top-left at the
 /// origin.
 pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -> TextLayout {
     if text.is_empty() {
         return TextLayout::default();
     }
-    let shaped = shape(face, text, px);
+    let bidi = BidiInfo::new(text, None);
+    let shaped = shape(face, text, px, &bidi);
     let metrics = face.line_metrics(px);
     let starts = break_lines(
         &shaped.clusters,
@@ -380,8 +440,12 @@ pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -
         let line_top = top + metrics.line_height * line_index as f32;
         let baseline = line_top + metrics.ascent;
         let first_char = result.chars.len();
+        let order = visual_clusters(&bidi, clusters);
+        let mut positions = vec![(0.0, false); clusters.len()];
         let mut x = x_offset;
-        for cluster in clusters {
+        for (index, rtl) in order {
+            let cluster = &clusters[index];
+            positions[index] = (x, rtl);
             let mut pen = x;
             for glyph in &shaped.glyphs[cluster.glyphs.clone()] {
                 result.glyphs.push(PositionedGlyph {
@@ -393,6 +457,10 @@ pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -
                 });
                 pen += glyph.advance;
             }
+            x += cluster.advance;
+        }
+        for (index, cluster) in clusters.iter().enumerate() {
+            let (x, rtl) = positions[index];
             let source = &text[cluster.source.clone()];
             let count = source.chars().count().max(1) as f32;
             let advance = cluster.advance / count;
@@ -400,12 +468,17 @@ pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -
                 result.chars.push(CharPosition {
                     byte_offset: cluster.source.start + offset,
                     ch,
-                    x: x + advance * index as f32,
+                    x: x + advance
+                        * if rtl {
+                            count - index as f32 - 1.0
+                        } else {
+                            index as f32
+                        },
                     advance,
+                    rtl,
                     line: line_index,
                 });
             }
-            x += cluster.advance;
         }
         result.lines.push(Line {
             top: line_top,
@@ -613,5 +686,58 @@ mod tests {
         assert!(fallback.face > 0);
         assert_ne!(fallback.id, 0);
         assert_ne!(layout.fallback_faces[fallback.face - 1].id(), primary.id());
+    }
+
+    #[test]
+    fn right_to_left_clusters_are_positioned_in_visual_order() {
+        let text = "אבג";
+        let layout = run(text, LayoutSettings::default());
+        assert_eq!(
+            layout
+                .chars
+                .iter()
+                .map(|ch| ch.byte_offset)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 4]
+        );
+        assert!(layout.chars.iter().all(|ch| ch.rtl));
+        assert!(layout.chars[0].x > layout.chars[1].x);
+        assert!(layout.chars[1].x > layout.chars[2].x);
+        assert_eq!(
+            layout
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.byte_offset)
+                .collect::<Vec<_>>(),
+            vec![4, 2, 0]
+        );
+    }
+
+    #[test]
+    fn mixed_direction_line_keeps_latin_and_reverses_hebrew() {
+        let layout = run("abc אבג xyz", LayoutSettings::default());
+        let chars = &layout.chars;
+        assert!(chars[0].x < chars[1].x && chars[1].x < chars[2].x);
+        assert!(chars[4].x > chars[5].x && chars[5].x > chars[6].x);
+        assert!(chars[6].x > chars[2].x);
+        assert!(chars[8].x > chars[4].x);
+    }
+
+    #[test]
+    fn wrapped_right_to_left_lines_reorder_independently() {
+        let natural = run("אבג דהו", LayoutSettings::default()).lines[0].width;
+        let layout = run(
+            "אבג דהו",
+            LayoutSettings {
+                max_width: Some(natural * 0.6),
+                ..Default::default()
+            },
+        );
+        assert!(layout.lines.len() >= 2);
+        for line in &layout.lines {
+            let chars = &layout.chars[line.chars.clone()];
+            let rtl: Vec<_> = chars.iter().filter(|ch| ch.rtl).collect();
+            assert!(rtl.windows(2).all(|pair| pair[0].x >= pair[1].x));
+        }
     }
 }

@@ -83,14 +83,27 @@ pub fn advance_width_family(text: &str, font_size: f32, family: Option<&str>) ->
 /// single source line using one font layout.
 pub fn byte_offset_at_x_family(text: &str, font_size: f32, x: f32, family: Option<&str>) -> usize {
     let layout = wrapped(&font(family), text, font_size, UNBOUNDED_WIDTH);
-    let mut offset = 0;
-    for c in &layout.chars {
+    let mut visual: Vec<_> = layout.chars.iter().collect();
+    visual.sort_by(|a, b| a.x.total_cmp(&b.x));
+    for c in &visual {
         if x < c.x + c.advance / 2.0 {
-            return c.byte_offset;
+            return if c.rtl {
+                c.byte_offset + c.ch.len_utf8()
+            } else {
+                c.byte_offset
+            };
         }
-        offset = c.byte_offset + c.ch.len_utf8();
     }
-    offset.min(text.len())
+    visual
+        .last()
+        .map_or(0, |c| {
+            if c.rtl {
+                c.byte_offset
+            } else {
+                c.byte_offset + c.ch.len_utf8()
+            }
+        })
+        .min(text.len())
 }
 
 /// One glyph's position and advance width from a layout of a whole text
@@ -107,6 +120,7 @@ pub struct LaidGlyph {
     pub row_height: f32,
     pub advance: f32,
     pub ch: char,
+    pub rtl: bool,
 }
 
 /// Lays `text` out at `font_size`, wrapping at `max_width` and respecting
@@ -131,6 +145,7 @@ pub fn layout_family(
                 row_height: line.height,
                 advance: c.advance,
                 ch: c.ch,
+                rtl: c.rtl,
             }
         })
         .collect()
@@ -210,10 +225,10 @@ pub fn caret_xy(
     fallback_row_height: f32,
 ) -> (f32, f32, f32) {
     if let Some(g) = glyphs.iter().find(|g| g.byte_offset == byte_offset) {
-        return (g.x, g.y, g.row_height);
+        return (if g.rtl { g.x + g.advance } else { g.x }, g.y, g.row_height);
     }
     if let Some(g) = glyphs.iter().rev().find(|g| g.byte_offset < byte_offset) {
-        return (g.x + g.advance, g.y, g.row_height);
+        return (if g.rtl { g.x } else { g.x + g.advance }, g.y, g.row_height);
     }
     (0.0, 0.0, fallback_row_height)
 }
@@ -237,17 +252,28 @@ pub fn byte_offset_at_point_family(
     else {
         return 0;
     };
-    let row: Vec<&LaidGlyph> = glyphs
+    let mut row: Vec<&LaidGlyph> = glyphs
         .iter()
         .filter(|g| (g.y - row_y).abs() < 0.5)
         .collect();
+    row.sort_by(|a, b| a.x.total_cmp(&b.x));
     for g in &row {
         if x < g.x + g.advance / 2.0 {
-            return g.byte_offset;
+            return if g.rtl {
+                g.byte_offset + g.ch.len_utf8()
+            } else {
+                g.byte_offset
+            };
         }
     }
     row.last()
-        .map_or(0, |g| g.byte_offset + g.ch.len_utf8())
+        .map_or(0, |g| {
+            if g.rtl {
+                g.byte_offset
+            } else {
+                g.byte_offset + g.ch.len_utf8()
+            }
+        })
         .min(text.len())
 }
 

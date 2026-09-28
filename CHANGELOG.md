@@ -23,6 +23,8 @@ All notable changes to CreamUI will be documented in this file.
   avoiding one unbounded thread per request.
 - `creamui-dynamic::RuntimeTree` now covers node counts, layout/paint/text
   mutations, layout, retained paint readback, and click dispatch.
+- ABI paint text readback now carries an explicit UTF-8 byte length instead of
+  assuming the retained string is NUL-terminated.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

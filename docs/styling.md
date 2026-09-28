@@ -42,6 +42,7 @@ let overlay = Style::new()
 ```
 
 JSX uses the same values: `<RawView padding={"8px 16px"} margin={"0 auto"} />`.
+`Block`, `Flex`, and `Grid` accept those shorthands too.
 `EdgeValues::new(top, right, bottom, left)` provides a typed alternative.
 Directional JSX props override shorthand props, and inline props override
 the `style` prop. Existing `StyleProp::Padding(LengthValue)` and

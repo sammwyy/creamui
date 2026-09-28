@@ -130,8 +130,8 @@ macro_rules! layout_container_methods {
         }
 
         /// Applies equal inner spacing.
-        pub fn padding(mut self, value: f32) -> Self {
-            self.inner.style = self.inner.style.padding_all(value);
+        pub fn padding(mut self, value: impl Into<creamui_core::EdgeValues>) -> Self {
+            self.inner.style = self.inner.style.padding(value);
             self
         }
 
@@ -142,8 +142,8 @@ macro_rules! layout_container_methods {
         }
 
         /// Applies equal outer spacing.
-        pub fn margin(mut self, value: f32) -> Self {
-            self.inner.style = self.inner.style.margin_all(value);
+        pub fn margin(mut self, value: impl Into<creamui_core::EdgeValues>) -> Self {
+            self.inner.style = self.inner.style.margin(value);
             self
         }
 

@@ -137,6 +137,26 @@ fn spacing_shorthands_position_native_and_jsx_children() {
 }
 
 #[test]
+fn spacing_shorthands_work_on_semantic_layout_containers() {
+    use creamui_core::layout::{LengthPercentage, LengthPercentageAuto};
+
+    let block = jsx! { <Block padding={"8px 16px"} margin={"0 auto"} /> };
+    let flex = jsx! { <Flex padding={"8px 16px"} margin={"0 auto"} /> };
+    let grid = jsx! { <Grid padding={"8px 16px"} margin={"0 auto"} /> };
+    for widget in [
+        &block as &dyn Widget,
+        &flex as &dyn Widget,
+        &grid as &dyn Widget,
+    ] {
+        let layout = widget.style().layout;
+        assert_eq!(layout.padding.top, LengthPercentage::Length(8.0));
+        assert_eq!(layout.padding.left, LengthPercentage::Length(16.0));
+        assert_eq!(layout.margin.top, LengthPercentageAuto::Length(0.0));
+        assert_eq!(layout.margin.left, LengthPercentageAuto::Auto);
+    }
+}
+
+#[test]
 fn radial_gradients_record_the_same_paint_from_native_and_jsx() {
     use creamui_core::{runtime::RecordingPainter, RadialGradient};
     use creamui_widgets::raw::RawView;

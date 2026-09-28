@@ -7,7 +7,7 @@
 //! damaged regions with `tiny-skia` and presents just those pixels.
 
 mod backend;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 mod cpu;
 mod devtools;
 mod display_list;
@@ -22,12 +22,16 @@ mod window;
 
 pub use backend::RenderBackend;
 pub use creamui_platform as platform;
+#[cfg(all(feature = "platform-android", target_os = "android"))]
+pub use creamui_platform::AndroidApp;
 pub use devtools::{install_devtools, Devtools, FrameReport, WindowDevtools};
 pub use display_list::{damage, Bounds, Damage, DisplayList};
 #[cfg(not(target_arch = "wasm32"))]
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;
 pub use recorder::SceneRecorder;
+#[cfg(all(feature = "platform-android", target_os = "android"))]
+pub use window::run_android;
 pub use window::{
     run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, PopupOptions, WindowHandle,
     WindowOptions,

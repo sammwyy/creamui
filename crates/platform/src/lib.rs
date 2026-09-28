@@ -1,7 +1,7 @@
 //! Common window-platform types for CreamUI.
 
 mod types;
-#[cfg(feature = "wayland")]
+#[cfg(all(feature = "wayland", target_os = "linux"))]
 pub mod wayland;
 #[cfg(not(all(feature = "wayland", target_os = "linux")))]
 mod winit;
@@ -15,6 +15,8 @@ pub use self::wayland::runtime::{
 pub use self::winit::{
     ActiveEventLoop, ApplicationHandler, EventLoop, EventLoopBuilder, EventLoopProxy, Window,
 };
+#[cfg(all(feature = "android", target_os = "android"))]
+pub use ::winit::platform::android::activity::AndroidApp;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;

@@ -1,5 +1,10 @@
 # TODO
 
+- Android currently supports only the NativeActivity GPU static-frame path;
+  input, clipboard and native file pickers, CPU presentation, desktop
+  integrations, multiple windows, and surface recreation after suspension
+  remain unsupported.
+
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old
   reconcile path, reachable via `mount_legacy_widget`, `create_binding`,

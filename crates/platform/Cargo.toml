@@ -11,10 +11,12 @@ keywords = ["gui", "windowing", "wayland", "x11"]
 categories = ["gui"]
 
 [features]
-default = ["winit-adapter"]
-winit-adapter = []
+default = ["winit-adapter", "desktop"]
+winit-adapter = ["winit/rwh_06"]
+desktop = ["winit/x11", "winit/wayland", "winit/wayland-dlopen", "winit/wayland-csd-adwaita"]
+android = ["winit-adapter", "winit/android-native-activity"]
 wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:xkbcommon"]
-x11 = ["winit-adapter"]
+x11 = ["winit-adapter", "winit/x11"]
 windows = ["winit-adapter"]
 
 [dependencies]
@@ -27,6 +29,7 @@ xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+web-time = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

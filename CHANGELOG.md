@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- `creamui-platform` now compiles for `wasm32-unknown-unknown`: its winit
+  adapter shares one handler implementation between borrowed and owned
+  handlers, and its control-flow clock matches `web_time` on the web target.
 - Widget measurement and rendering now reuse a bounded, thread-local shaped
   text layout cache in `creamui-fonts`; rendering keeps its separate glyph
   bitmap cache.

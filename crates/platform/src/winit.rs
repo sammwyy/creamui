@@ -295,6 +295,26 @@ pub trait ApplicationHandler<T: 'static> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>);
 }
 
+impl<T: 'static, H: ApplicationHandler<T> + ?Sized> ApplicationHandler<T> for &mut H {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        (**self).resumed(event_loop);
+    }
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop<'_>,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        (**self).window_event(event_loop, window_id, event);
+    }
+    fn user_event(&mut self, event_loop: &ActiveEventLoop<'_>, event: T) {
+        (**self).user_event(event_loop, event);
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        (**self).about_to_wait(event_loop);
+    }
+}
+
 pub struct EventLoop<T: 'static> {
     inner: WinitEventLoop<T>,
     ids: WindowIds,
@@ -380,46 +400,6 @@ struct Adapter<H> {
     ids: WindowIds,
 }
 
-impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<&mut H> {
-    fn resumed(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler.resumed(&ActiveEventLoop {
-            inner: event_loop,
-            ids: &self.ids,
-        });
-    }
-    fn window_event(
-        &mut self,
-        event_loop: &WinitActiveEventLoop,
-        window_id: WinitWindowId,
-        event: winit::event::WindowEvent,
-    ) {
-        self.handler.window_event(
-            &ActiveEventLoop {
-                inner: event_loop,
-                ids: &self.ids,
-            },
-            self.ids.lock().expect("window IDs lock poisoned")[&window_id],
-            from_winit_window_event(event),
-        );
-    }
-    fn user_event(&mut self, event_loop: &WinitActiveEventLoop, event: T) {
-        self.handler.user_event(
-            &ActiveEventLoop {
-                inner: event_loop,
-                ids: &self.ids,
-            },
-            event,
-        );
-    }
-    fn about_to_wait(&mut self, event_loop: &WinitActiveEventLoop) {
-        self.handler.about_to_wait(&ActiveEventLoop {
-            inner: event_loop,
-            ids: &self.ids,
-        });
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
 impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<H> {
     fn resumed(&mut self, event_loop: &WinitActiveEventLoop) {
         self.handler.resumed(&ActiveEventLoop {

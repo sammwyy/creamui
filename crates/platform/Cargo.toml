@@ -36,6 +36,7 @@ xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+web-time = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

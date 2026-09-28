@@ -68,10 +68,10 @@ Current limitations and work still to do. Implemented changes belong in
 - Expose paint and fragment readback in ABI-v2, including a C representation
   of `ColorScheme`, and add C event callbacks with userdata.
   `creamui-dynamic` still has no `cui_*` bindings or `CRuntime` construction.
-- Fix `creamui-platform` for `wasm32-unknown-unknown`. A target check currently
-  fails in `winit.rs` because of overlapping `ApplicationHandler` impls and
-  `std::time::Instant` versus `web_time::Instant`. The web presenter cannot
-  be verified until this builds.
+- Verify the web presenter interactively in a browser. The platform and
+  renderer compile for `wasm32-unknown-unknown`, and `wasm-pack` builds the
+  showcase bundle, but headless Firefox timed out before requesting the page
+  in this environment, so no rendered frame has been inspected yet.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland
   protocols if X11, Windows, or macOS support is wanted. Expose blur through
   the C ABI as well: `window_options_from_c` always passes `blur: None`.

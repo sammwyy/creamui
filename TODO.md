@@ -7,8 +7,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Extend radial backgrounds beyond two-stop, farthest-corner circles to
   ellipses, explicit radii, additional color stops, and repeating gradients.
-- Font shaping now reorders mixed-direction lines with Unicode bidi and falls
-  back to an installed face when the selected one lacks a glyph.
 
 ## Persistent runtime
 

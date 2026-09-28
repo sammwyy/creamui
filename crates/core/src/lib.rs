@@ -20,9 +20,9 @@ pub use geometry::{Point, Rect, Size};
 pub use image::RgbaImage;
 pub use scene::{render_frame, Renderer, Scene};
 pub use style::{
-    Background, Border, BoxShadow, ColorToken, ColorValue, InteractionState, InteractionStyles,
-    LengthValue, LinearGradient, PaintStyle, ResolvedStyle, StateStyle, Style, StyleParseError,
-    StyleProp, StyleState, TypographyStyle,
+    Background, Border, BoxShadow, ColorToken, ColorValue, EdgeValues, InteractionState,
+    InteractionStyles, LengthValue, LinearGradient, PaintStyle, ResolvedStyle, StateStyle, Style,
+    StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
 pub use virtualize::{visible_range, HeightIndex};
 pub use widget::{

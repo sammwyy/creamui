@@ -85,6 +85,57 @@ fn box_sizing_controls_padding_in_native_and_jsx_layout() {
     }
 }
 
+#[test]
+fn spacing_shorthands_position_native_and_jsx_children() {
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(
+        CommonStyle::new()
+            .width(200.0)
+            .height(100.0)
+            .padding("10px 20px 30px 40px"),
+    )
+    .child(Box::new(RawView::new(
+        CommonStyle::new()
+            .width(20.0)
+            .height(10.0)
+            .margin("5px 0")
+            .background(Color::rgb(1, 2, 3)),
+    )));
+    let jsx = jsx! {
+        <RawView width={200.0} height={100.0} padding={"10px 20px 30px 40px"}>
+            <RawView width={20.0} height={10.0} margin={"5px 0"} background={Color::rgb(1, 2, 3)} />
+        </RawView>
+    };
+    let bounds = painted_bounds(native);
+    assert_eq!(bounds, painted_bounds(jsx));
+    assert_eq!(
+        bounds[0],
+        Rect {
+            x: 40.0,
+            y: 15.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+
+    let overlay = jsx! {
+        <RawView width={200.0} height={100.0}>
+            <RawView position={creamui_core::layout::Position::Absolute}
+                inset={"10px 20px 30px 40px"} background={Color::rgb(1, 2, 3)} />
+        </RawView>
+    };
+    assert_eq!(
+        painted_bounds(overlay)[0],
+        Rect {
+            x: 40.0,
+            y: 10.0,
+            width: 140.0,
+            height: 60.0
+        }
+    );
+}
+
 #[component]
 fn CounterLabel(value: i32) -> BoxedWidget {
     Box::new(jsx! { <Text>{format!("Custom: {value}")}</Text> })

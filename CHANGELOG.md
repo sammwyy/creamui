@@ -12,6 +12,8 @@ All notable changes to CreamUI will be documented in this file.
 - Measured the conditional `HeightIndex` middle-insert requirement against
   current consumers; no dynamic list caller exists, so the compact Fenwick
   index remains unchanged until such a workload appears.
+- `ResourceReady::into_mutation` now converts successful background image
+  decodes into `Runtime` image mutations, preserving fit and paint invalidation.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

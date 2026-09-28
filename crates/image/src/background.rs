@@ -1,4 +1,5 @@
 use crate::ImageData;
+use creamui_core::runtime::{ImageFit, Mutation, RuntimeNodeId};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
@@ -14,6 +15,22 @@ pub enum LoadOutcome {
 pub struct ResourceReady {
     pub id: ResourceId,
     pub outcome: LoadOutcome,
+}
+
+impl ResourceReady {
+    /// Converts a successful asynchronous decode into the runtime mutation
+    /// that replaces an image node's content. Failed requests remain errors
+    /// and do not mutate the tree.
+    pub fn into_mutation(self, node: RuntimeNodeId, fit: ImageFit) -> Result<Mutation, String> {
+        match self.outcome {
+            LoadOutcome::Ready(data) => Ok(Mutation::SetImage {
+                node,
+                content: creamui_core::runtime::ImageContent::Decoded(data.image().clone()),
+                fit,
+            }),
+            LoadOutcome::Failed(error) => Err(error),
+        }
+    }
 }
 
 /// Decodes image bytes/files on a spawned thread instead of blocking the
@@ -174,6 +191,36 @@ mod tests {
     fn poll_ready_is_empty_with_no_pending_requests() {
         let loader = BackgroundImageLoader::new();
         assert!(loader.poll_ready().is_empty());
+    }
+
+    #[test]
+    fn ready_image_becomes_a_runtime_mutation() {
+        use creamui_core::runtime::{ImageContent, NodeKind, Runtime};
+
+        let mut runtime = Runtime::new();
+        let node = runtime.transaction().create_node(NodeKind::Image(
+            creamui_core::runtime::ImageNode::source("pending"),
+        ));
+        let mut loader = BackgroundImageLoader::new();
+        let id = loader.load_bytes(tiny_png_bytes());
+        let ready = loader
+            .recv_timeout(Duration::from_secs(5))
+            .expect("decode completed within the timeout");
+        assert_eq!(ready.id, id);
+        let mutation = ready
+            .into_mutation(node, ImageFit::Contain)
+            .expect("image should decode");
+        runtime.transaction().apply(mutation);
+
+        let runtime_node = runtime.get(node).unwrap();
+        let NodeKind::Image(image) = &runtime_node.kind else {
+            panic!("mutation should retain an image node");
+        };
+        assert_eq!(image.fit, ImageFit::Contain);
+        assert!(matches!(image.content, ImageContent::Decoded(_)));
+        assert!(runtime_node
+            .dirty
+            .contains(creamui_core::runtime::DirtyFlags::PAINT));
     }
 
     #[test]

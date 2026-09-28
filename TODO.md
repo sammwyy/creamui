@@ -45,9 +45,8 @@ Current limitations and work still to do. Implemented changes belong in
   (flattened expanded nodes with stable keys). `RawTable` and `TreeView`
   still materialize every item. `RawVirtualList` has no themed wrapper or
   example yet.
-- Turn `BackgroundImageLoader::ResourceReady` into a runtime mutation and a
-  renderable image. The loader currently only returns a message to its caller,
-  while widgets still construct `ImageData` synchronously.
+- Connect `ResourceReady::into_mutation` to the application runtime and
+  presenter once runtime-backed windows are enabled.
 - If concurrent image loading becomes a real workload, replace
   `BackgroundImageLoader`'s unbounded thread-per-request model with a bounded
   pool.

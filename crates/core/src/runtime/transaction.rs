@@ -1,6 +1,6 @@
 use super::dirty::DirtyFlags;
 use super::mutation::Mutation;
-use super::node::{NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
+use super::node::{ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
 use super::Runtime;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -289,6 +289,23 @@ impl<'a> RuntimeTransaction<'a> {
                             true
                         }
                     });
+                if changed {
+                    self.touch(node, DirtyFlags::PAINT | DirtyFlags::MEASURE);
+                }
+            }
+            Mutation::SetImage { node, content, fit } => {
+                let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
+                    let changed = match &n.kind {
+                        NodeKind::Image(existing) => {
+                            existing.content != content || existing.fit != fit
+                        }
+                        _ => true,
+                    };
+                    if changed {
+                        n.kind = NodeKind::Image(ImageNode { content, fit });
+                    }
+                    changed
+                });
                 if changed {
                     self.touch(node, DirtyFlags::PAINT | DirtyFlags::MEASURE);
                 }

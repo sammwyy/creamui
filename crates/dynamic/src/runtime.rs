@@ -5,7 +5,8 @@
 //! is a safe wrapper around a resolved, verified-present function pointer.
 
 use creamui_abi::{
-    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CWindowOptions, CUI_NODE_NONE,
+    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CTypographyStyle, CWindowOptions,
+    CUI_NODE_NONE,
 };
 use libloading::{Library, Symbol};
 use std::ffi::{c_void, CString};
@@ -93,11 +94,16 @@ pub(crate) type AppBuilderAddWindowFn = unsafe extern "C" fn(
 pub(crate) type AppBuilderRunFn = unsafe extern "C" fn(*mut c_void);
 pub(crate) type CuiRuntimeNewFn = unsafe extern "C" fn() -> *mut c_void;
 pub(crate) type CuiRuntimeFreeFn = unsafe extern "C" fn(*mut c_void);
+pub(crate) type CuiRuntimeNodeCountFn = unsafe extern "C" fn(*const c_void) -> usize;
 pub(crate) type CuiCreateNodeFn = unsafe extern "C" fn(*mut c_void, c_int) -> CNode;
 pub(crate) type CuiSetRootFn = unsafe extern "C" fn(*mut c_void, CNode);
 pub(crate) type CuiInsertChildFn = unsafe extern "C" fn(*mut c_void, CNode, CNode, CNode);
 pub(crate) type CuiRemoveSubtreeFn = unsafe extern "C" fn(*mut c_void, CNode);
 pub(crate) type CuiSetTextFn = unsafe extern "C" fn(*mut c_void, CNode, *const c_char);
+pub(crate) type CuiSetLayoutStyleFn = unsafe extern "C" fn(*mut c_void, CNode, CStyle);
+pub(crate) type CuiSetBackgroundFn = unsafe extern "C" fn(*mut c_void, CNode, CColor, f32);
+pub(crate) type CuiSetTypographyStyleFn =
+    unsafe extern "C" fn(*mut c_void, CNode, CTypographyStyle);
 pub(crate) type CuiComputeLayoutFn = unsafe extern "C" fn(*mut c_void, f32, f32);
 pub(crate) type CuiGetRectFn = unsafe extern "C" fn(*const c_void, CNode) -> CRect;
 pub(crate) type CuiRebuildPaintFn = unsafe extern "C" fn(*mut c_void, CColorScheme);
@@ -158,11 +164,15 @@ pub(crate) struct Symbols {
     pub(crate) app_builder_run: AppBuilderRunFn,
     pub(crate) cui_runtime_new: CuiRuntimeNewFn,
     pub(crate) cui_runtime_free: CuiRuntimeFreeFn,
+    pub(crate) cui_runtime_node_count: CuiRuntimeNodeCountFn,
     pub(crate) cui_create_node: CuiCreateNodeFn,
     pub(crate) cui_set_root: CuiSetRootFn,
     pub(crate) cui_insert_child: CuiInsertChildFn,
     pub(crate) cui_remove_subtree: CuiRemoveSubtreeFn,
     pub(crate) cui_set_text: CuiSetTextFn,
+    pub(crate) cui_set_layout_style: CuiSetLayoutStyleFn,
+    pub(crate) cui_set_background: CuiSetBackgroundFn,
+    pub(crate) cui_set_typography_style: CuiSetTypographyStyleFn,
     pub(crate) cui_compute_layout: CuiComputeLayoutFn,
     pub(crate) cui_get_rect: CuiGetRectFn,
     pub(crate) cui_rebuild_paint: CuiRebuildPaintFn,
@@ -253,11 +263,15 @@ impl Symbols {
                 app_builder_run: resolve!(lib, "creamui_app_builder_run"),
                 cui_runtime_new: resolve!(lib, "cui_runtime_new"),
                 cui_runtime_free: resolve!(lib, "cui_runtime_free"),
+                cui_runtime_node_count: resolve!(lib, "cui_runtime_node_count"),
                 cui_create_node: resolve!(lib, "cui_create_node"),
                 cui_set_root: resolve!(lib, "cui_set_root"),
                 cui_insert_child: resolve!(lib, "cui_insert_child"),
                 cui_remove_subtree: resolve!(lib, "cui_remove_subtree"),
                 cui_set_text: resolve!(lib, "cui_set_text"),
+                cui_set_layout_style: resolve!(lib, "cui_set_layout_style"),
+                cui_set_background: resolve!(lib, "cui_set_background"),
+                cui_set_typography_style: resolve!(lib, "cui_set_typography_style"),
                 cui_compute_layout: resolve!(lib, "cui_compute_layout"),
                 cui_get_rect: resolve!(lib, "cui_get_rect"),
                 cui_rebuild_paint: resolve!(lib, "cui_rebuild_paint"),
@@ -379,6 +393,10 @@ impl RuntimeTree {
         unsafe { (self.rt.sym.cui_create_node)(self.ptr, kind) }
     }
 
+    pub fn node_count(&self) -> usize {
+        unsafe { (self.rt.sym.cui_runtime_node_count)(self.ptr.cast_const()) }
+    }
+
     pub fn set_root(&mut self, node: Option<CNode>) {
         unsafe { (self.rt.sym.cui_set_root)(self.ptr, node.unwrap_or(CUI_NODE_NONE)) };
     }
@@ -396,6 +414,18 @@ impl RuntimeTree {
     pub fn set_text(&mut self, node: CNode, text: &str) {
         let text = CString::new(text).expect("runtime text cannot contain NUL");
         unsafe { (self.rt.sym.cui_set_text)(self.ptr, node, text.as_ptr()) };
+    }
+
+    pub fn set_layout_style(&mut self, node: CNode, style: CStyle) {
+        unsafe { (self.rt.sym.cui_set_layout_style)(self.ptr, node, style) };
+    }
+
+    pub fn set_background(&mut self, node: CNode, color: CColor, corner_radius: f32) {
+        unsafe { (self.rt.sym.cui_set_background)(self.ptr, node, color, corner_radius) };
+    }
+
+    pub fn set_typography_style(&mut self, node: CNode, style: CTypographyStyle) {
+        unsafe { (self.rt.sym.cui_set_typography_style)(self.ptr, node, style) };
     }
 
     pub fn compute_layout(&mut self, width: f32, height: f32) {

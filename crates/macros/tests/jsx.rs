@@ -58,6 +58,33 @@ fn aspect_ratio_sizes_native_and_jsx_widgets() {
     assert_eq!(painted_bounds(explicit)[0].height, 40.0);
 }
 
+#[test]
+fn box_sizing_controls_padding_in_native_and_jsx_layout() {
+    use creamui_core::layout::BoxSizing;
+    use creamui_widgets::raw::RawView;
+
+    for (sizing, width, height) in [
+        (BoxSizing::BorderBox, 80.0, 40.0),
+        (BoxSizing::ContentBox, 100.0, 60.0),
+    ] {
+        let native = RawView::new(
+            CommonStyle::new()
+                .width(80.0)
+                .height(40.0)
+                .padding(10.0)
+                .box_sizing(sizing)
+                .background(Color::rgb(1, 2, 3)),
+        );
+        let jsx = jsx! {
+            <RawView width={80.0} height={40.0} padding={10.0}
+                box_sizing={sizing} background={Color::rgb(1, 2, 3)} />
+        };
+        let bounds = painted_bounds(native);
+        assert_eq!(bounds, painted_bounds(jsx));
+        assert_eq!((bounds[0].width, bounds[0].height), (width, height));
+    }
+}
+
 #[component]
 fn CounterLabel(value: i32) -> BoxedWidget {
     Box::new(jsx! { <Text>{format!("Custom: {value}")}</Text> })

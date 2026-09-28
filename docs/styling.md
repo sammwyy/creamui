@@ -22,3 +22,9 @@ It supplies the missing dimension when width or height is automatic; explicit
 width and height take precedence. Native styles and widgets support
 `.aspect_ratio(16.0 / 9.0)` (or `None` to clear it), and JSX accepts
 `<RawView width={320.0} aspect_ratio={16.0 / 9.0} />`.
+
+`box-sizing` accepts `"border-box"` (the default) and `"content-box"`.
+Use `.box_sizing(creamui::core::layout::BoxSizing::ContentBox)` or the
+`box_sizing` JSX prop. Content-box sizes exclude layout padding and borders;
+border-box sizes include them. Common `.border(...)` declarations are paint
+decorations; only `Style::layout.border` reserves border space in layout.

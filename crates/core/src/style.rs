@@ -535,6 +535,7 @@ macro_rules! creamui_style_property_schema {
             MaxWidth(crate::LengthValue) => "max-width" |target, value| { target.layout.max_size.width = value.dimension(); } => max_width(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.width = value.into().dimension(); };
             MaxHeight(crate::LengthValue) => "max-height" |target, value| { target.layout.max_size.height = value.dimension(); } => max_height(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.height = value.into().dimension(); };
             AspectRatio(Option<f32>) => "aspect-ratio" |target, value| { target.layout.aspect_ratio = value; } => aspect_ratio(value: impl Into<Option<f32>>) |style| { style.layout.aspect_ratio = value.into(); };
+            BoxSizing(crate::layout::BoxSizing) => "box-sizing" |target, value| { target.layout.box_sizing = value; } => box_sizing(value: crate::layout::BoxSizing) |style| { style.layout.box_sizing = value; };
             Display(crate::layout::Display) => "display" |target, value| { target.layout.display = value; } => display(value: crate::layout::Display) |style| { style.layout.display = value; };
             FlexDirection(crate::layout::FlexDirection) => "flex-direction" |target, value| { target.layout.flex_direction = value; } => flex_direction(value: crate::layout::FlexDirection) |style| { style.layout.flex_direction = value; };
             FlexWrap(crate::layout::FlexWrap) => "flex-wrap" |target, value| { target.layout.flex_wrap = value; } => flex_wrap(value: crate::layout::FlexWrap) |style| { style.layout.flex_wrap = value; };
@@ -1025,6 +1026,11 @@ impl StyleProp {
             "min-height" => Ok(Self::MinHeight(value.parse()?)),
             "max-width" => Ok(Self::MaxWidth(value.parse()?)),
             "max-height" => Ok(Self::MaxHeight(value.parse()?)),
+            "box-sizing" => Ok(Self::BoxSizing(match value.trim() {
+                "border-box" => crate::layout::BoxSizing::BorderBox,
+                "content-box" => crate::layout::BoxSizing::ContentBox,
+                other => return Err(StyleParseError(format!("invalid box-sizing `{other}`"))),
+            })),
             "aspect-ratio" => {
                 let value = value.trim();
                 if value == "auto" {
@@ -1145,6 +1151,18 @@ impl Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn box_sizing_parses_both_box_models() {
+        for (value, expected) in [
+            ("border-box", crate::layout::BoxSizing::BorderBox),
+            ("content-box", crate::layout::BoxSizing::ContentBox),
+        ] {
+            let style = Style::new().property(StyleProp::parse("box-sizing", value).unwrap());
+            assert_eq!(style.layout.box_sizing, expected);
+        }
+        assert!(StyleProp::parse("box-sizing", "padding-box").is_err());
+    }
 
     #[test]
     fn aspect_ratio_parses_ratios_numbers_and_auto() {

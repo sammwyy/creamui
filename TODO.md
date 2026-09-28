@@ -56,9 +56,6 @@ Current limitations and work still to do. Implemented changes belong in
 - Connect ABI-v2's `cui_*` runtime tree to a window and present loop. It
   currently mutates an in-memory `Runtime`; ABI-v1's `creamui_run` builds a
   separate widget tree.
-- Expose paint and fragment readback in ABI-v2, including a C representation
-  of `ColorScheme`, and add C event callbacks with userdata.
-  `creamui-dynamic` still has no `cui_*` bindings or `CRuntime` construction.
 - Verify the web presenter interactively in a browser. The platform and
   renderer compile for `wasm32-unknown-unknown`, and `wasm-pack` builds the
   showcase bundle, but headless Firefox timed out before requesting the page

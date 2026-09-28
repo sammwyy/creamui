@@ -14,6 +14,9 @@ All notable changes to CreamUI will be documented in this file.
   index remains unchanged until such a workload appears.
 - `ResourceReady::into_mutation` now converts successful background image
   decodes into `Runtime` image mutations, preserving fit and paint invalidation.
+- ABI-v2 now exposes color-scheme driven paint-fragment readback and C click
+  callbacks with userdata; `creamui-dynamic` owns a `RuntimeTree` wrapper for
+  the same retained tree operations.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

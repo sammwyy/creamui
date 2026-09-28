@@ -203,6 +203,7 @@ fn paint_op_to_c(op: &PaintOp) -> CPaintOp {
                 out.color = color_to_c(text.color);
                 out.radius = text.font_size;
                 out.text = text.text.as_ptr().cast();
+                out.text_len = text.text.len();
             }
             PaintPrimitive::Image(image) => {
                 out.kind = CUI_PAINT_IMAGE;

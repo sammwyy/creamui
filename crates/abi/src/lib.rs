@@ -379,8 +379,9 @@ pub const CUI_PAINT_TEXT: c_int = 9;
 pub const CUI_PAINT_IMAGE: c_int = 10;
 
 /// One retained paint operation. Fields not used by `kind` are zeroed.
-/// `text` points into the runtime and remains valid until the node is mutated
-/// or removed; copy it if it must outlive the next runtime operation.
+/// `text` points to UTF-8 bytes in the runtime and `text_len` gives their
+/// length; it is not NUL-terminated. The bytes remain valid until the node is
+/// mutated or removed, so copy them if they must outlive the next operation.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct CPaintOp {
@@ -393,6 +394,7 @@ pub struct CPaintOp {
     pub radius: f32,
     pub angle_degrees: f32,
     pub text: *const c_char,
+    pub text_len: usize,
 }
 
 impl Default for CPaintOp {
@@ -412,6 +414,7 @@ impl Default for CPaintOp {
             radius: 0.0,
             angle_degrees: 0.0,
             text: std::ptr::null(),
+            text_len: 0,
         }
     }
 }

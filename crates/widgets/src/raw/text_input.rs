@@ -205,12 +205,10 @@ impl RawTextArea {
     fn horizontal_scroll(&self, visible_width: f32) -> f32 {
         let cursor = self.cursor.min(self.value.len());
         let line_start = self.value[..cursor].rfind('\n').map_or(0, |i| i + 1);
-        let (cursor_x, _) = crate::text_metrics::measure_family(
+        let cursor_x = crate::text_metrics::advance_width_family(
             &self.value[line_start..cursor],
             self.font_size(),
-            crate::text_metrics::unbounded_width(),
             self.family(),
-            false,
         );
         (cursor_x - visible_width + 4.0).max(0.0)
     }
@@ -259,12 +257,10 @@ impl RawTextArea {
                     if let Some(background) = self.selection_background {
                         let prefix = &line[..start - source_offset];
                         let selected_text = &line[start - source_offset..end - source_offset];
-                        let (x, _) = crate::text_metrics::measure_family(
+                        let x = crate::text_metrics::advance_width_family(
                             prefix,
                             self.font_size(),
-                            crate::text_metrics::unbounded_width(),
                             self.family(),
-                            false,
                         );
                         let (width, _) = crate::text_metrics::measure_family(
                             selected_text,
@@ -380,6 +376,58 @@ impl RawTextArea {
             );
         }
     }
+
+    fn drag_handler(&self, content_box: Option<Rect>, start: bool) -> Rc<dyn Fn(Point, Rect)> {
+        let value = self.value.clone();
+        let font_size = self.font_size();
+        let family = self.style.typography.font_family.clone();
+        let wrap = self.wrap;
+        let cursor = self.cursor.min(self.value.len());
+        let line = self.value[..cursor].rsplit('\n').next().unwrap_or("");
+        let cursor_x =
+            crate::text_metrics::advance_width_family(line, font_size, family.as_deref());
+        let style = self.style.clone();
+        let on_cursor_change = self.on_cursor_change.clone();
+        let on_selection_change = self.on_selection_change.clone();
+        let drag_anchor = self.drag_anchor.clone();
+        let drag_focus = self.drag_focus.clone();
+        let keyboard_selection = self.keyboard_selection.clone();
+        Rc::new(move |point, rect: Rect| {
+            let content = content_box.unwrap_or_else(|| style.content_rect(rect));
+            let scroll_x = if wrap {
+                0.0
+            } else {
+                (cursor_x - content.width + 4.0).max(0.0)
+            };
+            let cursor = cursor_at_point(
+                &value,
+                font_size,
+                family.as_deref(),
+                Point {
+                    x: point.x - (content.x - rect.x),
+                    y: point.y - (content.y - rect.y),
+                },
+                wrap,
+                content.width,
+                scroll_x,
+            );
+            if start {
+                drag_anchor.set(cursor);
+            } else if cursor == drag_focus.get() {
+                return;
+            }
+            drag_focus.set(cursor);
+            let next = TextSelection {
+                anchor: drag_anchor.get(),
+                focus: cursor,
+            };
+            keyboard_selection.set(next);
+            creamui_reactive::batch(|| {
+                on_cursor_change(cursor);
+                on_selection_change(next);
+            });
+        })
+    }
 }
 
 impl Widget for RawTextArea {
@@ -388,13 +436,10 @@ impl Widget for RawTextArea {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let padding = 12.0;
-        let text_rect = Rect {
-            x: rect.x + padding,
-            y: rect.y + padding,
-            width: (rect.width - padding * 2.0).max(0.0),
-            height: (rect.height - padding * 2.0).max(0.0),
-        };
+        self.paint_content(painter, rect, self.style.content_rect(rect));
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, _rect: Rect, text_rect: Rect) {
         let (text, color) = if self.value.is_empty() && !self.placeholder.is_empty() {
             (&self.placeholder, self.placeholder_color)
         } else {
@@ -417,16 +462,24 @@ impl Widget for RawTextArea {
     }
 
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
+        self.paint_focused_overlay_with_content(
+            painter,
+            rect,
+            self.style.content_rect(rect),
+            caret_visible,
+        );
+    }
+
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        _rect: Rect,
+        text_rect: Rect,
+        caret_visible: bool,
+    ) {
         if !caret_visible {
             return;
         }
-        let padding = 12.0;
-        let text_rect = Rect {
-            x: rect.x + padding,
-            y: rect.y + padding,
-            width: (rect.width - padding * 2.0).max(0.0),
-            height: (rect.height - padding * 2.0).max(0.0),
-        };
         let cursor = self.cursor.min(self.value.len());
         // Caret proportions match `RawTextInput`'s: a slim bar sized and
         // vertically centered to the glyphs, not a full-height block.
@@ -443,13 +496,8 @@ impl Widget for RawTextArea {
         } else {
             let before_cursor = &self.value[..cursor];
             let line = before_cursor.rsplit('\n').next().unwrap_or("");
-            let (width, _) = crate::text_metrics::measure_family(
-                line,
-                self.font_size(),
-                crate::text_metrics::unbounded_width(),
-                self.family(),
-                false,
-            );
+            let width =
+                crate::text_metrics::advance_width_family(line, self.font_size(), self.family());
             let lines = (before_cursor.matches('\n').count()) as f32;
             let line_height = self.font_size() * 1.4;
             let scroll_x = self.horizontal_scroll(text_rect.width);
@@ -668,74 +716,19 @@ impl Widget for RawTextArea {
     }
 
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
-        let value = self.value.clone();
-        let font_size = self.font_size();
-        let family = self.style.typography.font_family.clone();
-        let wrap = self.wrap;
-        let on_cursor_change = self.on_cursor_change.clone();
-        let on_selection_change = self.on_selection_change.clone();
-        let drag_anchor = self.drag_anchor.clone();
-        let drag_focus = self.drag_focus.clone();
-        let keyboard_selection = self.keyboard_selection.clone();
-        Some(Rc::new(move |point, rect: Rect| {
-            let cursor = cursor_at_point(
-                &value,
-                font_size,
-                family.as_deref(),
-                point,
-                wrap,
-                rect.width - 24.0,
-            );
-            drag_anchor.set(cursor);
-            drag_focus.set(cursor);
-            keyboard_selection.set(TextSelection {
-                anchor: cursor,
-                focus: cursor,
-            });
-            creamui_reactive::batch(|| {
-                on_cursor_change(cursor);
-                on_selection_change(TextSelection {
-                    anchor: cursor,
-                    focus: cursor,
-                });
-            });
-        }))
+        Some(self.drag_handler(None, true))
+    }
+
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        Some(self.drag_handler(Some(content), true))
     }
 
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
-        let value = self.value.clone();
-        let font_size = self.font_size();
-        let family = self.style.typography.font_family.clone();
-        let wrap = self.wrap;
-        let on_cursor_change = self.on_cursor_change.clone();
-        let on_selection_change = self.on_selection_change.clone();
-        let drag_anchor = self.drag_anchor.clone();
-        let drag_focus = self.drag_focus.clone();
-        let keyboard_selection = self.keyboard_selection.clone();
-        Some(Rc::new(move |point, rect: Rect| {
-            let cursor = cursor_at_point(
-                &value,
-                font_size,
-                family.as_deref(),
-                point,
-                wrap,
-                rect.width - 24.0,
-            );
-            if cursor != drag_focus.get() {
-                drag_focus.set(cursor);
-                keyboard_selection.set(TextSelection {
-                    anchor: drag_anchor.get(),
-                    focus: cursor,
-                });
-                creamui_reactive::batch(|| {
-                    on_cursor_change(cursor);
-                    on_selection_change(TextSelection {
-                        anchor: drag_anchor.get(),
-                        focus: cursor,
-                    });
-                });
-            }
-        }))
+        Some(self.drag_handler(None, false))
+    }
+
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        Some(self.drag_handler(Some(content), false))
     }
 }
 
@@ -746,18 +739,19 @@ fn cursor_at_point(
     point: Point,
     wrap: bool,
     visible_width: f32,
+    scroll_x: f32,
 ) -> usize {
     if wrap {
         return crate::text_metrics::byte_offset_at_point_family(
             value,
             font_size,
             visible_width,
-            point.x - 12.0,
-            point.y - 12.0,
+            point.x,
+            point.y,
             family,
         );
     }
-    let line = ((point.y - 12.0) / (font_size * 1.4)).floor().max(0.0) as usize;
+    let line = (point.y / (font_size * 1.4)).floor().max(0.0) as usize;
     let lines: Vec<&str> = value.split('\n').collect();
     let line = line.min(lines.len().saturating_sub(1));
     let start = lines
@@ -769,7 +763,7 @@ fn cursor_at_point(
         + crate::text_metrics::byte_offset_at_x_family(
             lines[line],
             font_size,
-            (point.x - 12.0).max(0.0),
+            (point.x + scroll_x).max(0.0),
             family,
         )
 }
@@ -905,6 +899,41 @@ impl RawTextInput {
         );
         (text_width - visible_width + 4.0).max(0.0)
     }
+
+    fn drag_handler(&self, content_box: Option<Rect>, start: bool) -> Rc<dyn Fn(Point, Rect)> {
+        let value = self.value.clone();
+        let font_size = self.font_size();
+        let family = self.style.typography.font_family.clone();
+        let style = self.style.clone();
+        let on_cursor_change = self.on_cursor_change.clone();
+        let on_selection_change = self.on_selection_change.clone();
+        let selection = self.keyboard_selection.clone();
+        let anchor = self.drag_anchor.clone();
+        Rc::new(move |point, rect| {
+            let content = content_box.unwrap_or_else(|| style.content_rect(rect));
+            let width =
+                crate::text_metrics::advance_width_family(&value, font_size, family.as_deref());
+            let scroll = (width - content.width + 4.0).max(0.0);
+            let cursor = crate::text_metrics::byte_offset_at_x_family(
+                &value,
+                font_size,
+                (point.x - (content.x - rect.x) + scroll).max(0.0),
+                family.as_deref(),
+            );
+            if start {
+                anchor.set(cursor);
+            }
+            let next = TextSelection {
+                anchor: anchor.get(),
+                focus: cursor,
+            };
+            selection.set(next);
+            creamui_reactive::batch(|| {
+                on_cursor_change(cursor);
+                on_selection_change(next);
+            });
+        })
+    }
 }
 
 impl Widget for RawTextInput {
@@ -913,13 +942,10 @@ impl Widget for RawTextInput {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let padding = 8.0;
-        let text_rect = Rect {
-            x: rect.x + padding,
-            y: rect.y,
-            width: (rect.width - padding * 2.0).max(0.0),
-            height: rect.height,
-        };
+        self.paint_content(painter, rect, self.style.content_rect(rect));
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, _rect: Rect, text_rect: Rect) {
         // Unwrapped: a bounded width here would word-wrap onto a second row.
         let unbounded = Rect {
             x: text_rect.x - self.horizontal_scroll(text_rect.width),
@@ -944,12 +970,10 @@ impl Widget for RawTextInput {
             let selected = self.selection.range();
             if !selected.is_empty() {
                 if let Some(background) = self.selection_background {
-                    let (before, _) = crate::text_metrics::measure_family(
+                    let before = crate::text_metrics::advance_width_family(
                         &self.value[..selected.start],
                         self.font_size(),
-                        crate::text_metrics::unbounded_width(),
                         self.family(),
-                        false,
                     );
                     let (width, _) = crate::text_metrics::measure_family(
                         &self.value[selected.clone()],
@@ -961,7 +985,7 @@ impl Widget for RawTextInput {
                     painter.fill_rect(
                         Rect {
                             x: unbounded.x + before,
-                            y: rect.y + (rect.height - self.font_size() * 1.4) / 2.0,
+                            y: text_rect.y + (text_rect.height - self.font_size() * 1.4) / 2.0,
                             width,
                             height: self.font_size() * 1.4,
                         },
@@ -994,33 +1018,42 @@ impl Widget for RawTextInput {
     }
 
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
+        self.paint_focused_overlay_with_content(
+            painter,
+            rect,
+            self.style.content_rect(rect),
+            caret_visible,
+        );
+    }
+
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        _rect: Rect,
+        text_rect: Rect,
+        caret_visible: bool,
+    ) {
         if !caret_visible {
             return;
         }
-        let padding = 8.0;
-        let visible_width = (rect.width - padding * 2.0).max(0.0);
+        let visible_width = text_rect.width;
         let cursor = self.cursor.min(self.value.len());
-        let (text_width, _) = crate::text_metrics::measure_family(
+        let text_width = crate::text_metrics::advance_width_family(
             &self.value[..cursor],
             self.font_size(),
-            crate::text_metrics::unbounded_width(),
             self.family(),
-            false,
         );
-        let text_width = if self.value.is_empty() {
-            0.0
-        } else {
-            text_width
-        };
-        let caret_x = rect.x + padding + text_width - self.horizontal_scroll(visible_width);
-        let caret_height = (self.font_size() * 1.2).min(rect.height);
+        let caret_x = text_rect.x + text_width - self.horizontal_scroll(visible_width);
+        let caret_height = (self.font_size() * 1.2).min(text_rect.height);
         let caret_rect = Rect {
             x: caret_x,
-            y: rect.y + (rect.height - caret_height) / 2.0,
+            y: text_rect.y + (text_rect.height - caret_height) / 2.0,
             width: 1.5,
             height: caret_height,
         };
+        painter.push_clip(text_rect);
         painter.fill_rect(caret_rect, self.text_color(painter), 0.0);
+        painter.pop_clip();
     }
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
@@ -1203,67 +1236,18 @@ impl Widget for RawTextInput {
     }
 
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
-        let value = self.value.clone();
-        let font_size = self.font_size();
-        let on_cursor_change = self.on_cursor_change.clone();
-        let on_selection_change = self.on_selection_change.clone();
-        let selection = self.keyboard_selection.clone();
-        let anchor = self.drag_anchor.clone();
-        Some(Rc::new(move |point, rect| {
-            let visible = (rect.width - 16.0).max(0.0);
-            let (width, _) = crate::text_metrics::measure(
-                &value,
-                font_size,
-                crate::text_metrics::unbounded_width(),
-            );
-            let scroll = (width - visible + 4.0).max(0.0);
-            let cursor = crate::text_metrics::byte_offset_at_x(
-                &value,
-                font_size,
-                (point.x - 8.0 + scroll).max(0.0),
-            );
-            anchor.set(cursor);
-            let next = TextSelection {
-                anchor: cursor,
-                focus: cursor,
-            };
-            selection.set(next);
-            creamui_reactive::batch(|| {
-                on_cursor_change(cursor);
-                on_selection_change(next);
-            });
-        }))
+        Some(self.drag_handler(None, true))
+    }
+
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        Some(self.drag_handler(Some(content), true))
     }
 
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
-        let value = self.value.clone();
-        let font_size = self.font_size();
-        let on_cursor_change = self.on_cursor_change.clone();
-        let on_selection_change = self.on_selection_change.clone();
-        let selection = self.keyboard_selection.clone();
-        let anchor = self.drag_anchor.clone();
-        Some(Rc::new(move |point, rect| {
-            let visible = (rect.width - 16.0).max(0.0);
-            let (width, _) = crate::text_metrics::measure(
-                &value,
-                font_size,
-                crate::text_metrics::unbounded_width(),
-            );
-            let scroll = (width - visible + 4.0).max(0.0);
-            let cursor = crate::text_metrics::byte_offset_at_x(
-                &value,
-                font_size,
-                (point.x - 8.0 + scroll).max(0.0),
-            );
-            let next = TextSelection {
-                anchor: anchor.get(),
-                focus: cursor,
-            };
-            selection.set(next);
-            creamui_reactive::batch(|| {
-                on_cursor_change(cursor);
-                on_selection_change(next);
-            });
-        }))
+        Some(self.drag_handler(None, false))
+    }
+
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        Some(self.drag_handler(Some(content), false))
     }
 }

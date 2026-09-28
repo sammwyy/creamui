@@ -15,6 +15,12 @@ impl TextInput {
                 width: creamui_core::layout::Dimension::Length(200.0),
                 height: creamui_core::layout::Dimension::Length(36.0),
             },
+            padding: creamui_core::layout::Rect {
+                top: creamui_core::layout::LengthPercentage::Length(0.0),
+                right: creamui_core::layout::LengthPercentage::Length(8.0),
+                bottom: creamui_core::layout::LengthPercentage::Length(0.0),
+                left: creamui_core::layout::LengthPercentage::Length(8.0),
+            },
             ..Default::default()
         }
     }
@@ -111,6 +117,10 @@ impl Widget for TextInput {
         self.inner.paint(painter, rect);
     }
 
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content);
+    }
+
     fn focusable(&self) -> bool {
         self.inner.focusable()
     }
@@ -127,8 +137,16 @@ impl Widget for TextInput {
         self.inner.on_drag()
     }
 
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag_with_content(content)
+    }
+
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         self.inner.on_drag_start()
+    }
+
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag_start_with_content(content)
     }
 
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
@@ -142,6 +160,25 @@ impl Widget for TextInput {
         }
         self.inner
             .paint_focused_overlay(painter, rect, caret_visible);
+    }
+
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        caret_visible: bool,
+    ) {
+        if let Some(color) = self.inner.selection_background {
+            painter.stroke_rect(
+                rect,
+                color,
+                2.,
+                self.inner.style.paint.corner_radius.unwrap_or(0.0),
+            );
+        }
+        self.inner
+            .paint_focused_overlay_with_content(painter, rect, content, caret_visible);
     }
 }
 
@@ -158,6 +195,12 @@ impl TextArea {
             size: creamui_core::layout::Size {
                 width: creamui_core::layout::Dimension::Length(400.0),
                 height: creamui_core::layout::Dimension::Length(240.0),
+            },
+            padding: creamui_core::layout::Rect {
+                top: creamui_core::layout::LengthPercentage::Length(12.0),
+                right: creamui_core::layout::LengthPercentage::Length(12.0),
+                bottom: creamui_core::layout::LengthPercentage::Length(12.0),
+                left: creamui_core::layout::LengthPercentage::Length(12.0),
             },
             ..Default::default()
         }
@@ -271,6 +314,9 @@ impl Widget for TextArea {
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect)
     }
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content)
+    }
     fn focusable(&self) -> bool {
         self.inner.focusable()
     }
@@ -280,8 +326,14 @@ impl Widget for TextArea {
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         self.inner.on_drag()
     }
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag_with_content(content)
+    }
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         self.inner.on_drag_start()
+    }
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.inner.on_drag_start_with_content(content)
     }
     fn cursor_icon(&self) -> Option<CursorIcon> {
         self.inner.cursor_icon()
@@ -289,6 +341,16 @@ impl Widget for TextArea {
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
         self.inner
             .paint_focused_overlay(painter, rect, caret_visible)
+    }
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        caret_visible: bool,
+    ) {
+        self.inner
+            .paint_focused_overlay_with_content(painter, rect, content, caret_visible)
     }
 }
 

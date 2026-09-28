@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Text inputs and text areas place text, selections, carets, and pointer
+  selection within their layout-resolved padding and borders. Themed defaults
+  now declare their spacing as style padding.
 - CPU linear gradients with different stop alpha values now interpolate
   premultiplied colors, matching the GPU through transparent stops.
 - Animations follow the display: after a frame reaches a presenter or

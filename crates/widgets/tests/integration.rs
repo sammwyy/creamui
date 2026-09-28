@@ -42,7 +42,8 @@ fn every_widget_gets_common_builders_without_component_forwarders() {
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{
-    RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawText, RawView, TextSelection,
+    RawButton, RawCheckbox, RawScrollView, RawSlider, RawSwitch, RawText, RawTextArea,
+    RawTextInput, RawView, TextSelection,
 };
 use creamui_widgets::themed::{
     tab_styles, Button, Checkbox, ColorPicker, DateTimePicker, Heading, Link, ListBox, ListView,
@@ -1199,6 +1200,114 @@ fn text_area_paints_each_source_line_at_its_own_baseline() {
             "a textarea must not hand the painter one vertically-centered document block"
         );
     });
+}
+
+#[test]
+fn text_controls_use_style_content_box_for_text_caret_selection_and_pointer() {
+    let rect = Rect {
+        x: 50.0,
+        y: 20.0,
+        width: 200.0,
+        height: 100.0,
+    };
+    let selection_color = Color::rgb(20, 80, 120);
+    let make_input = |cursor_changed: Signal<usize>| {
+        RawTextInput::new(Style::default(), "abc", 14.0, Color::rgb(0, 0, 0), |_| {})
+            .padding_edges("4px 10px 6px 20px")
+            .border(Color::rgb(50, 50, 50), 3.0)
+            .cursor(0, move |cursor| cursor_changed.set(cursor))
+            .selection(
+                TextSelection {
+                    anchor: 0,
+                    focus: 1,
+                },
+                |_| {},
+            )
+            .selection_background(selection_color)
+    };
+    let input_cursor = Signal::new(0);
+    let input = make_input(input_cursor.clone());
+    let mut painter = RecordingPainter::default();
+    input.paint(&mut painter, rect);
+    input.paint_focused_overlay(&mut painter, rect, true);
+    assert_eq!(painter.text_rects[0].x, 73.0);
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(box_rect, color)| *color == selection_color && box_rect.x == 73.0));
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(box_rect, _)| box_rect.width == 1.5 && box_rect.x == 73.0));
+    input.on_drag_start().unwrap()(Point { x: 23.0, y: 30.0 }, rect);
+    assert_eq!(input_cursor.get(), 0);
+    input.on_drag().unwrap()(Point { x: 65.0, y: 30.0 }, rect);
+    assert!(input_cursor.get() > 0);
+
+    let area_cursor = Signal::new(0);
+    let changed = area_cursor.clone();
+    let area = RawTextArea::new(Style::default(), "abc", 14.0, Color::rgb(0, 0, 0), |_| {})
+        .padding_edges("4px 10px 6px 20px")
+        .border(Color::rgb(50, 50, 50), 3.0)
+        .cursor(0, move |cursor| changed.set(cursor));
+    let mut painter = RecordingPainter::default();
+    area.paint(&mut painter, rect);
+    area.paint_focused_overlay(&mut painter, rect, true);
+    assert_eq!(painter.text_rects[0].x, 73.0);
+    assert_eq!(painter.text_rects[0].y, 27.0);
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(box_rect, _)| box_rect.width == 1.5 && box_rect.x == 73.0));
+    area.on_drag_start().unwrap()(Point { x: 65.0, y: 10.0 }, rect);
+    assert!(area_cursor.get() > 0);
+}
+
+#[test]
+fn text_input_uses_layout_resolved_percentage_padding() {
+    let cursor = Signal::new(0usize);
+    let build = |cursor: Signal<usize>| {
+        let changed = cursor.clone();
+        let input = RawTextInput::new(Style::default(), "abc", 14.0, Color::rgb(0, 0, 0), |_| {})
+            .width(200.0)
+            .height(40.0)
+            .padding_edges("0 10%")
+            .border(Color::rgb(50, 50, 50), 3.0)
+            .cursor(cursor.get(), move |next| changed.set(next));
+        RawView::new(creamui_widgets::layout::row(0.0))
+            .width(400.0)
+            .child(Box::new(input))
+    };
+    let mut painter = RecordingPainter::default();
+    let size = Size {
+        width: 400.0,
+        height: 100.0,
+    };
+    let scene = render_frame(Box::new(build(cursor.clone())), size, &mut painter);
+    assert_eq!(painter.text_rects[0].x, 43.0);
+    let focused = scene
+        .focus_hit_test(Point { x: 50.0, y: 20.0 })
+        .expect("input focus");
+    let mut overlay = RecordingPainter::default();
+    Renderer::new().render_focused(
+        Box::new(build(cursor.clone())),
+        size,
+        &mut overlay,
+        Some(focused),
+        true,
+    );
+    assert!(overlay
+        .filled_rects
+        .iter()
+        .any(|(box_rect, _)| box_rect.width == 1.5 && box_rect.x == 43.0));
+    let (rect, start) = scene
+        .drag_start_at(Point { x: 50.0, y: 20.0 })
+        .expect("input drag start");
+    start(Point { x: 43.0, y: 20.0 }, rect);
+    assert_eq!(cursor.get(), 0);
+    let (rect, drag) = scene.draggable_at(0).expect("input drag");
+    drag(Point { x: 75.0, y: 20.0 }, rect);
+    assert!(cursor.get() > 0);
 }
 
 #[test]

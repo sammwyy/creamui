@@ -334,6 +334,22 @@ fn paint_instance(
         width: layout.size.width,
         height: layout.size.height,
     };
+    let content = Rect {
+        x: rect.x + layout.border.left + layout.padding.left,
+        y: rect.y + layout.border.top + layout.padding.top,
+        width: (rect.width
+            - layout.border.left
+            - layout.border.right
+            - layout.padding.left
+            - layout.padding.right)
+            .max(0.0),
+        height: (rect.height
+            - layout.border.top
+            - layout.border.bottom
+            - layout.padding.top
+            - layout.padding.bottom)
+            .max(0.0),
+    };
 
     let absolute = instance.style.layout.position == Position::Absolute;
     if mode == PaintMode::Flow && absolute {
@@ -397,22 +413,6 @@ fn paint_instance(
                 }
             }
         }
-        let content = Rect {
-            x: rect.x + layout.border.left + layout.padding.left,
-            y: rect.y + layout.border.top + layout.padding.top,
-            width: (rect.width
-                - layout.border.left
-                - layout.border.right
-                - layout.padding.left
-                - layout.padding.right)
-                .max(0.0),
-            height: (rect.height
-                - layout.border.top
-                - layout.border.bottom
-                - layout.padding.top
-                - layout.padding.bottom)
-                .max(0.0),
-        };
         instance.widget.paint_content(painter, rect, content);
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.paint_nodes_recorded += 1);
@@ -437,9 +437,12 @@ fn paint_instance(
         if let Some(on_key) = instance.widget.on_key() {
             let visible = rect.intersect(effective_clip);
             if visible.is_some() && focus.focused_index == Some(focus.counter) {
-                instance
-                    .widget
-                    .paint_focused_overlay(painter, rect, focus.caret_visible);
+                instance.widget.paint_focused_overlay_with_content(
+                    painter,
+                    rect,
+                    content,
+                    focus.caret_visible,
+                );
             }
             focus.counter += 1;
             out.focusables.push((visible, on_key));
@@ -456,11 +459,11 @@ fn paint_instance(
             if let Some(handler) = instance.widget.on_click_at() {
                 out.hits_at.push((visible, handler));
             }
-            if let Some(on_drag) = instance.widget.on_drag() {
+            if let Some(on_drag) = instance.widget.on_drag_with_content(content) {
                 out.draggables
                     .push((visible, rect, on_drag, instance.widget.on_drag_end()));
             }
-            if let Some(on_drag_start) = instance.widget.on_drag_start() {
+            if let Some(on_drag_start) = instance.widget.on_drag_start_with_content(content) {
                 out.drag_starts.push((visible, rect, on_drag_start));
             }
             let on_scroll_bounded = instance.widget.on_scroll_bounded();

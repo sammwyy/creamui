@@ -475,11 +475,21 @@ pub trait Widget {
         None
     }
 
+    /// Like [`Widget::on_drag`], with the content box resolved by layout.
+    fn on_drag_with_content(&self, _content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.on_drag()
+    }
+
     /// Optional handler for the initial pointer press of a drag gesture.
     /// Kept separate from [`Widget::on_drag`] so text editors can record a
     /// selection anchor before subsequent pointer moves extend the focus.
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         None
+    }
+
+    /// Like [`Widget::on_drag_start`], with the content box resolved by layout.
+    fn on_drag_start_with_content(&self, _content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.on_drag_start()
     }
 
     fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
@@ -555,6 +565,17 @@ pub trait Widget {
     /// [`Widget::focusable`]). Used for a text input's blinking caret.
     /// `caret_visible` is the current blink phase. Default: a no-op.
     fn paint_focused_overlay(&self, _painter: &mut dyn Painter, _rect: Rect, _caret_visible: bool) {
+    }
+
+    /// Paints the focused overlay using the content box resolved by layout.
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        _content: Rect,
+        caret_visible: bool,
+    ) {
+        self.paint_focused_overlay(painter, rect, caret_visible);
     }
 }
 

@@ -71,13 +71,16 @@ pub fn unbounded_width() -> f32 {
     UNBOUNDED_WIDTH
 }
 
-/// Returns the closest UTF-8 insertion boundary for a horizontal point in a
-/// single source line. Unlike repeatedly measuring every prefix, this builds
-/// one font layout, which keeps pointer selection responsive on long lines.
-pub fn byte_offset_at_x(text: &str, font_size: f32, x: f32) -> usize {
-    byte_offset_at_x_family(text, font_size, x, None)
+pub fn advance_width_family(text: &str, font_size: f32, family: Option<&str>) -> f32 {
+    if text.is_empty() {
+        0.0
+    } else {
+        measure_family(text, font_size, UNBOUNDED_WIDTH, family, false).0
+    }
 }
 
+/// Returns the closest UTF-8 insertion boundary for a horizontal point in a
+/// single source line using one font layout.
 pub fn byte_offset_at_x_family(text: &str, font_size: f32, x: f32, family: Option<&str>) -> usize {
     let layout = wrapped(&font(family), text, font_size, UNBOUNDED_WIDTH);
     let mut offset = 0;

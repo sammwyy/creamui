@@ -7,9 +7,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Extend radial backgrounds beyond two-stop, farthest-corner circles to
   ellipses, explicit radii, additional color stops, and repeating gradients.
-- Make `RawTextInput` and `RawTextArea` use resolved style padding and borders
-  for text, selection, and caret geometry. They still use fixed internal
-  padding of 8 and 12 pixels, respectively.
 - Reuse or share text layouts between `widgets::text_metrics` measurement and
   the `creamui-render` text cache. Measurement currently builds a new layout
   on each call.

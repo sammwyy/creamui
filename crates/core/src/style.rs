@@ -960,6 +960,26 @@ impl Style {
         layout_with_border(self.layout.clone(), self.border_width())
     }
 
+    /// Returns the content box inside this style's padding and layout border.
+    /// Percentage padding is resolved against the box width.
+    pub fn content_rect(&self, rect: crate::Rect) -> crate::Rect {
+        let layout = self.layout_with_border();
+        let resolve = |value: crate::layout::LengthPercentage| match value {
+            crate::layout::LengthPercentage::Length(length) => length,
+            crate::layout::LengthPercentage::Percent(percent) => percent * rect.width,
+        };
+        let left = resolve(layout.border.left) + resolve(layout.padding.left);
+        let right = resolve(layout.border.right) + resolve(layout.padding.right);
+        let top = resolve(layout.border.top) + resolve(layout.padding.top);
+        let bottom = resolve(layout.border.bottom) + resolve(layout.padding.bottom);
+        crate::Rect {
+            x: rect.x + left,
+            y: rect.y + top,
+            width: (rect.width - left - right).max(0.0),
+            height: (rect.height - top - bottom).max(0.0),
+        }
+    }
+
     pub fn layout(mut self, layout: crate::layout::Style) -> Self {
         self.layout = layout;
         self

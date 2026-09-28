@@ -76,6 +76,7 @@ pub(crate) type SignalStringFreeFn = unsafe extern "C" fn(*mut c_void);
 pub(crate) type WindowResizeFn = unsafe extern "C" fn(*const c_void, u32, u32);
 pub(crate) type WindowSetPositionFn = unsafe extern "C" fn(*const c_void, i32, i32);
 pub(crate) type WindowSetAlwaysOnTopFn = unsafe extern "C" fn(*const c_void, c_int);
+pub(crate) type WindowSetBlurFn = unsafe extern "C" fn(*const c_void, c_int, f64, f64, f64, f64);
 pub(crate) type WindowHandleFreeFn = unsafe extern "C" fn(*mut c_void);
 
 pub(crate) type BuildFn = extern "C" fn(f32, f32, *mut c_void) -> *mut c_void;
@@ -150,6 +151,7 @@ pub(crate) struct Symbols {
     pub(crate) window_resize: WindowResizeFn,
     pub(crate) window_set_position: WindowSetPositionFn,
     pub(crate) window_set_always_on_top: WindowSetAlwaysOnTopFn,
+    pub(crate) window_set_blur: WindowSetBlurFn,
     pub(crate) window_handle_free: WindowHandleFreeFn,
     pub(crate) app_builder_new: AppBuilderNewFn,
     pub(crate) app_builder_add_window: AppBuilderAddWindowFn,
@@ -244,6 +246,7 @@ impl Symbols {
                 window_resize: resolve!(lib, "creamui_window_resize"),
                 window_set_position: resolve!(lib, "creamui_window_set_position"),
                 window_set_always_on_top: resolve!(lib, "creamui_window_set_always_on_top"),
+                window_set_blur: resolve!(lib, "creamui_window_set_blur"),
                 window_handle_free: resolve!(lib, "creamui_window_handle_free"),
                 app_builder_new: resolve!(lib, "creamui_app_builder_new"),
                 app_builder_add_window: resolve!(lib, "creamui_app_builder_add_window"),
@@ -338,6 +341,20 @@ impl Runtime {
     /// Returns the bundled default light theme's tokens.
     pub fn theme_light(&self) -> CTheme {
         unsafe { (self.sym.theme_light)() }
+    }
+
+    /// Requests or clears compositor-side blur on a live window handle. The
+    /// kind constants and rectangle units are defined by `creamui-abi`.
+    pub unsafe fn set_blur(
+        &self,
+        handle: *const c_void,
+        kind: c_int,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    ) {
+        (self.sym.window_set_blur)(handle, kind, x, y, width, height);
     }
 }
 

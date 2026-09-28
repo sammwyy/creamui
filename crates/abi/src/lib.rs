@@ -337,6 +337,12 @@ impl Default for CTypographyStyle {
 pub const CUI_RENDER_BACKEND_GPU: c_int = 0;
 pub const CUI_RENDER_BACKEND_CPU: c_int = 1;
 
+/// Values accepted by `creamui_window_set_blur`: no blur, the whole window,
+/// or a window-local rectangle.
+pub const CUI_BLUR_NONE: c_int = 0;
+pub const CUI_BLUR_WINDOW: c_int = 1;
+pub const CUI_BLUR_RECT: c_int = 2;
+
 /// A node's window-space rect as of the last computed layout: identical
 /// layout to `creamui_core::Rect`.
 #[repr(C)]

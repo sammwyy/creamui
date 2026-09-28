@@ -25,6 +25,8 @@ All notable changes to CreamUI will be documented in this file.
   mutations, layout, retained paint readback, and click dispatch.
 - ABI paint text readback now carries an explicit UTF-8 byte length instead of
   assuming the retained string is NUL-terminated.
+- `RawVirtualList` uses a fixed height declared in its style as the viewport;
+  the explicit viewport remains a fallback for auto-sized lists.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

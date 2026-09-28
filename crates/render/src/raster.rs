@@ -7,7 +7,7 @@
 
 use crate::display_list::{
     Bounds, Clip, Damage, DisplayList, FrameDiff, ImagePrimitive, Line, Primitive, Quad,
-    ScrollBlit, TextRun,
+    QuadGradient, RoundedClip, ScrollBlit, TextRun,
 };
 use creamui_theme::Color;
 use std::collections::HashMap;
@@ -392,32 +392,40 @@ fn quad_paint(quad: &Quad) -> Paint<'static> {
     };
     let mut paint = Paint::default();
     paint.anti_alias = true;
-    paint.shader = LinearGradient::new(
-        Point::from_xy(gradient.start[0], gradient.start[1]),
-        Point::from_xy(gradient.end[0], gradient.end[1]),
-        vec![
-            GradientStop::new(
-                0.0,
-                tiny_skia::Color::from_rgba8(
-                    gradient.start_color.r,
-                    gradient.start_color.g,
-                    gradient.start_color.b,
-                    gradient.start_color.a,
-                ),
+    let stops = vec![
+        GradientStop::new(
+            0.0,
+            tiny_skia::Color::from_rgba8(
+                gradient.start_color.r,
+                gradient.start_color.g,
+                gradient.start_color.b,
+                gradient.start_color.a,
             ),
-            GradientStop::new(
-                1.0,
-                tiny_skia::Color::from_rgba8(
-                    gradient.end_color.r,
-                    gradient.end_color.g,
-                    gradient.end_color.b,
-                    gradient.end_color.a,
-                ),
+        ),
+        GradientStop::new(
+            1.0,
+            tiny_skia::Color::from_rgba8(
+                gradient.end_color.r,
+                gradient.end_color.g,
+                gradient.end_color.b,
+                gradient.end_color.a,
             ),
-        ],
-        SpreadMode::Pad,
-        Transform::identity(),
-    )
+        ),
+    ];
+    let start = Point::from_xy(gradient.start[0], gradient.start[1]);
+    let end = Point::from_xy(gradient.end[0], gradient.end[1]);
+    paint.shader = if gradient.radial {
+        tiny_skia::RadialGradient::new(
+            start,
+            start,
+            (gradient.end[0] - gradient.start[0]).hypot(gradient.end[1] - gradient.start[1]),
+            stops,
+            SpreadMode::Pad,
+            Transform::identity(),
+        )
+    } else {
+        LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())
+    }
     .unwrap_or_else(|| solid(quad.background).shader);
     paint
 }
@@ -473,7 +481,12 @@ fn push_rounded_rect(pb: &mut PathBuilder, b: Bounds, radius: f32) {
 }
 
 fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Option<&Mask>) {
-    if quad.background.a > 0 || quad.gradient.is_some() {
+    let translucent_radial = quad
+        .gradient
+        .filter(|gradient| gradient.radial && gradient.start_color.a != gradient.end_color.a);
+    if let Some(gradient) = translucent_radial {
+        draw_translucent_radial(target, quad, gradient, transform, mask);
+    } else if quad.background.a > 0 || quad.gradient.is_some() {
         let paint = quad_paint(quad);
         if quad.radius <= 0.01 {
             if let Some(rect) = tiny_skia::Rect::from_ltrb(
@@ -504,6 +517,72 @@ fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Op
                 transform,
                 mask,
             );
+        }
+    }
+}
+
+fn draw_translucent_radial(
+    target: &mut PixmapMut,
+    quad: &Quad,
+    gradient: QuadGradient,
+    transform: Transform,
+    mask: Option<&Mask>,
+) {
+    let bounds = quad.bounds.translate([transform.tx, transform.ty]);
+    let shape = Clip {
+        bounds,
+        rounded: Some(RoundedClip {
+            bounds,
+            radius: quad.radius,
+        }),
+    };
+    let width = target.width() as usize;
+    let visible = bounds.round_out().intersect(Bounds::new(
+        0.0,
+        0.0,
+        target.width() as f32,
+        target.height() as f32,
+    ));
+    let (x0, y0, x1, y1) = pixel_span(visible);
+    let center = [
+        gradient.start[0] + transform.tx,
+        gradient.start[1] + transform.ty,
+    ];
+    let radius = (gradient.end[0] - gradient.start[0])
+        .hypot(gradient.end[1] - gradient.start[1])
+        .max(1e-6);
+    let premultiply = |color: Color| {
+        let alpha = color.a as f32 / 255.0;
+        [
+            color.r as f32 * alpha,
+            color.g as f32 * alpha,
+            color.b as f32 * alpha,
+            color.a as f32,
+        ]
+    };
+    let start = premultiply(gradient.start_color);
+    let end = premultiply(gradient.end_color);
+    let pixels = target.data_mut();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let index = y * width + x;
+            let mut coverage = rounded_coverage(&shape, x as i32, y as i32) as f32 / 255.0;
+            if let Some(mask) = mask {
+                coverage *= mask.data()[index] as f32 / 255.0;
+            }
+            if coverage == 0.0 {
+                continue;
+            }
+            let t = (x as f32 + 0.5 - center[0]).hypot(y as f32 + 0.5 - center[1]) / radius;
+            let t = t.min(1.0);
+            let alpha = (start[3] + (end[3] - start[3]) * t) * coverage / 255.0;
+            let pixel = &mut pixels[index * 4..index * 4 + 4];
+            for channel in 0..4 {
+                let source = (start[channel] + (end[channel] - start[channel]) * t) * coverage;
+                pixel[channel] = (source + pixel[channel] as f32 * (1.0 - alpha))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
         }
     }
 }
@@ -659,6 +738,85 @@ mod tests {
         let right = rgba(&raster, 37, 15);
         assert!(left[0] > left[2]);
         assert!(right[2] > right[0]);
+    }
+
+    #[test]
+    fn radial_gradient_interpolates_from_center_and_clips_corners() {
+        let list = record(|p| {
+            p.fill_radial_gradient(
+                rect(0.0, 0.0, 40.0, 30.0),
+                Color::rgb(255, 0, 0),
+                Color::rgb(0, 0, 255),
+                creamui_core::Point { x: 20.0, y: 15.0 },
+                25.0,
+                8.0,
+            )
+        });
+        assert_eq!(list.items.len(), 1);
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        let center = rgba(&raster, 20, 15);
+        let edge = rgba(&raster, 38, 15);
+        assert!(center[0] > 240 && center[2] < 15);
+        assert!(edge[2] > edge[0]);
+        assert_eq!(rgba(&raster, 0, 0), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn radial_gradient_transparency_uses_premultiplied_colors() {
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(40, 30, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+        recorder.fill_radial_gradient(
+            rect(0.0, 0.0, 40.0, 30.0),
+            Color::rgb(255, 0, 0),
+            Color::rgba(0, 0, 255, 0),
+            creamui_core::Point { x: 0.5, y: 15.5 },
+            20.0,
+            0.0,
+        );
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&recorder.finish(), &Damage::Full);
+        assert_eq!(rgba(&raster, 10, 15), [128, 0, 0, 128]);
+        assert_eq!(rgba(&raster, 30, 15), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn radial_gradient_partial_repaint_matches_full_with_clipping() {
+        for end_alpha in [255, 40] {
+            let frame = |center_x| {
+                record(|p| {
+                    p.push_clip_rounded(rect(6.0, 4.0, 28.0, 22.0), 6.0);
+                    p.fill_radial_gradient(
+                        rect(0.0, 0.0, 40.0, 30.0),
+                        Color::rgb(255, 0, 0),
+                        Color::rgba(0, 0, 255, end_alpha),
+                        creamui_core::Point {
+                            x: center_x,
+                            y: 15.0,
+                        },
+                        25.0,
+                        4.0,
+                    );
+                    p.pop_clip();
+                })
+            };
+            let before = frame(10.0);
+            let after = frame(30.0);
+            assert!(!matches!(damage(Some(&before), &after), Damage::None));
+            let mut partial = Rasterizer::new(40, 30);
+            partial.render(&before, &Damage::Full);
+            partial.render(
+                &after,
+                &Damage::Partial(vec![Bounds::new(0.0, 0.0, 40.0, 15.0)]),
+            );
+            partial.render(
+                &after,
+                &Damage::Partial(vec![Bounds::new(0.0, 15.0, 40.0, 30.0)]),
+            );
+            let mut full = Rasterizer::new(40, 30);
+            full.render(&after, &Damage::Full);
+            assert_eq!(partial.pixmap().data(), full.pixmap().data());
+        }
     }
 
     #[test]

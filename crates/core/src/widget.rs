@@ -195,6 +195,18 @@ pub trait Painter {
     ) {
         self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
     }
+    #[allow(clippy::too_many_arguments)]
+    fn fill_radial_gradient(
+        &mut self,
+        rect: Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        _center: Point,
+        _radius: f32,
+        corner_radius: f32,
+    ) {
+        self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
+    }
     fn draw_box_shadow(
         &mut self,
         rect: Rect,

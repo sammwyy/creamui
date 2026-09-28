@@ -381,6 +381,17 @@ fn paint_instance(
                     gradient.angle_degrees,
                     radius,
                 ),
+                crate::Background::RadialGradient(gradient) => {
+                    let (center, gradient_radius) = gradient.geometry(rect);
+                    painter.fill_radial_gradient(
+                        rect,
+                        gradient.start.resolve(&colors),
+                        gradient.end.resolve(&colors),
+                        center,
+                        gradient_radius,
+                        radius,
+                    );
+                }
             }
         }
         instance.widget.paint(painter, rect);

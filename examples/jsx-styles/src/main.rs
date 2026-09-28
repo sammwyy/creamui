@@ -1,5 +1,5 @@
 use creamui::core::{
-    layout::{AlignItems, Display, FlexDirection, JustifyContent},
+    layout::{AlignItems, BoxSizing, Display, FlexDirection, JustifyContent},
     TextAlign,
 };
 use creamui::{jsx, run, ColorToken, Signal, Size, Style, Theme, WindowOptions};
@@ -15,7 +15,8 @@ fn action_style() -> Style {
         .border(ColorToken::Border, 1.0)
         .corner_radius(8.0)
         .color(ColorToken::TextPrimary)
-        .padding(12.0)
+        .box_sizing(BoxSizing::BorderBox)
+        .padding("8px 12px")
 }
 
 fn main() {
@@ -45,6 +46,8 @@ fn main() {
 
             Box::new(jsx! {
                 <RawView style={screen}>
+                    <RawView width={220.0} aspect_ratio={8.0} corner_radius={10.0}
+                        background={"radial-gradient(circle at 25% 25%, #587cff, #121830)"} />
                     <RawText font_size={22.0} color={ColorToken::TextPrimary} align={TextAlign::Center}>
                         "Shared JSX styles"
                     </RawText>

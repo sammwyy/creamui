@@ -23,6 +23,7 @@ const KIND_LINE: u32 = 1;
 const KIND_GLYPH: u32 = 2;
 const KIND_IMAGE: u32 = 3;
 const KIND_GRADIENT_QUAD: u32 = 4;
+const KIND_RADIAL_GRADIENT_QUAD: u32 = 5;
 const KIND_BITS: u32 = 4;
 const CLIPS_PER_ROW: u32 = 256;
 const TEXELS_PER_CLIP: u32 = 3;
@@ -884,7 +885,11 @@ impl GpuRenderer {
                 Primitive::Quad(quad) => {
                     let (kind, color, border_color, data) = match quad.gradient {
                         Some(gradient) => (
-                            KIND_GRADIENT_QUAD,
+                            if gradient.radial {
+                                KIND_RADIAL_GRADIENT_QUAD
+                            } else {
+                                KIND_GRADIENT_QUAD
+                            },
                             gradient.start_color,
                             gradient.end_color,
                             [
@@ -1596,6 +1601,40 @@ mod tests {
         assert_eq!(&gpu_pixels[..4], &[20, 20, 24, 255]);
         let center = (16 * 96 + 24) * 4;
         assert_eq!(&gpu_pixels[center..center + 4], &[200, 40, 40, 255]);
+    }
+
+    #[test]
+    fn radial_gradients_match_cpu_with_alpha_scale_and_scroll() {
+        let Some(mut gpu) = headless() else { return };
+        for end_alpha in [255, 40, 0] {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(96, 64, 2.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+            recorder.push_scroll_layer(rect(4.0, 4.0, 40.0, 24.0), 0.0, Point { x: 0.0, y: 5.0 });
+            recorder.fill_radial_gradient(
+                rect(4.0, -1.0, 40.0, 36.0),
+                Color::rgb(255, 30, 0),
+                Color::rgba(0, 60, 255, end_alpha),
+                Point { x: 16.0, y: 12.0 },
+                24.0,
+                0.0,
+            );
+            recorder.pop_clip();
+            let list = recorder.finish();
+            let gpu_pixels = gpu.render_to_pixels(&list);
+            let mut cpu = Rasterizer::new(list.width, list.height);
+            cpu.render(&list, &Damage::Full);
+            let worst = gpu_pixels
+                .iter()
+                .zip(cpu.pixmap().data())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(
+                worst <= 3,
+                "alpha={end_alpha}: worst channel difference {worst} on {}",
+                gpu.adapter_name()
+            );
+        }
     }
 
     #[test]

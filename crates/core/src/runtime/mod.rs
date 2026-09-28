@@ -31,7 +31,7 @@ pub use node::{
 };
 pub use paint::{
     BorderPrimitive, ImagePrimitive, PaintFragment, PaintOp, PaintPrimitive, PaintState,
-    QuadPrimitive, RecordingPainter, TextPrimitive,
+    QuadPrimitive, RadialGradientPrimitive, RecordingPainter, TextPrimitive,
 };
 pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
@@ -814,6 +814,35 @@ mod tests {
                 }
             ))]
         );
+    }
+
+    #[test]
+    fn rebuild_paint_resolves_radial_gradient_geometry_and_theme() {
+        let mut runtime = Runtime::new();
+        let node = full_size_root(&mut runtime);
+        runtime.set_root(Some(node));
+        runtime.transaction().apply(Mutation::SetPaintStyle {
+            node,
+            style: crate::Style::new()
+                .background(
+                    crate::RadialGradient::new(
+                        crate::ColorToken::Accent,
+                        crate::ColorToken::Surface,
+                    )
+                    .at(0.0, 0.0),
+                )
+                .paint,
+        });
+        runtime.compute_layout(size(30.0, 40.0));
+        let colors = creamui_theme::ColorScheme::dark();
+        runtime.rebuild_paint(&colors);
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::RadialGradient(gradient)) = &fragment.ops[0] else {
+            panic!("expected radial gradient");
+        };
+        assert_eq!(gradient.radius, 50.0);
+        assert_eq!(gradient.start, colors.accent);
+        assert_eq!(gradient.end, colors.surface);
     }
 
     #[test]

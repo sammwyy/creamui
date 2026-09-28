@@ -136,6 +136,52 @@ fn spacing_shorthands_position_native_and_jsx_children() {
     );
 }
 
+#[test]
+fn radial_gradients_record_the_same_paint_from_native_and_jsx() {
+    use creamui_core::{runtime::RecordingPainter, RadialGradient};
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(
+        CommonStyle::new()
+            .width(100.0)
+            .height(80.0)
+            .corner_radius(6.0)
+            .background(
+                RadialGradient::new(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)).at(0.25, 0.75),
+            ),
+    );
+    let jsx = jsx! {
+        <RawView width={100.0} height={80.0} corner_radius={6.0}
+            background={"radial-gradient(circle at 25% 75%, #ff0000, #0000ff)"} />
+    };
+    let record = |widget: BoxedWidget| {
+        let mut painter = RecordingPainter::new(Default::default());
+        render_frame(
+            widget,
+            Size {
+                width: 200.0,
+                height: 200.0,
+            },
+            &mut painter,
+        );
+        painter.into_ops()
+    };
+    let ops = record(Box::new(native));
+    assert_eq!(ops, record(Box::new(jsx)));
+    let gradient = ops
+        .iter()
+        .find_map(|op| match op {
+            creamui_core::runtime::PaintOp::Primitive(
+                creamui_core::runtime::PaintPrimitive::RadialGradient(gradient),
+            ) => Some(gradient),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(gradient.center, creamui_core::Point { x: 25.0, y: 60.0 });
+    assert_eq!(gradient.radius, 75.0_f32.hypot(60.0));
+    assert_eq!(gradient.corner_radius, 6.0);
+}
+
 #[component]
 fn CounterLabel(value: i32) -> BoxedWidget {
     Box::new(jsx! { <Text>{format!("Custom: {value}")}</Text> })

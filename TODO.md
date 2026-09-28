@@ -1,5 +1,13 @@
 # TODO
 
+- Extend radial backgrounds beyond two-stop, farthest-corner circles to
+  ellipses, explicit radii, additional color stops, and repeating gradients.
+- Common paint borders do not reserve layout space; CSS border-box sizing
+  currently accounts only for borders declared in `Style::layout.border`.
+- CPU linear gradients interpolate unpremultiplied colors in tiny-skia,
+  while GPU linear gradients interpolate premultiplied colors. Align their
+  interpolation when stop alpha values differ, as radial gradients do.
+
 - `crates/core/src/runtime` (the persistent runtime tree) is not wired
   into `Renderer`/`window.rs` yet — it only exists alongside the old
   reconcile path, reachable via `mount_legacy_widget`, `create_binding`,

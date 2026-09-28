@@ -131,11 +131,102 @@ impl LinearGradient {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadialGradient {
+    pub start: ColorValue,
+    pub end: ColorValue,
+    /// Center coordinates as fractions of the background box.
+    pub center: crate::Point,
+}
+
+impl RadialGradient {
+    pub fn new(start: impl Into<ColorValue>, end: impl Into<ColorValue>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+            center: crate::Point { x: 0.5, y: 0.5 },
+        }
+    }
+
+    pub fn at(mut self, x: f32, y: f32) -> Self {
+        assert!(
+            x.is_finite() && y.is_finite(),
+            "radial gradient center must be finite"
+        );
+        self.center = crate::Point { x, y };
+        self
+    }
+
+    pub fn geometry(self, rect: crate::Rect) -> (crate::Point, f32) {
+        let x = self.center.x * rect.width;
+        let y = self.center.y * rect.height;
+        let radius = x
+            .abs()
+            .max((rect.width - x).abs())
+            .hypot(y.abs().max((rect.height - y).abs()));
+        (
+            crate::Point {
+                x: rect.x + x,
+                y: rect.y + y,
+            },
+            radius,
+        )
+    }
+}
+
+impl FromStr for RadialGradient {
+    type Err = StyleParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let invalid = || {
+            StyleParseError(format!(
+                "expected `radial-gradient(circle [at x% y%], start, end)`, got `{input}`"
+            ))
+        };
+        let body = input
+            .trim()
+            .strip_prefix("radial-gradient(")
+            .and_then(|value| value.strip_suffix(')'))
+            .ok_or_else(invalid)?;
+        let mut parts = body.split(',').map(str::trim);
+        let shape = parts.next().ok_or_else(invalid)?;
+        let start = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
+        let end = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
+        if parts.next().is_some() {
+            return Err(invalid());
+        }
+        let mut tokens = shape.split_whitespace();
+        if tokens.next() != Some("circle") {
+            return Err(invalid());
+        }
+        let mut gradient = Self::new(start, end);
+        if let Some(token) = tokens.next() {
+            if token != "at" {
+                return Err(invalid());
+            }
+            let percent = |token: Option<&str>| {
+                token
+                    .and_then(|value| value.strip_suffix('%'))
+                    .and_then(|value| value.parse::<f32>().ok())
+                    .filter(|value| value.is_finite())
+                    .map(|value| value / 100.0)
+                    .ok_or_else(invalid)
+            };
+            gradient = gradient.at(percent(tokens.next())?, percent(tokens.next())?);
+        }
+        if tokens.next().is_some() {
+            return Err(invalid());
+        }
+        Ok(gradient)
+    }
+}
+
 /// A solid or gradient component background.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Background {
     Solid(ColorValue),
     LinearGradient(LinearGradient),
+    RadialGradient(RadialGradient),
 }
 
 impl From<ColorValue> for Background {
@@ -162,6 +253,12 @@ impl From<LinearGradient> for Background {
     }
 }
 
+impl From<RadialGradient> for Background {
+    fn from(gradient: RadialGradient) -> Self {
+        Self::RadialGradient(gradient)
+    }
+}
+
 impl From<&str> for Background {
     fn from(value: &str) -> Self {
         value
@@ -181,6 +278,9 @@ impl FromStr for Background {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let input = input.trim();
+        if input.starts_with("radial-gradient(") {
+            return input.parse::<RadialGradient>().map(Self::RadialGradient);
+        }
         let Some(body) = input
             .strip_prefix("linear-gradient(")
             .and_then(|value| value.strip_suffix(')'))
@@ -1279,6 +1379,56 @@ impl Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radial_gradients_parse_centers_and_theme_colors() {
+        let expected =
+            RadialGradient::new(ColorToken::Accent, Color::rgba(0, 0, 0, 0)).at(0.25, 0.75);
+        let background: Background = "radial-gradient(circle at 25% 75%, var(--accent), #00000000)"
+            .parse()
+            .unwrap();
+        assert_eq!(background, Background::RadialGradient(expected));
+        let style = Style::new()
+            .background(expected)
+            .hover(StateStyle::new().background("radial-gradient(circle, #ffffff, #000000)"));
+        assert_eq!(
+            style.resolve(InteractionState::Normal).paint.background,
+            Some(background)
+        );
+        assert_eq!(
+            style.resolve(InteractionState::Hover).paint.background,
+            Some(RadialGradient::new(Color::rgb(255, 255, 255), Color::rgb(0, 0, 0)).into())
+        );
+    }
+
+    #[test]
+    fn radial_gradient_uses_the_farthest_corner() {
+        let gradient = RadialGradient::new(ColorToken::Accent, ColorToken::Surface).at(0.0, 0.0);
+        let (center, radius) = gradient.geometry(crate::Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 30.0,
+            height: 40.0,
+        });
+        assert_eq!(center, crate::Point { x: 10.0, y: 20.0 });
+        assert_eq!(radius, 50.0);
+    }
+
+    #[test]
+    fn radial_gradients_reject_unsupported_or_nonfinite_geometry() {
+        for input in [
+            "radial-gradient(#ffffff, #000000)",
+            "radial-gradient(ellipse, #ffffff, #000000)",
+            "radial-gradient(circle closest-side, #ffffff, #000000)",
+            "radial-gradient(circle at 10px 20px, #ffffff, #000000)",
+            "radial-gradient(circle at NaN% 50%, #ffffff, #000000)",
+            "radial-gradient(circle at 10% 20% 30%, #ffffff, #000000)",
+            "radial-gradient(circle, #ffffff)",
+            "radial-gradient(circle, #ffffff, #000000, #ff0000)",
+        ] {
+            assert!(input.parse::<Background>().is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn spacing_shorthands_expand_in_css_order() {

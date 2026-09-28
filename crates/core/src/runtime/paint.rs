@@ -19,6 +19,16 @@ pub struct GradientPrimitive {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RadialGradientPrimitive {
+    pub rect: crate::Rect,
+    pub start: creamui_theme::Color,
+    pub end: creamui_theme::Color,
+    pub center: crate::Point,
+    pub radius: f32,
+    pub corner_radius: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BorderPrimitive {
     pub rect: crate::Rect,
     pub color: creamui_theme::Color,
@@ -49,6 +59,7 @@ pub struct ImagePrimitive {
 pub enum PaintPrimitive {
     Quad(QuadPrimitive),
     Gradient(GradientPrimitive),
+    RadialGradient(RadialGradientPrimitive),
     Border(BorderPrimitive),
     Text(TextPrimitive),
     Image(ImagePrimitive),
@@ -100,6 +111,17 @@ pub(super) fn generate_fragment(
                     start: gradient.start.resolve(colors),
                     end: gradient.end.resolve(colors),
                     angle_degrees: gradient.angle_degrees,
+                    corner_radius: paint.corner_radius.unwrap_or(0.0),
+                })
+            }
+            crate::Background::RadialGradient(gradient) => {
+                let (center, radius) = gradient.geometry(rect);
+                PaintPrimitive::RadialGradient(RadialGradientPrimitive {
+                    rect,
+                    start: gradient.start.resolve(colors),
+                    end: gradient.end.resolve(colors),
+                    center,
+                    radius,
                     corner_radius: paint.corner_radius.unwrap_or(0.0),
                 })
             }
@@ -226,6 +248,28 @@ impl crate::Painter for RecordingPainter {
                 corner_radius,
             },
         )));
+    }
+
+    fn fill_radial_gradient(
+        &mut self,
+        rect: crate::Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        center: crate::Point,
+        radius: f32,
+        corner_radius: f32,
+    ) {
+        self.ops
+            .push(PaintOp::Primitive(PaintPrimitive::RadialGradient(
+                RadialGradientPrimitive {
+                    rect,
+                    start,
+                    end,
+                    center,
+                    radius,
+                    corner_radius,
+                },
+            )));
     }
 
     fn stroke_rect(

@@ -46,3 +46,33 @@ JSX uses the same values: `<RawView padding={"8px 16px"} margin={"0 auto"} />`.
 Directional JSX props override shorthand props, and inline props override
 the `style` prop. Existing `StyleProp::Padding(LengthValue)` and
 `StyleProp::Margin(LengthValue)` declarations remain supported.
+
+Circular, two-stop radial backgrounds use `radial-gradient(circle, start, end)`
+or `radial-gradient(circle at 25% 75%, start, end)`. The default center is
+`50% 50%`; the radius reaches the farthest corner. Centers outside the box
+are allowed. Colors support the same hexadecimal values and theme tokens as
+other backgrounds. Ellipses, explicit radii, additional stops, and repeating
+gradients are not supported.
+
+```rust
+use creamui::{ColorToken, RadialGradient, Style};
+
+let spotlight = Style::new().background(
+    RadialGradient::new(ColorToken::Accent, ColorToken::Surface).at(0.25, 0.75),
+);
+```
+
+```rust,ignore
+jsx! {
+    <RawView width={240.0} aspect_ratio={2.0} padding={"12px 20px"}
+        corner_radius={16.0}
+        background={"radial-gradient(circle at 25% 25%, #587cff, #121830)"} />
+}
+```
+
+Radial backgrounds also work in interaction state styles. CPU and GPU renderers
+support rounded corners, clipping, scaling, scrolling, and premultiplied-alpha
+interpolation. Each gradient records a single quad; translucent CPU rendering
+only visits the affected pixels. Custom `Painter` implementations can override
+`fill_radial_gradient`; its default fallback paints the average color, as for
+linear gradients.

@@ -13,6 +13,7 @@ const KIND_QUAD: f32 = 0.0;
 const KIND_LINE: f32 = 1.0;
 const KIND_GLYPH: f32 = 2.0;
 const KIND_GRADIENT_QUAD: f32 = 4.0;
+const KIND_RADIAL_GRADIENT_QUAD: f32 = 5.0;
 
 const KIND_BITS: u32 = 4u;
 const CLIPS_PER_ROW: u32 = 256u;
@@ -75,7 +76,7 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     out.color = premultiply(instance.color);
     out.border_color = premultiply(instance.border_color);
     out.data = instance.data;
-    if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD {
+    if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD || kind == KIND_RADIAL_GRADIENT_QUAD {
         out.data += vec4<f32>(offset, offset);
     }
     out.clip = textureLoad(clips, clip_texel, 0);
@@ -111,10 +112,14 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
 
     let kind = in.params.x;
     var color: vec4<f32>;
-    if kind == KIND_QUAD || kind == KIND_GRADIENT_QUAD {
+    if kind == KIND_QUAD || kind == KIND_GRADIENT_QUAD || kind == KIND_RADIAL_GRADIENT_QUAD {
         let outer = rounded_rect_distance(p, in.bounds, in.params.y);
         coverage *= clamp(0.5 - outer, 0.0, 1.0);
-        if kind == KIND_GRADIENT_QUAD {
+        if kind == KIND_RADIAL_GRADIENT_QUAD {
+            let radius = max(length(in.data.zw - in.data.xy), 1e-6);
+            let progress = clamp(length(p - in.data.xy) / radius, 0.0, 1.0);
+            color = mix(in.color, in.border_color, progress);
+        } else if kind == KIND_GRADIENT_QUAD {
             let direction = in.data.zw - in.data.xy;
             let progress = clamp(
                 dot(p - in.data.xy, direction) / max(dot(direction, direction), 1e-6),

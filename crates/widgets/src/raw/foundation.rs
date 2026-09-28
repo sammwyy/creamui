@@ -133,6 +133,10 @@ impl Widget for RawText {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.paint_content(painter, rect, rect);
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
         let state = creamui_core::StyleState::NORMAL
             .with_hovered(painter.hovered(rect))
             .with_pressed(painter.pressed(rect));
@@ -150,11 +154,11 @@ impl Widget for RawText {
         let strikethrough = typography.strikethrough.unwrap_or(false);
         let family = typography.font_family.as_deref();
         painter.fill_text_font(
-            rect, &self.text, color, font_size, align, family, bold, italic,
+            content, &self.text, color, font_size, align, family, bold, italic,
         );
         super::draw_text_decorations(
             painter,
-            rect,
+            content,
             &self.text,
             font_size,
             family,

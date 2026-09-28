@@ -80,6 +80,10 @@ impl Widget for Text {
         self.inner.paint(painter, rect);
     }
 
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content);
+    }
+
     fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
         self.inner.legacy_node_kind()
     }
@@ -161,6 +165,10 @@ impl Widget for Heading {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect);
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content);
     }
 
     fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {

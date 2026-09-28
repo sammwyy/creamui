@@ -83,9 +83,11 @@ impl MountCx {
     }
 
     pub fn image(&self, source: impl Into<Rc<str>>) -> RuntimeNodeId {
-        self.create_and_append(NodeKind::Image(ImageNode {
-            source: source.into(),
-        }))
+        self.create_and_append(NodeKind::Image(ImageNode::source(source)))
+    }
+
+    pub fn decoded_image(&self, image: crate::RgbaImage) -> RuntimeNodeId {
+        self.create_and_append(NodeKind::Image(ImageNode::decoded(image)))
     }
 
     pub fn set_events(&self, node: RuntimeNodeId, handlers: EventState) {
@@ -164,7 +166,7 @@ impl MountCx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{Mutation, Runtime};
+    use crate::runtime::{ImageContent, Mutation, Runtime};
     use crate::PaintStyle;
     use creamui_theme::Color;
 
@@ -185,12 +187,22 @@ mod tests {
         let container = cx.container();
         let text = cx.text("hello");
         let image = cx.image("icon.png");
+        let pixels = crate::RgbaImage::new(1, 1, vec![1, 2, 3, 4]).unwrap();
+        let decoded = cx.decoded_image(pixels.clone());
 
         let children = runtime.with(|r| r.get(root).unwrap().children.as_slice().to_vec());
-        assert_eq!(children, vec![container, text, image]);
+        assert_eq!(children, vec![container, text, image, decoded]);
         assert!(matches!(
             runtime.with(|r| r.get(text).unwrap().kind.clone()),
             NodeKind::Text(t) if &*t.text == "hello"
+        ));
+        assert!(matches!(
+            runtime.with(|r| r.get(image).unwrap().kind.clone()),
+            NodeKind::Image(i) if i.content == ImageContent::Source("icon.png".into())
+        ));
+        assert!(matches!(
+            runtime.with(|r| r.get(decoded).unwrap().kind.clone()),
+            NodeKind::Image(i) if i.content == ImageContent::Decoded(pixels)
         ));
     }
 

@@ -11,6 +11,352 @@ use creamui_widgets::layout::{Align, Justify, Track, Wrap};
 #[derive(Default)]
 struct TextPainter(Vec<String>);
 
+#[derive(Default)]
+struct BoundsPainter(Vec<Rect>);
+
+#[derive(Default)]
+struct BorderPainter {
+    backgrounds: Vec<Rect>,
+    strokes: Vec<(Rect, f32)>,
+}
+
+#[derive(Default)]
+struct TextBoxPainter {
+    backgrounds: Vec<Rect>,
+    text: Vec<(Rect, Color)>,
+}
+
+impl Painter for TextBoxPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.backgrounds.push(rect);
+    }
+
+    fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
+
+    fn fill_text(&mut self, rect: Rect, _: &str, color: Color, _: f32, _: TextAlign) {
+        self.text.push((rect, color));
+    }
+}
+
+#[test]
+fn text_uses_the_layout_content_box_and_explicit_color() {
+    let widget = jsx! {
+        <RawText width={100.0} height={50.0} padding={"10px 20px"}
+            border={(Color::rgb(0, 0, 255), 4.0)}
+            background={Color::rgb(255, 255, 255)} color={Color::rgb(255, 0, 0)}>
+            "Inside"
+        </RawText>
+    };
+    let mut painter = TextBoxPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 300.0,
+            height: 200.0,
+        },
+        &mut painter,
+    );
+    assert_eq!(
+        painter.backgrounds[0],
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0
+        }
+    );
+    assert_eq!(
+        painter.text[0],
+        (
+            Rect {
+                x: 24.0,
+                y: 14.0,
+                width: 52.0,
+                height: 22.0
+            },
+            Color::rgb(255, 0, 0)
+        )
+    );
+}
+
+impl Painter for BorderPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.backgrounds.push(rect);
+    }
+
+    fn stroke_rect(&mut self, rect: Rect, _: Color, width: f32, _: f32) {
+        self.strokes.push((rect, width));
+    }
+
+    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
+}
+
+#[test]
+fn borders_reserve_space_and_paint_inside_both_box_models() {
+    use creamui_core::layout::BoxSizing;
+    use creamui_widgets::raw::RawView;
+
+    for (sizing, outer_width, outer_height) in [
+        (BoxSizing::BorderBox, 80.0, 40.0),
+        (BoxSizing::ContentBox, 108.0, 68.0),
+    ] {
+        let root = jsx! {
+            <RawView width={80.0} height={40.0} padding={10.0} box_sizing={sizing}
+                border={(Color::rgb(0, 0, 255), 4.0)} background={Color::rgb(1, 2, 3)}>
+                <RawView width={10.0} height={10.0} background={Color::rgb(4, 5, 6)} />
+            </RawView>
+        };
+        let mut painter = BorderPainter::default();
+        render_frame(
+            Box::new(root),
+            Size {
+                width: 300.0,
+                height: 200.0,
+            },
+            &mut painter,
+        );
+        assert_eq!(painter.backgrounds[0].width, outer_width);
+        assert_eq!(painter.backgrounds[0].height, outer_height);
+        assert_eq!(
+            (painter.backgrounds[1].x, painter.backgrounds[1].y),
+            (14.0, 14.0)
+        );
+        assert_eq!(
+            painter.strokes,
+            [(
+                Rect {
+                    x: 2.0,
+                    y: 2.0,
+                    width: outer_width - 4.0,
+                    height: outer_height - 4.0
+                },
+                4.0
+            )]
+        );
+    }
+
+    let root = RawView::new(
+        CommonStyle::new()
+            .width(80.0)
+            .height(40.0)
+            .padding(10.0)
+            .border(Color::rgb(0, 0, 255), 2.0)
+            .background(Color::rgb(1, 2, 3))
+            .focus(StateStyle::new().border(Color::rgb(0, 0, 255), 6.0)),
+    )
+    .child(Box::new(RawView::new(
+        CommonStyle::new()
+            .width(10.0)
+            .height(10.0)
+            .background(Color::rgb(4, 5, 6)),
+    )));
+    let mut painter = BorderPainter::default();
+    render_frame(
+        Box::new(root),
+        Size {
+            width: 300.0,
+            height: 200.0,
+        },
+        &mut painter,
+    );
+    assert_eq!(
+        (painter.backgrounds[0].width, painter.backgrounds[0].height),
+        (80.0, 40.0)
+    );
+    assert_eq!(
+        (painter.backgrounds[1].x, painter.backgrounds[1].y),
+        (16.0, 16.0)
+    );
+}
+
+impl Painter for BoundsPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.0.push(rect);
+    }
+    fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
+    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
+}
+
+fn painted_bounds(widget: impl Widget + 'static) -> Vec<Rect> {
+    let mut painter = BoundsPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 640.0,
+            height: 480.0,
+        },
+        &mut painter,
+    );
+    painter.0
+}
+
+#[test]
+fn aspect_ratio_sizes_native_and_jsx_widgets() {
+    use creamui_core::Styled;
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(CommonStyle::new())
+        .width(160.0)
+        .aspect_ratio(16.0 / 9.0)
+        .background(Color::rgb(1, 2, 3));
+    let jsx = jsx! {
+        <RawView width={160.0} aspect_ratio={16.0 / 9.0} background={Color::rgb(1, 2, 3)} />
+    };
+    let bounds = painted_bounds(native);
+    assert_eq!(bounds, painted_bounds(jsx));
+    assert_eq!(bounds[0].width, 160.0);
+    assert_eq!(bounds[0].height, 90.0);
+
+    let explicit = jsx! {
+        <RawView width={160.0} height={40.0} aspect_ratio={2.0} background={Color::rgb(1, 2, 3)} />
+    };
+    assert_eq!(painted_bounds(explicit)[0].height, 40.0);
+}
+
+#[test]
+fn box_sizing_controls_padding_in_native_and_jsx_layout() {
+    use creamui_core::layout::BoxSizing;
+    use creamui_widgets::raw::RawView;
+
+    for (sizing, width, height) in [
+        (BoxSizing::BorderBox, 80.0, 40.0),
+        (BoxSizing::ContentBox, 100.0, 60.0),
+    ] {
+        let native = RawView::new(
+            CommonStyle::new()
+                .width(80.0)
+                .height(40.0)
+                .padding(10.0)
+                .box_sizing(sizing)
+                .background(Color::rgb(1, 2, 3)),
+        );
+        let jsx = jsx! {
+            <RawView width={80.0} height={40.0} padding={10.0}
+                box_sizing={sizing} background={Color::rgb(1, 2, 3)} />
+        };
+        let bounds = painted_bounds(native);
+        assert_eq!(bounds, painted_bounds(jsx));
+        assert_eq!((bounds[0].width, bounds[0].height), (width, height));
+    }
+}
+
+#[test]
+fn spacing_shorthands_position_native_and_jsx_children() {
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(
+        CommonStyle::new()
+            .width(200.0)
+            .height(100.0)
+            .padding("10px 20px 30px 40px"),
+    )
+    .child(Box::new(RawView::new(
+        CommonStyle::new()
+            .width(20.0)
+            .height(10.0)
+            .margin("5px 0")
+            .background(Color::rgb(1, 2, 3)),
+    )));
+    let jsx = jsx! {
+        <RawView width={200.0} height={100.0} padding={"10px 20px 30px 40px"}>
+            <RawView width={20.0} height={10.0} margin={"5px 0"} background={Color::rgb(1, 2, 3)} />
+        </RawView>
+    };
+    let bounds = painted_bounds(native);
+    assert_eq!(bounds, painted_bounds(jsx));
+    assert_eq!(
+        bounds[0],
+        Rect {
+            x: 40.0,
+            y: 15.0,
+            width: 20.0,
+            height: 10.0
+        }
+    );
+
+    let overlay = jsx! {
+        <RawView width={200.0} height={100.0}>
+            <RawView position={creamui_core::layout::Position::Absolute}
+                inset={"10px 20px 30px 40px"} background={Color::rgb(1, 2, 3)} />
+        </RawView>
+    };
+    assert_eq!(
+        painted_bounds(overlay)[0],
+        Rect {
+            x: 40.0,
+            y: 10.0,
+            width: 140.0,
+            height: 60.0
+        }
+    );
+}
+
+#[test]
+fn spacing_shorthands_work_on_semantic_layout_containers() {
+    use creamui_core::layout::{LengthPercentage, LengthPercentageAuto};
+
+    let block = jsx! { <Block padding={"8px 16px"} margin={"0 auto"} /> };
+    let flex = jsx! { <Flex padding={"8px 16px"} margin={"0 auto"} /> };
+    let grid = jsx! { <Grid padding={"8px 16px"} margin={"0 auto"} /> };
+    for widget in [
+        &block as &dyn Widget,
+        &flex as &dyn Widget,
+        &grid as &dyn Widget,
+    ] {
+        let layout = widget.style().layout;
+        assert_eq!(layout.padding.top, LengthPercentage::Length(8.0));
+        assert_eq!(layout.padding.left, LengthPercentage::Length(16.0));
+        assert_eq!(layout.margin.top, LengthPercentageAuto::Length(0.0));
+        assert_eq!(layout.margin.left, LengthPercentageAuto::Auto);
+    }
+}
+
+#[test]
+fn radial_gradients_record_the_same_paint_from_native_and_jsx() {
+    use creamui_core::{runtime::RecordingPainter, RadialGradient};
+    use creamui_widgets::raw::RawView;
+
+    let native = RawView::new(
+        CommonStyle::new()
+            .width(100.0)
+            .height(80.0)
+            .corner_radius(6.0)
+            .background(
+                RadialGradient::new(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255)).at(0.25, 0.75),
+            ),
+    );
+    let jsx = jsx! {
+        <RawView width={100.0} height={80.0} corner_radius={6.0}
+            background={"radial-gradient(circle at 25% 75%, #ff0000, #0000ff)"} />
+    };
+    let record = |widget: BoxedWidget| {
+        let mut painter = RecordingPainter::new(Default::default());
+        render_frame(
+            widget,
+            Size {
+                width: 200.0,
+                height: 200.0,
+            },
+            &mut painter,
+        );
+        painter.into_ops()
+    };
+    let ops = record(Box::new(native));
+    assert_eq!(ops, record(Box::new(jsx)));
+    let gradient = ops
+        .iter()
+        .find_map(|op| match op {
+            creamui_core::runtime::PaintOp::Primitive(
+                creamui_core::runtime::PaintPrimitive::RadialGradient(gradient),
+            ) => Some(gradient),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(gradient.center, creamui_core::Point { x: 25.0, y: 60.0 });
+    assert_eq!(gradient.radius, 75.0_f32.hypot(60.0));
+    assert_eq!(gradient.corner_radius, 6.0);
+}
+
 #[component]
 fn CounterLabel(value: i32) -> BoxedWidget {
     Box::new(jsx! { <Text>{format!("Custom: {value}")}</Text> })

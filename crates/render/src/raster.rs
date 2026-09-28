@@ -6,7 +6,8 @@
 //! frame-sized clip mask is ever allocated.
 
 use crate::display_list::{
-    Bounds, Clip, Damage, DisplayList, DrawItem, ImagePrimitive, Line, Primitive, Quad, TextRun,
+    Bounds, Clip, Damage, DisplayList, FrameDiff, ImagePrimitive, Line, Primitive, Quad,
+    QuadGradient, RoundedClip, ScrollBlit, TextRun,
 };
 use creamui_theme::Color;
 use std::collections::HashMap;
@@ -54,6 +55,7 @@ impl Rasterizer {
         }
         let damage = if resized { &Damage::Full } else { damage };
         let viewport = list.viewport();
+        let spaces = list.spaces();
         for region in damage.regions(viewport) {
             self.fill_clear(region, list.clear);
             #[cfg(feature = "perf-metrics")]
@@ -61,20 +63,69 @@ impl Rasterizer {
                 m.cpu_pixels_rasterized += (region.width() * region.height()) as u64
             });
             for item in &list.items {
-                if item.visible_bounds().intersect(region).is_empty() {
+                if item.visible_bounds(&spaces).intersect(region).is_empty() {
                     continue;
                 }
+                let clip = item.screen_clip(&spaces);
                 let clip = Clip {
-                    bounds: item.clip.bounds.intersect(region),
-                    rounded: item.clip.rounded,
+                    bounds: clip.bounds.intersect(region),
+                    rounded: clip.rounded,
                 };
-                self.draw(item, clip);
+                self.draw(&item.screen_primitive(&spaces), clip);
             }
         }
         self.images.frame += 1;
         let horizon = self.images.frame.saturating_sub(TINT_CACHE_FRAMES);
         self.images.tinted.retain(|_, (_, used)| *used >= horizon);
         damage.clone()
+    }
+
+    /// Brings the frame up to date with `list` by shifting and repainting
+    /// what `diff` says, and returns every region that changed.
+    pub fn apply(&mut self, list: &DisplayList, diff: &FrameDiff) -> Damage {
+        let resized = self.pixmap.width() != list.width || self.pixmap.height() != list.height;
+        if resized || diff.repaint == Damage::Full {
+            return self.render(list, &Damage::Full);
+        }
+        if let Some(blit) = &diff.scroll {
+            self.scroll(blit);
+        }
+        self.render(list, &diff.repaint);
+        diff.changed(list.viewport())
+    }
+
+    /// Moves the pixels inside `blit.area` by `(blit.dx, blit.dy)`, leaving
+    /// the uncovered part of the area as it was.
+    pub fn scroll(&mut self, blit: &ScrollBlit) {
+        let (x0, y0, x1, y1) = pixel_span(blit.area.intersect(Bounds::new(
+            0.0,
+            0.0,
+            self.pixmap.width() as f32,
+            self.pixmap.height() as f32,
+        )));
+        let (dx, dy) = (blit.dx as isize, blit.dy as isize);
+        let src_x0 = (x0 as isize).max(x0 as isize - dx) as usize;
+        let src_x1 = (x1 as isize).min(x1 as isize - dx) as usize;
+        if src_x1 <= src_x0 {
+            return;
+        }
+        let width = self.pixmap.width() as usize;
+        let row_bytes = (src_x1 - src_x0) * 4;
+        let data = self.pixmap.data_mut();
+        let mut copy_row = |dst_y: usize| {
+            let src_y = dst_y as isize - dy;
+            if src_y < y0 as isize || src_y >= y1 as isize {
+                return;
+            }
+            let src = (src_y as usize * width + src_x0) * 4;
+            let dst = (dst_y * width) as isize + src_x0 as isize + dx;
+            data.copy_within(src..src + row_bytes, dst as usize * 4);
+        };
+        if dy > 0 {
+            (y0..y1).rev().for_each(&mut copy_row);
+        } else {
+            (y0..y1).for_each(&mut copy_row);
+        }
     }
 
     fn fill_clear(&mut self, region: Bounds, color: Color) {
@@ -90,18 +141,18 @@ impl Rasterizer {
         }
     }
 
-    fn draw(&mut self, item: &DrawItem, clip: Clip) {
+    fn draw(&mut self, primitive: &Primitive, clip: Clip) {
         if clip.bounds.is_empty() {
             return;
         }
-        if let Primitive::Text(run) = &item.primitive {
+        if let Primitive::Text(run) = primitive {
             draw_text(&mut self.pixmap, run, clip);
             return;
         }
-        let bounds = item.primitive.bounds();
+        let bounds = primitive.bounds();
         if clip.contains(bounds) {
             paint(
-                &item.primitive,
+                primitive,
                 &mut self.pixmap.as_mut(),
                 Transform::identity(),
                 None,
@@ -109,7 +160,7 @@ impl Rasterizer {
             );
             return;
         }
-        if let Primitive::Quad(quad) = &item.primitive {
+        if let Primitive::Quad(quad) = primitive {
             if clip.rounded.is_none()
                 && quad.gradient.is_none()
                 && quad.radius == 0.0
@@ -128,24 +179,39 @@ impl Rasterizer {
                 return;
             }
         }
-        self.draw_clipped(&item.primitive, clip, bounds);
+        self.draw_clipped(primitive, clip, bounds);
     }
 
+    /// Draws `primitive` into a scratch buffer around its visible part and
+    /// copies that part back. The buffer extends past the copied part by
+    /// the largest corner radius involved: `tiny-skia` flattens a curve cut
+    /// by the target's border differently from a whole one, so a corner
+    /// must lie entirely inside the buffer for a partial repaint to match a
+    /// full one.
     fn draw_clipped(&mut self, primitive: &Primitive, clip: Clip, bounds: Bounds) {
-        let area = bounds.intersect(clip.bounds).round_out();
-        if area.is_empty() {
-            return;
-        }
-        let (x0, y0, x1, y1) = pixel_span(area.intersect(Bounds::new(
+        let frame = Bounds::new(
             0.0,
             0.0,
             self.pixmap.width() as f32,
             self.pixmap.height() as f32,
-        )));
-        if x1 <= x0 || y1 <= y0 {
+        );
+        let area = bounds.intersect(clip.bounds).round_out().intersect(frame);
+        if area.is_empty() {
             return;
         }
-        let (w, h) = (x1 - x0, y1 - y0);
+        let (x0, y0, x1, y1) = pixel_span(area);
+        let curve = match primitive {
+            Primitive::Quad(quad) => quad.radius,
+            Primitive::Line(line) => line.width / 2.0,
+            _ => 0.0,
+        }
+        .max(clip.rounded.map_or(0.0, |rounded| rounded.radius));
+        let padded = bounds
+            .round_out()
+            .intersect(area.inflate(curve.ceil() + 2.0))
+            .intersect(frame);
+        let (px0, py0, px1, py1) = pixel_span(padded);
+        let (w, h) = (px1 - px0, py1 - py0);
         let frame_width = self.pixmap.width() as usize;
         let mut scratch = std::mem::take(&mut self.scratch);
         scratch.resize(w * h * 4, 0);
@@ -154,13 +220,13 @@ impl Rasterizer {
             frame_width,
             &mut scratch,
             w,
-            x0,
-            y0,
-            h,
+            (px0, py0),
+            (0, 0),
+            (w, h),
             true,
         );
 
-        let transform = Transform::from_translate(-(x0 as f32), -(y0 as f32));
+        let transform = Transform::from_translate(-(px0 as f32), -(py0 as f32));
         let mask = clip.rounded.map(|rounded| {
             let mut mask = Mask::new(w as u32, h as u32).expect("non-zero mask size");
             if let Some(path) = rounded_rect_path(rounded.bounds, rounded.radius) {
@@ -184,9 +250,9 @@ impl Rasterizer {
             frame_width,
             &mut scratch,
             w,
-            x0,
-            y0,
-            h,
+            (x0, y0),
+            (x0 - px0, y0 - py0),
+            (x1 - x0, y1 - y0),
             false,
         );
         self.scratch = scratch;
@@ -217,8 +283,12 @@ fn draw_image(
 ) {
     let (width, height) = (image.image.width(), image.image.height());
     let frame = images.frame;
+    let pixels;
     let source = match image.tint {
-        None => PixmapRef::from_bytes(image.image.pixels(), width, height),
+        None => {
+            pixels = image.image.pixels();
+            PixmapRef::from_bytes(&pixels, width, height)
+        }
         Some(tint) => {
             let (pixmap, used) = images
                 .tinted
@@ -273,20 +343,23 @@ fn pixel_span(b: Bounds) -> (usize, usize, usize, usize) {
     )
 }
 
+/// Copies a `size` block between the frame at `frame_at` and the scratch
+/// buffer (`scratch_width` pixels wide) at `scratch_at`.
 #[allow(clippy::too_many_arguments)]
 fn copy_rows(
     frame: &mut [u8],
     frame_width: usize,
     scratch: &mut [u8],
-    w: usize,
-    x0: usize,
-    y0: usize,
-    h: usize,
+    scratch_width: usize,
+    frame_at: (usize, usize),
+    scratch_at: (usize, usize),
+    size: (usize, usize),
     into_scratch: bool,
 ) {
+    let (w, h) = size;
     for row in 0..h {
-        let src = ((y0 + row) * frame_width + x0) * 4;
-        let dst = row * w * 4;
+        let src = ((frame_at.1 + row) * frame_width + frame_at.0) * 4;
+        let dst = ((scratch_at.1 + row) * scratch_width + scratch_at.0) * 4;
         let (frame_row, scratch_row) =
             (&mut frame[src..src + w * 4], &mut scratch[dst..dst + w * 4]);
         if into_scratch {
@@ -319,32 +392,40 @@ fn quad_paint(quad: &Quad) -> Paint<'static> {
     };
     let mut paint = Paint::default();
     paint.anti_alias = true;
-    paint.shader = LinearGradient::new(
-        Point::from_xy(gradient.start[0], gradient.start[1]),
-        Point::from_xy(gradient.end[0], gradient.end[1]),
-        vec![
-            GradientStop::new(
-                0.0,
-                tiny_skia::Color::from_rgba8(
-                    gradient.start_color.r,
-                    gradient.start_color.g,
-                    gradient.start_color.b,
-                    gradient.start_color.a,
-                ),
+    let stops = vec![
+        GradientStop::new(
+            0.0,
+            tiny_skia::Color::from_rgba8(
+                gradient.start_color.r,
+                gradient.start_color.g,
+                gradient.start_color.b,
+                gradient.start_color.a,
             ),
-            GradientStop::new(
-                1.0,
-                tiny_skia::Color::from_rgba8(
-                    gradient.end_color.r,
-                    gradient.end_color.g,
-                    gradient.end_color.b,
-                    gradient.end_color.a,
-                ),
+        ),
+        GradientStop::new(
+            1.0,
+            tiny_skia::Color::from_rgba8(
+                gradient.end_color.r,
+                gradient.end_color.g,
+                gradient.end_color.b,
+                gradient.end_color.a,
             ),
-        ],
-        SpreadMode::Pad,
-        Transform::identity(),
-    )
+        ),
+    ];
+    let start = Point::from_xy(gradient.start[0], gradient.start[1]);
+    let end = Point::from_xy(gradient.end[0], gradient.end[1]);
+    paint.shader = if gradient.radial {
+        tiny_skia::RadialGradient::new(
+            start,
+            start,
+            (gradient.end[0] - gradient.start[0]).hypot(gradient.end[1] - gradient.start[1]),
+            stops,
+            SpreadMode::Pad,
+            Transform::identity(),
+        )
+    } else {
+        LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())
+    }
     .unwrap_or_else(|| solid(quad.background).shader);
     paint
 }
@@ -400,7 +481,12 @@ fn push_rounded_rect(pb: &mut PathBuilder, b: Bounds, radius: f32) {
 }
 
 fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Option<&Mask>) {
-    if quad.background.a > 0 || quad.gradient.is_some() {
+    let translucent_gradient = quad
+        .gradient
+        .filter(|gradient| gradient.start_color.a != gradient.end_color.a);
+    if let Some(gradient) = translucent_gradient {
+        draw_translucent_gradient(target, quad, gradient, transform, mask);
+    } else if quad.background.a > 0 || quad.gradient.is_some() {
         let paint = quad_paint(quad);
         if quad.radius <= 0.01 {
             if let Some(rect) = tiny_skia::Rect::from_ltrb(
@@ -431,6 +517,82 @@ fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Op
                 transform,
                 mask,
             );
+        }
+    }
+}
+
+fn draw_translucent_gradient(
+    target: &mut PixmapMut,
+    quad: &Quad,
+    gradient: QuadGradient,
+    transform: Transform,
+    mask: Option<&Mask>,
+) {
+    let bounds = quad.bounds.translate([transform.tx, transform.ty]);
+    let shape = Clip {
+        bounds,
+        rounded: Some(RoundedClip {
+            bounds,
+            radius: quad.radius,
+        }),
+    };
+    let width = target.width() as usize;
+    let visible = bounds.round_out().intersect(Bounds::new(
+        0.0,
+        0.0,
+        target.width() as f32,
+        target.height() as f32,
+    ));
+    let (x0, y0, x1, y1) = pixel_span(visible);
+    let start_point = [
+        gradient.start[0] + transform.tx,
+        gradient.start[1] + transform.ty,
+    ];
+    let direction = [
+        gradient.end[0] - gradient.start[0],
+        gradient.end[1] - gradient.start[1],
+    ];
+    let length_squared = (direction[0] * direction[0] + direction[1] * direction[1]).max(1e-6);
+    let premultiply = |color: Color| {
+        let alpha = color.a as f32 / 255.0;
+        [
+            color.r as f32 * alpha,
+            color.g as f32 * alpha,
+            color.b as f32 * alpha,
+            color.a as f32,
+        ]
+    };
+    let start = premultiply(gradient.start_color);
+    let end = premultiply(gradient.end_color);
+    let pixels = target.data_mut();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let index = y * width + x;
+            let mut coverage = rounded_coverage(&shape, x as i32, y as i32) as f32 / 255.0;
+            if let Some(mask) = mask {
+                coverage *= mask.data()[index] as f32 / 255.0;
+            }
+            if coverage == 0.0 {
+                continue;
+            }
+            let offset = [
+                x as f32 + 0.5 - start_point[0],
+                y as f32 + 0.5 - start_point[1],
+            ];
+            let t = if gradient.radial {
+                offset[0].hypot(offset[1]) / length_squared.sqrt()
+            } else {
+                (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
+            }
+            .clamp(0.0, 1.0);
+            let alpha = (start[3] + (end[3] - start[3]) * t) * coverage / 255.0;
+            let pixel = &mut pixels[index * 4..index * 4 + 4];
+            for channel in 0..4 {
+                let source = (start[channel] + (end[channel] - start[channel]) * t) * coverage;
+                pixel[channel] = (source + pixel[channel] as f32 * (1.0 - alpha))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
         }
     }
 }
@@ -589,6 +751,115 @@ mod tests {
     }
 
     #[test]
+    fn radial_gradient_interpolates_from_center_and_clips_corners() {
+        let list = record(|p| {
+            p.fill_radial_gradient(
+                rect(0.0, 0.0, 40.0, 30.0),
+                Color::rgb(255, 0, 0),
+                Color::rgb(0, 0, 255),
+                creamui_core::Point { x: 20.0, y: 15.0 },
+                25.0,
+                8.0,
+            )
+        });
+        assert_eq!(list.items.len(), 1);
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        let center = rgba(&raster, 20, 15);
+        let edge = rgba(&raster, 38, 15);
+        assert!(center[0] > 240 && center[2] < 15);
+        assert!(edge[2] > edge[0]);
+        assert_eq!(rgba(&raster, 0, 0), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn inside_border_keeps_its_outer_edge_within_the_layout_box() {
+        let list = record(|p| {
+            p.fill_rect(rect(5.0, 5.0, 20.0, 20.0), Color::rgb(255, 255, 255), 0.0);
+            p.stroke_rect_inside(rect(5.0, 5.0, 20.0, 20.0), Color::rgb(255, 0, 0), 4.0, 0.0);
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert_eq!(rgba(&raster, 4, 15), [10, 20, 30, 255]);
+        assert_eq!(rgba(&raster, 5, 15), [255, 0, 0, 255]);
+        assert_eq!(rgba(&raster, 10, 15), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn radial_gradient_transparency_uses_premultiplied_colors() {
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(40, 30, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+        recorder.fill_radial_gradient(
+            rect(0.0, 0.0, 40.0, 30.0),
+            Color::rgb(255, 0, 0),
+            Color::rgba(0, 0, 255, 0),
+            creamui_core::Point { x: 0.5, y: 15.5 },
+            20.0,
+            0.0,
+        );
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&recorder.finish(), &Damage::Full);
+        assert_eq!(rgba(&raster, 10, 15), [128, 0, 0, 128]);
+        assert_eq!(rgba(&raster, 30, 15), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn linear_gradient_transparency_uses_premultiplied_colors() {
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(40, 30, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+        recorder.fill_linear_gradient(
+            rect(0.0, 0.0, 40.0, 30.0),
+            Color::rgb(255, 0, 0),
+            Color::rgba(0, 0, 255, 0),
+            90.0,
+            0.0,
+        );
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&recorder.finish(), &Damage::Full);
+        assert_eq!(rgba(&raster, 19, 15), [131, 0, 0, 131]);
+        assert_eq!(rgba(&raster, 39, 15), [3, 0, 0, 3]);
+    }
+
+    #[test]
+    fn radial_gradient_partial_repaint_matches_full_with_clipping() {
+        for end_alpha in [255, 40] {
+            let frame = |center_x| {
+                record(|p| {
+                    p.push_clip_rounded(rect(6.0, 4.0, 28.0, 22.0), 6.0);
+                    p.fill_radial_gradient(
+                        rect(0.0, 0.0, 40.0, 30.0),
+                        Color::rgb(255, 0, 0),
+                        Color::rgba(0, 0, 255, end_alpha),
+                        creamui_core::Point {
+                            x: center_x,
+                            y: 15.0,
+                        },
+                        25.0,
+                        4.0,
+                    );
+                    p.pop_clip();
+                })
+            };
+            let before = frame(10.0);
+            let after = frame(30.0);
+            assert!(!matches!(damage(Some(&before), &after), Damage::None));
+            let mut partial = Rasterizer::new(40, 30);
+            partial.render(&before, &Damage::Full);
+            partial.render(
+                &after,
+                &Damage::Partial(vec![Bounds::new(0.0, 0.0, 40.0, 15.0)]),
+            );
+            partial.render(
+                &after,
+                &Damage::Partial(vec![Bounds::new(0.0, 15.0, 40.0, 30.0)]),
+            );
+            let mut full = Rasterizer::new(40, 30);
+            full.render(&after, &Damage::Full);
+            assert_eq!(partial.pixmap().data(), full.pixmap().data());
+        }
+    }
+
+    #[test]
     fn partial_render_repaints_only_the_damaged_region() {
         let first = record(|p| {
             p.fill_rect(rect(0.0, 0.0, 10.0, 10.0), Color::rgb(255, 0, 0), 0.0);
@@ -715,5 +986,178 @@ mod tests {
         let mut r = Rasterizer::new(10, 10);
         assert_eq!(r.render(&list, &Damage::None), Damage::Full);
         assert_eq!((r.pixmap().width(), r.pixmap().height()), (40, 30));
+    }
+
+    struct ScrollScene {
+        offset: f32,
+        gradient_backdrop: bool,
+        radius: f32,
+        overlay: bool,
+    }
+
+    const SCROLL_SCENE: ScrollScene = ScrollScene {
+        offset: 40.0,
+        gradient_backdrop: false,
+        radius: 0.0,
+        overlay: true,
+    };
+
+    fn scroll_scene(scene: &ScrollScene) -> DisplayList {
+        let mut r = SceneRecorder::new();
+        r.begin(
+            120,
+            100,
+            1.0,
+            Color::rgb(10, 20, 30),
+            ColorScheme::default(),
+        );
+        if scene.gradient_backdrop {
+            r.fill_linear_gradient(
+                rect(0.0, 0.0, 120.0, 100.0),
+                Color::rgb(200, 0, 0),
+                Color::rgb(0, 0, 200),
+                180.0,
+                0.0,
+            );
+        } else {
+            r.fill_rect(rect(0.0, 0.0, 120.0, 100.0), Color::rgb(240, 240, 240), 0.0);
+        }
+        r.push_scroll_layer(
+            rect(10.0, 10.0, 90.0, 80.0),
+            scene.radius,
+            creamui_core::Point {
+                x: 0.0,
+                y: scene.offset,
+            },
+        );
+        for i in 0..20 {
+            let y = 10.0 + i as f32 * 12.0 - scene.offset;
+            r.push_clip_rounded(rect(12.0, y, 84.0, 10.0), 3.0);
+            r.fill_rect(
+                rect(12.0, y, 84.0, 10.0),
+                Color::rgb((i * 12) as u8, 90, 160),
+                0.0,
+            );
+            r.fill_text(
+                rect(14.0, y, 60.0, 10.0),
+                &format!("row {i}"),
+                Color::rgb(255, 255, 255),
+                8.0,
+                TextAlign::Start,
+            );
+            r.pop_clip();
+        }
+        r.pop_scroll_layer();
+        if scene.overlay {
+            r.fill_rect(
+                rect(94.0, 10.0 + scene.offset / 4.0, 4.0, 20.0),
+                Color::rgba(0, 0, 0, 120),
+                2.0,
+            );
+        }
+        r.finish()
+    }
+
+    fn assert_incremental_matches_full(before: &DisplayList, after: &DisplayList) -> FrameDiff {
+        let mut incremental = Rasterizer::new(before.width, before.height);
+        incremental.render(before, &Damage::Full);
+        let diff = crate::display_list::diff(Some(before), after);
+        incremental.apply(after, &diff);
+        let mut full = Rasterizer::new(after.width, after.height);
+        full.render(after, &Damage::Full);
+        assert!(
+            incremental.pixmap().data() == full.pixmap().data(),
+            "scrolled frame differs from a full render"
+        );
+        diff
+    }
+
+    #[test]
+    fn scrolling_over_a_solid_backdrop_shifts_pixels_and_repaints_the_rest() {
+        let before = scroll_scene(&SCROLL_SCENE);
+        let after = scroll_scene(&ScrollScene {
+            offset: 52.0,
+            ..SCROLL_SCENE
+        });
+        let diff = assert_incremental_matches_full(&before, &after);
+        assert_eq!(
+            diff.scroll,
+            Some(ScrollBlit {
+                area: Bounds::new(10.0, 10.0, 100.0, 90.0),
+                dx: 0,
+                dy: -12,
+            })
+        );
+        assert!(diff.repaint.area(after.viewport()) < 90.0 * 80.0 / 2.0);
+    }
+
+    #[test]
+    fn scrolling_back_up_matches_a_full_render() {
+        let before = scroll_scene(&SCROLL_SCENE);
+        let after = scroll_scene(&ScrollScene {
+            offset: 17.0,
+            ..SCROLL_SCENE
+        });
+        assert!(assert_incremental_matches_full(&before, &after)
+            .scroll
+            .is_some());
+    }
+
+    #[test]
+    fn rounded_viewports_scroll_exactly() {
+        let before = scroll_scene(&ScrollScene {
+            radius: 8.0,
+            ..SCROLL_SCENE
+        });
+        let after = scroll_scene(&ScrollScene {
+            offset: 64.0,
+            radius: 8.0,
+            ..SCROLL_SCENE
+        });
+        assert!(assert_incremental_matches_full(&before, &after)
+            .scroll
+            .is_some());
+    }
+
+    #[test]
+    fn a_patterned_backdrop_or_fractional_offset_repaints_instead() {
+        let gradient = |offset| {
+            scroll_scene(&ScrollScene {
+                offset,
+                gradient_backdrop: true,
+                ..SCROLL_SCENE
+            })
+        };
+        let diff = assert_incremental_matches_full(&gradient(40.0), &gradient(52.0));
+        assert!(diff.scroll.is_none());
+
+        let fractional = scroll_scene(&ScrollScene {
+            offset: 45.5,
+            ..SCROLL_SCENE
+        });
+        let diff = assert_incremental_matches_full(&scroll_scene(&SCROLL_SCENE), &fractional);
+        assert!(diff.scroll.is_none());
+    }
+
+    #[test]
+    fn scroll_layer_items_do_not_depend_on_the_offset() {
+        let before = scroll_scene(&ScrollScene {
+            overlay: false,
+            ..SCROLL_SCENE
+        });
+        let after = scroll_scene(&ScrollScene {
+            offset: 41.0,
+            overlay: false,
+            ..SCROLL_SCENE
+        });
+        let row = |list: &DisplayList| {
+            list.items
+                .iter()
+                .find(|item| item.layer == 1 && matches!(item.primitive, Primitive::Quad(_)))
+                .cloned()
+                .unwrap()
+        };
+        assert!(row(&before) == row(&after));
+        assert_eq!(after.layers[0].offset, [0.0, -41.0]);
     }
 }

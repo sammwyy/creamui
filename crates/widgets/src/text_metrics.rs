@@ -1,23 +1,30 @@
 //! Text measurement backing [`crate::raw::RawText`]'s `taffy` measure
 //! function (see `creamui_core::Widget::measure`).
 //!
-//! Resolves faces through `creamui-fonts`'s registry — the same one
-//! `creamui-render`'s renderer resolves at paint time — purely to measure
-//! glyph layout, without rasterizing anything.
+//! Resolves faces through `creamui-fonts`'s registry and lays text out with
+//! the same engine `creamui-render` paints with, without rasterizing.
 
-use creamui_fonts::{FontWeight, DEFAULT_FAMILY};
-use fontdue::layout::TextStyle;
-use fontdue::layout::{CoordinateSystem, HorizontalAlign, Layout, LayoutSettings};
-use fontdue::Font;
+use creamui_fonts::{FontFace, FontWeight, LayoutSettings, TextLayout, DEFAULT_FAMILY};
 use std::rc::Rc;
 
-fn font(family: Option<&str>) -> Rc<Font> {
+fn font(family: Option<&str>) -> Rc<FontFace> {
     creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), FontWeight::Regular)
 }
 
+fn wrapped(face: &FontFace, text: &str, font_size: f32, max_width: f32) -> Rc<TextLayout> {
+    creamui_fonts::cached_layout(
+        face,
+        text,
+        font_size,
+        &LayoutSettings {
+            max_width: Some(max_width),
+            ..LayoutSettings::default()
+        },
+    )
+}
+
 /// A width large enough that single-line text never wraps against it, but
-/// far from `f32::MAX` so intermediate arithmetic (`max_width - padding`)
-/// can't overflow to infinity/NaN.
+/// far from `f32::MAX` so alignment arithmetic on it stays finite.
 const UNBOUNDED_WIDTH: f32 = 1_000_000.0;
 
 /// Returns `(width, height)` in logical pixels for `text` set at
@@ -25,11 +32,8 @@ const UNBOUNDED_WIDTH: f32 = 1_000_000.0;
 /// [`UNBOUNDED_WIDTH`], exposed via [`unbounded_width`], for the text's
 /// natural, unwrapped width).
 ///
-/// The width comes from `fontdue`'s own end-of-line padding calculation
-/// (`max_width - line.padding`) rather than a hand-rolled estimate, so it
-/// matches exactly what `fontdue` will do when the renderer lays out the
-/// same text with the same `max_width` at paint time — no fudge factor
-/// needed.
+/// The width is rounded up to whole pixels so a layout pass that snaps the
+/// box to the pixel grid never makes the renderer wrap the text.
 pub fn measure(text: &str, font_size: f32, max_width: f32) -> (f32, f32) {
     measure_weight(text, font_size, max_width, false)
 }
@@ -54,24 +58,11 @@ pub fn measure_family(
         FontWeight::Regular
     };
     let face = creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), weight);
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        max_width: Some(max_width),
-        horizontal_align: HorizontalAlign::Left,
-        ..LayoutSettings::default()
-    });
-    layout.append(&[face.as_ref()], &TextStyle::new(text, font_size, 0));
-
-    let width = layout
-        .lines()
-        .and_then(|lines| lines.first())
-        .map(|line| (max_width - line.padding).max(0.0))
-        .unwrap_or(0.0);
-    // fontdue's own wrapped height, not a single-line guess: at a narrow
-    // `max_width` this text may wrap onto several lines, and reporting only
-    // one line's height here starves the box of the room the extra lines
-    // actually need, overlapping whatever comes after it.
-    let height = layout.height().max(font_size * 1.4);
+    let layout = wrapped(&face, text, font_size, max_width);
+    let width = layout.lines.first().map_or(0.0, |line| line.width.ceil());
+    // The wrapped height, not a single-line guess: at a narrow `max_width`
+    // the text may wrap onto several lines that all need room.
+    let height = layout.height.max(font_size * 1.4);
     (width.max(1.0), height)
 }
 
@@ -80,38 +71,45 @@ pub fn unbounded_width() -> f32 {
     UNBOUNDED_WIDTH
 }
 
-/// Returns the closest UTF-8 insertion boundary for a horizontal point in a
-/// single source line. Unlike repeatedly measuring every prefix, this builds
-/// one font layout, which keeps pointer selection responsive on long lines.
-pub fn byte_offset_at_x(text: &str, font_size: f32, x: f32) -> usize {
-    byte_offset_at_x_family(text, font_size, x, None)
+pub fn advance_width_family(text: &str, font_size: f32, family: Option<&str>) -> f32 {
+    if text.is_empty() {
+        0.0
+    } else {
+        measure_family(text, font_size, UNBOUNDED_WIDTH, family, false).0
+    }
 }
 
+/// Returns the closest UTF-8 insertion boundary for a horizontal point in a
+/// single source line using one font layout.
 pub fn byte_offset_at_x_family(text: &str, font_size: f32, x: f32, family: Option<&str>) -> usize {
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        max_width: Some(UNBOUNDED_WIDTH),
-        horizontal_align: HorizontalAlign::Left,
-        ..LayoutSettings::default()
-    });
-    layout.append(
-        &[font(family).as_ref()],
-        &TextStyle::new(text, font_size, 0),
-    );
-    let mut offset = 0;
-    for glyph in layout.glyphs() {
-        if x < glyph.x + glyph.width as f32 / 2.0 {
-            return glyph.byte_offset;
+    let layout = wrapped(&font(family), text, font_size, UNBOUNDED_WIDTH);
+    let mut visual: Vec<_> = layout.chars.iter().collect();
+    visual.sort_by(|a, b| a.x.total_cmp(&b.x));
+    for c in &visual {
+        if x < c.x + c.advance / 2.0 {
+            return if c.rtl {
+                c.byte_offset + c.ch.len_utf8()
+            } else {
+                c.byte_offset
+            };
         }
-        offset = glyph.byte_offset + glyph.parent.len_utf8();
     }
-    offset.min(text.len())
+    visual
+        .last()
+        .map_or(0, |c| {
+            if c.rtl {
+                c.byte_offset
+            } else {
+                c.byte_offset + c.ch.len_utf8()
+            }
+        })
+        .min(text.len())
 }
 
 /// One glyph's position and advance width from a layout of a whole text
 /// block, wrapped at `max_width` — the basis for word-wrap-aware
 /// caret/selection/click math. `y`/`row_height` come from the row's own
-/// metrics (`fontdue`'s `LinePosition`), not the glyph's own bounding box,
+/// metrics, not the glyph's own bounding box,
 /// so every glyph on a row shares the same `y` regardless of ascender or
 /// descender differences between characters (a "g" and an "A" sitting on
 /// the same row must report the same row top).
@@ -122,47 +120,35 @@ pub struct LaidGlyph {
     pub row_height: f32,
     pub advance: f32,
     pub ch: char,
+    pub rtl: bool,
 }
 
 /// Lays `text` out at `font_size`, wrapping at `max_width` and respecting
-/// embedded `\n`s exactly as the renderer will (same font, same fontdue
-/// settings), returning every glyph's position.
+/// embedded `\n`s exactly as the renderer will (same font, same layout
+/// engine), returning every character's position.
 pub fn layout_family(
     text: &str,
     font_size: f32,
     max_width: f32,
     family: Option<&str>,
 ) -> Vec<LaidGlyph> {
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        max_width: Some(max_width),
-        horizontal_align: HorizontalAlign::Left,
-        ..LayoutSettings::default()
-    });
-    let face = font(family);
-    layout.append(&[face.as_ref()], &TextStyle::new(text, font_size, 0));
-    let glyphs = layout.glyphs();
-    let lines = layout.lines().cloned().unwrap_or_default();
-    let mut result = Vec::with_capacity(glyphs.len());
-    for (line_index, line) in lines.iter().enumerate() {
-        let end = lines
-            .get(line_index + 1)
-            .map_or(glyphs.len(), |next| next.glyph_start);
-        let row_top = line.baseline_y - line.max_ascent;
-        for g in &glyphs[line.glyph_start..end] {
-            result.push(LaidGlyph {
-                byte_offset: g.byte_offset,
-                x: g.x,
-                y: row_top,
-                row_height: line.max_new_line_size,
-                advance: face
-                    .metrics_indexed(g.key.glyph_index, g.key.px)
-                    .advance_width,
-                ch: g.parent,
-            });
-        }
-    }
-    result
+    let layout = wrapped(&font(family), text, font_size, max_width);
+    layout
+        .chars
+        .iter()
+        .map(|c| {
+            let line = &layout.lines[c.line];
+            LaidGlyph {
+                byte_offset: c.byte_offset,
+                x: c.x,
+                y: line.top,
+                row_height: line.height,
+                advance: c.advance,
+                ch: c.ch,
+                rtl: c.rtl,
+            }
+        })
+        .collect()
 }
 
 /// The total height of `text` laid out the same way [`layout`] would —
@@ -175,17 +161,7 @@ pub fn content_height_family(
     max_width: f32,
     family: Option<&str>,
 ) -> f32 {
-    let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
-    layout.reset(&LayoutSettings {
-        max_width: Some(max_width),
-        horizontal_align: HorizontalAlign::Left,
-        ..LayoutSettings::default()
-    });
-    layout.append(
-        &[font(family).as_ref()],
-        &TextStyle::new(text, font_size, 0),
-    );
-    layout.height()
+    wrapped(&font(family), text, font_size, max_width).height
 }
 
 /// Wraps `text` at `max_width` exactly as the renderer will, and — if that
@@ -249,10 +225,10 @@ pub fn caret_xy(
     fallback_row_height: f32,
 ) -> (f32, f32, f32) {
     if let Some(g) = glyphs.iter().find(|g| g.byte_offset == byte_offset) {
-        return (g.x, g.y, g.row_height);
+        return (if g.rtl { g.x + g.advance } else { g.x }, g.y, g.row_height);
     }
     if let Some(g) = glyphs.iter().rev().find(|g| g.byte_offset < byte_offset) {
-        return (g.x + g.advance, g.y, g.row_height);
+        return (if g.rtl { g.x } else { g.x + g.advance }, g.y, g.row_height);
     }
     (0.0, 0.0, fallback_row_height)
 }
@@ -276,17 +252,28 @@ pub fn byte_offset_at_point_family(
     else {
         return 0;
     };
-    let row: Vec<&LaidGlyph> = glyphs
+    let mut row: Vec<&LaidGlyph> = glyphs
         .iter()
         .filter(|g| (g.y - row_y).abs() < 0.5)
         .collect();
+    row.sort_by(|a, b| a.x.total_cmp(&b.x));
     for g in &row {
         if x < g.x + g.advance / 2.0 {
-            return g.byte_offset;
+            return if g.rtl {
+                g.byte_offset + g.ch.len_utf8()
+            } else {
+                g.byte_offset
+            };
         }
     }
     row.last()
-        .map_or(0, |g| g.byte_offset + g.ch.len_utf8())
+        .map_or(0, |g| {
+            if g.rtl {
+                g.byte_offset
+            } else {
+                g.byte_offset + g.ch.len_utf8()
+            }
+        })
         .min(text.len())
 }
 

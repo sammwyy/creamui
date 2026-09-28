@@ -1,6 +1,6 @@
 use super::dirty::DirtyFlags;
 use super::mutation::Mutation;
-use super::node::{NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
+use super::node::{ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode};
 use super::Runtime;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -76,6 +76,9 @@ impl<'a> RuntimeTransaction<'a> {
         if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::STRUCTURE) {
             self.runtime.layout_dirty = true;
         }
+        if flags.intersects(DirtyFlags::LAYOUT | DirtyFlags::MEASURE | DirtyFlags::STRUCTURE) {
+            self.runtime.layout_roots.push(id);
+        }
         if flags.intersects(DirtyFlags::HIT_TEST | DirtyFlags::STRUCTURE) {
             self.runtime.hit_test_dirty = true;
         }
@@ -121,6 +124,7 @@ impl<'a> RuntimeTransaction<'a> {
             .expect("just inserted")
             .touched_stamp = self.stamp;
         self.runtime.layout_dirty = true;
+        self.runtime.layout_roots.push(id);
         self.runtime.paint_order_dirty = true;
         self.touched.push(id);
         id
@@ -198,16 +202,33 @@ impl<'a> RuntimeTransaction<'a> {
     pub fn apply(&mut self, mutation: Mutation) {
         match mutation {
             Mutation::SetLayoutStyle { node, style } => {
+                let mut repositioned = false;
                 let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
                     let changed = n.layout_style != style;
+                    repositioned = n.layout_style.position != style.position;
                     n.layout_style = style.clone();
                     changed
                 });
+                if repositioned {
+                    self.touch(node, DirtyFlags::HIT_TEST);
+                }
                 if changed {
                     if let Some(taffy_node) =
                         self.runtime.nodes.get(node).map(|n| n.layout.taffy_node)
                     {
-                        let _ = self.runtime.taffy.set_style(taffy_node, style);
+                        let border = self
+                            .runtime
+                            .nodes
+                            .get(node)
+                            .and_then(|n| n.paint_style.border);
+                        let style = crate::style::layout_with_border(
+                            style,
+                            border.map(|border| border.width),
+                        );
+                        let _ = self
+                            .runtime
+                            .taffy
+                            .set_style(taffy_node, crate::style::normalize_aspect_ratio(style));
                         #[cfg(feature = "perf-metrics")]
                         crate::metrics::record(|m| m.taffy_style_writes += 1);
                     }
@@ -215,12 +236,30 @@ impl<'a> RuntimeTransaction<'a> {
                 }
             }
             Mutation::SetPaintStyle { node, style } => {
+                let before = self
+                    .runtime
+                    .nodes
+                    .get(node)
+                    .and_then(|n| n.paint_style.border);
                 let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
                     let changed = n.paint_style != style;
                     n.paint_style = style;
                     changed
                 });
                 if changed {
+                    if before != style.border {
+                        if let Some(current) = self.runtime.nodes.get(node) {
+                            let layout = crate::style::layout_with_border(
+                                current.layout_style.clone(),
+                                style.border.map(|border| border.width),
+                            );
+                            let _ = self.runtime.taffy.set_style(
+                                current.layout.taffy_node,
+                                crate::style::normalize_aspect_ratio(layout),
+                            );
+                            self.touch(node, DirtyFlags::LAYOUT);
+                        }
+                    }
                     self.touch(node, DirtyFlags::PAINT);
                 }
             }
@@ -250,6 +289,23 @@ impl<'a> RuntimeTransaction<'a> {
                             true
                         }
                     });
+                if changed {
+                    self.touch(node, DirtyFlags::PAINT | DirtyFlags::MEASURE);
+                }
+            }
+            Mutation::SetImage { node, content, fit } => {
+                let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
+                    let changed = match &n.kind {
+                        NodeKind::Image(existing) => {
+                            existing.content != content || existing.fit != fit
+                        }
+                        _ => true,
+                    };
+                    if changed {
+                        n.kind = NodeKind::Image(ImageNode { content, fit });
+                    }
+                    changed
+                });
                 if changed {
                     self.touch(node, DirtyFlags::PAINT | DirtyFlags::MEASURE);
                 }
@@ -321,8 +377,11 @@ impl<'a> RuntimeTransaction<'a> {
             }
             Mutation::SetEventHandlers { node, handlers } => {
                 if let Some(n) = self.runtime.nodes.get_mut(node) {
+                    let listed = (n.events.is_interactive(), n.events.focusable);
                     n.events = handlers;
-                    self.touch(node, DirtyFlags::HIT_TEST);
+                    if listed != (n.events.is_interactive(), n.events.focusable) {
+                        self.touch(node, DirtyFlags::HIT_TEST);
+                    }
                 }
             }
         }

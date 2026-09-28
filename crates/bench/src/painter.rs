@@ -3,7 +3,7 @@
 //! raster stages headlessly.
 
 use creamui_core::{Painter, Point, Rect, Renderer, TextAlign};
-use creamui_render::{damage, Damage, DisplayList, Rasterizer, SceneRecorder};
+use creamui_render::{diff, Damage, DisplayList, Rasterizer, SceneRecorder};
 use creamui_theme::{Color, ColorScheme};
 
 /// Discards all drawing.
@@ -77,8 +77,8 @@ impl FramePipeline {
     /// Records, diffs and rasterizes one frame.
     pub fn frame(&mut self, renderer: &Renderer) -> FrameOutput {
         let list = self.record(renderer);
-        let damage = damage(self.previous.as_ref(), &list);
-        let damage = self.raster.render(&list, &damage);
+        let diff = diff(self.previous.as_ref(), &list);
+        let damage = self.raster.apply(&list, &diff);
         let output = FrameOutput {
             items: list.items.len(),
             damaged_pixels: damage.area(list.viewport()),

@@ -166,8 +166,8 @@ pub trait Painter {
     }
 
     /// Like [`Painter::fill_text_weight`], resolving `family` (a CSS-style
-    /// stack, e.g. `"Inter, sans-serif"`) against the font registry instead
-    /// of the bundled default. `None` behaves exactly like
+    /// stack, e.g. `"Inter, system-ui"`) against the font registry instead
+    /// of the system default. `None` behaves exactly like
     /// [`Painter::fill_text_weight`].
     #[allow(clippy::too_many_arguments)]
     fn fill_text_font(
@@ -191,6 +191,18 @@ pub trait Painter {
         start: creamui_theme::Color,
         end: creamui_theme::Color,
         _angle_degrees: f32,
+        corner_radius: f32,
+    ) {
+        self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn fill_radial_gradient(
+        &mut self,
+        rect: Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        _center: Point,
+        _radius: f32,
         corner_radius: f32,
     ) {
         self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
@@ -246,6 +258,15 @@ pub trait Painter {
         width: f32,
         corner_radius: f32,
     );
+    fn stroke_rect_inside(
+        &mut self,
+        rect: Rect,
+        color: creamui_theme::Color,
+        width: f32,
+        corner_radius: f32,
+    ) {
+        self.stroke_rect(rect.inflate(-width / 2.0), color, width, corner_radius);
+    }
     fn fill_text(
         &mut self,
         rect: Rect,
@@ -322,6 +343,20 @@ pub trait Painter {
     /// Removes the most recently pushed clip. Must be paired 1:1 with
     /// [`Painter::push_clip`] calls. Default: a no-op.
     fn pop_clip(&mut self) {}
+
+    /// Like [`Painter::push_clip_rounded`] for the viewport of content
+    /// scrolled by `offset` (the content's origin sits at the viewport's
+    /// origin minus `offset`). Painters that retain frames can then move
+    /// already drawn content instead of redrawing it. Paired with
+    /// [`Painter::pop_scroll_layer`].
+    fn push_scroll_layer(&mut self, viewport: Rect, corner_radius: f32, offset: Point) {
+        let _ = offset;
+        self.push_clip_rounded(viewport, corner_radius);
+    }
+
+    fn pop_scroll_layer(&mut self) {
+        self.pop_clip();
+    }
 }
 
 /// A node in a CreamUI widget tree.
@@ -347,6 +382,10 @@ pub trait Widget {
     /// the parent's coordinate space). The renderer paints the common
     /// background, border, radius, and outline first. Does not paint children.
     fn paint(&self, painter: &mut dyn Painter, rect: Rect);
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, _content: Rect) {
+        self.paint(painter, rect);
+    }
 
     /// This widget's fundamental content, for [`crate::runtime::mount_legacy_widget`]
     /// to classify as [`crate::runtime::NodeKind::Text`]/[`crate::runtime::NodeKind::Image`]
@@ -436,11 +475,21 @@ pub trait Widget {
         None
     }
 
+    /// Like [`Widget::on_drag`], with the content box resolved by layout.
+    fn on_drag_with_content(&self, _content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.on_drag()
+    }
+
     /// Optional handler for the initial pointer press of a drag gesture.
     /// Kept separate from [`Widget::on_drag`] so text editors can record a
     /// selection anchor before subsequent pointer moves extend the focus.
     fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         None
+    }
+
+    /// Like [`Widget::on_drag_start`], with the content box resolved by layout.
+    fn on_drag_start_with_content(&self, _content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.on_drag_start()
     }
 
     fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
@@ -516,6 +565,17 @@ pub trait Widget {
     /// [`Widget::focusable`]). Used for a text input's blinking caret.
     /// `caret_visible` is the current blink phase. Default: a no-op.
     fn paint_focused_overlay(&self, _painter: &mut dyn Painter, _rect: Rect, _caret_visible: bool) {
+    }
+
+    /// Paints the focused overlay using the content box resolved by layout.
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        _content: Rect,
+        caret_visible: bool,
+    ) {
+        self.paint_focused_overlay(painter, rect, caret_visible);
     }
 }
 
@@ -606,3 +666,111 @@ pub trait Styled: Widget + Sized {
 }
 
 pub type BoxedWidget = Box<dyn Widget>;
+
+/// Assigns a stable sibling key to any widget without changing its layout.
+/// Use this for controls in lists whose items can be inserted or removed.
+pub fn keyed(widget: impl Widget + 'static, key: impl Into<WidgetKey>) -> BoxedWidget {
+    Box::new(KeyedWidget {
+        widget,
+        key: key.into(),
+    })
+}
+
+struct KeyedWidget<W> {
+    widget: W,
+    key: WidgetKey,
+}
+
+impl<W: Widget> Widget for KeyedWidget<W> {
+    fn style(&self) -> crate::Style {
+        self.widget.style()
+    }
+    fn style_state(&self) -> crate::StyleState {
+        self.widget.style_state()
+    }
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.widget.paint(painter, rect)
+    }
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.widget.paint_content(painter, rect, content)
+    }
+    fn legacy_node_kind(&self) -> Option<crate::runtime::NodeKind> {
+        self.widget.legacy_node_kind()
+    }
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        self.widget.children()
+    }
+    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+        self.widget.on_click()
+    }
+    fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        self.widget.on_click_at()
+    }
+    fn measure(&self) -> Option<MeasureFn> {
+        self.widget.measure()
+    }
+    fn measure_fingerprint(&self) -> Option<u64> {
+        self.widget.measure_fingerprint()
+    }
+    fn key(&self) -> Option<WidgetKey> {
+        Some(self.key.clone())
+    }
+    fn focusable(&self) -> bool {
+        self.widget.focusable()
+    }
+    fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+        self.widget.on_key()
+    }
+    fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag()
+    }
+    fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_with_content(content)
+    }
+    fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_start()
+    }
+    fn on_drag_start_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
+        self.widget.on_drag_start_with_content(content)
+    }
+    fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
+        self.widget.on_drag_end()
+    }
+    fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.widget.on_scroll()
+    }
+    fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
+        self.widget.on_scroll_bounded()
+    }
+    fn on_content_overflow(&self) -> Option<Rc<dyn Fn(f32)>> {
+        self.widget.on_content_overflow()
+    }
+    fn clips_children(&self) -> bool {
+        self.widget.clips_children()
+    }
+    fn clip_corner_radius(&self) -> f32 {
+        self.widget.clip_corner_radius()
+    }
+    fn scroll_offset(&self) -> Point {
+        self.widget.scroll_offset()
+    }
+    fn cursor_icon(&self) -> Option<CursorIcon> {
+        self.widget.cursor_icon()
+    }
+    fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
+        self.widget.on_hover()
+    }
+    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, visible: bool) {
+        self.widget.paint_focused_overlay(painter, rect, visible)
+    }
+    fn paint_focused_overlay_with_content(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        visible: bool,
+    ) {
+        self.widget
+            .paint_focused_overlay_with_content(painter, rect, content, visible)
+    }
+}

@@ -74,17 +74,85 @@ pub struct TextNode {
     pub text: Rc<str>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+pub enum ImageContent {
+    Source(Rc<str>),
+    Decoded(crate::RgbaImage),
+}
+
+impl PartialEq for ImageContent {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Source(a), Self::Source(b)) => a == b,
+            (Self::Decoded(a), Self::Decoded(b)) => a.id() == b.id(),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ImageNode {
-    pub source: Rc<str>,
+    pub content: ImageContent,
+    pub fit: ImageFit,
+}
+
+/// How decoded pixels map into an image node's layout box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ImageFit {
+    /// Stretch to the layout box.
+    Fill,
+    /// Preserve aspect ratio; keep the entire image visible.
+    Contain,
+    /// Preserve aspect ratio; crop to fill the layout box.
+    #[default]
+    Cover,
+    /// Keep source dimensions at the box's top-left corner.
+    None,
+}
+
+impl Default for ImageNode {
+    fn default() -> Self {
+        Self::source("")
+    }
+}
+
+impl ImageNode {
+    pub fn source(source: impl Into<Rc<str>>) -> Self {
+        Self {
+            content: ImageContent::Source(source.into()),
+            fit: ImageFit::Cover,
+        }
+    }
+
+    pub fn decoded(image: crate::RgbaImage) -> Self {
+        Self {
+            content: ImageContent::Decoded(image),
+            fit: ImageFit::Cover,
+        }
+    }
+
+    pub fn with_fit(mut self, fit: ImageFit) -> Self {
+        self.fit = fit;
+        self
+    }
 }
 
 /// Payload for a node not (yet) expressed as one of [`NodeKind`]'s other
 /// primitives — e.g. one translated wholesale from a legacy `Widget` by
 /// [`super::mount::mount_legacy_widget`].
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct CustomNode {
     pub label: &'static str,
+    pub(super) widget: Option<Rc<dyn crate::Widget>>,
+}
+
+impl std::fmt::Debug for CustomNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomNode")
+            .field("label", &self.label)
+            .field("has_widget", &self.widget.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +171,7 @@ pub struct LayoutState {
     pub measure_fingerprint: Option<u64>,
     /// Window-space rect as of the last [`super::Runtime::compute_layout`].
     pub rect: crate::Rect,
+    pub content_rect: crate::Rect,
     pub previous_rect: crate::Rect,
     /// Layout epoch as of the last time `rect` actually changed.
     pub last_layout_epoch: u64,
@@ -179,6 +248,12 @@ pub struct RuntimeNode {
     /// stamp (stamps start at `1`), so a freshly created node is correctly
     /// "not yet touched".
     pub(super) touched_stamp: u64,
+    /// Set on every ancestor of a node whose layout inputs changed since the
+    /// last layout, so the rect sync only walks those paths and the
+    /// subtrees that actually moved.
+    pub(super) on_layout_path: bool,
+    /// This node's index in [`super::Runtime`]'s hit-test list, if listed.
+    pub(super) hit_slot: Option<u32>,
 }
 
 impl RuntimeNode {
@@ -199,6 +274,7 @@ impl RuntimeNode {
                 taffy_node,
                 measure_fingerprint: None,
                 rect: crate::Rect::default(),
+                content_rect: crate::Rect::default(),
                 previous_rect: crate::Rect::default(),
                 last_layout_epoch: 0,
                 effective_transform: super::mutation::Transform2D::default(),
@@ -208,6 +284,8 @@ impl RuntimeNode {
             events: EventState::default(),
             paint: super::paint::PaintState::default(),
             touched_stamp: 0,
+            on_layout_path: false,
+            hit_slot: None,
         }
     }
 }

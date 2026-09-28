@@ -13,4 +13,7 @@ categories = ["gui"]
 
 [dependencies]
 creamui-reactive = { workspace = true }
-fontdue = "0.9"
+swash = "0.2"
+unicode-bidi = "0.3"
+memmap2 = "0.9"
+log = "0.4"

@@ -1,7 +1,8 @@
-use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use winit::application::ApplicationHandler as WinitApplicationHandler;
 use winit::event::{
     ElementState, MouseButton as WinitMouseButton, MouseScrollDelta as WinitScrollDelta,
@@ -126,6 +127,18 @@ impl PlatformWindow for Window {
     }
     fn pre_present_notify(&self) {
         self.inner.pre_present_notify();
+    }
+    fn paces_redraws(&self) -> bool {
+        matches!(
+            self.inner.window_handle().map(|handle| handle.as_raw()),
+            Ok(RawWindowHandle::Wayland(_)
+                | RawWindowHandle::Web(_)
+                | RawWindowHandle::WebCanvas(_))
+        )
+    }
+    fn refresh_interval(&self) -> Option<Duration> {
+        let millihertz = self.inner.current_monitor()?.refresh_rate_millihertz()?;
+        (millihertz > 0).then(|| Duration::from_secs_f64(1000.0 / millihertz as f64))
     }
     fn close(&self) {}
     fn request_inner_size(&self, size: LogicalSize) {
@@ -286,7 +299,6 @@ impl<T: 'static, H: ApplicationHandler<T> + ?Sized> ApplicationHandler<T> for &m
     fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
         (**self).resumed(event_loop);
     }
-
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop<'_>,
@@ -295,11 +307,9 @@ impl<T: 'static, H: ApplicationHandler<T> + ?Sized> ApplicationHandler<T> for &m
     ) {
         (**self).window_event(event_loop, window_id, event);
     }
-
     fn user_event(&mut self, event_loop: &ActiveEventLoop<'_>, event: T) {
         (**self).user_event(event_loop, event);
     }
-
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
         (**self).about_to_wait(event_loop);
     }

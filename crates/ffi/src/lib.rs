@@ -43,7 +43,10 @@ use std::os::raw::c_int;
 // the consuming side of this ABI so the two can never drift out of sync.
 // Re-exported here so existing code importing them from `creamui_ffi`
 // (this crate's public name) keeps working unchanged.
-pub use creamui_abi::{CColor, CDimension, CStyle, CTheme, CTypographyStyle, CWindowOptions};
+pub use creamui_abi::{
+    CColor, CColorScheme, CDimension, CPaintOp, CStyle, CTheme, CTypographyStyle, CWindowOptions,
+};
+pub use creamui_abi::{CUI_BLUR_NONE, CUI_BLUR_RECT, CUI_BLUR_WINDOW};
 pub use creamui_abi::{CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU};
 
 /// Opaque handle to a reactive `i32` value.
@@ -991,6 +994,39 @@ pub unsafe extern "C" fn creamui_window_set_always_on_top(
     (*handle).0.set_always_on_top(enabled != 0);
 }
 
+/// Requests or clears compositor-side background blur. `kind` must be one of
+/// `CUI_BLUR_NONE`, `CUI_BLUR_WINDOW`, or `CUI_BLUR_RECT`; rectangle values are
+/// logical window-local coordinates and are ignored for the other kinds.
+/// Unsupported compositor protocols treat this as a no-op.
+///
+/// # Safety
+/// `handle` must be a valid, non-null pointer from a `creamui_run`
+/// `on_window_ready` callback, still within that `creamui_run` call.
+#[no_mangle]
+pub unsafe extern "C" fn creamui_window_set_blur(
+    handle: *const CWindowHandle,
+    kind: c_int,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) {
+    if handle.is_null() {
+        return;
+    }
+    let region = match kind {
+        creamui_abi::CUI_BLUR_WINDOW => Some(creamui_render::BlurRegion::Window),
+        creamui_abi::CUI_BLUR_RECT => Some(creamui_render::BlurRegion::Rect {
+            x,
+            y,
+            width,
+            height,
+        }),
+        _ => None,
+    };
+    (*handle).0.set_blur_region(region);
+}
+
 /// Frees a handle obtained from a [`creamui_run`] `on_window_ready`
 /// callback. Optional — the handle is also cleaned up when `creamui_run`
 /// returns — but calling this lets an app stop holding onto it earlier.
@@ -1017,6 +1053,7 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         resizable: options.resizable != 0,
         decorations: options.decorations != 0,
         transparent: options.transparent != 0,
+        blur: None,
         focus_first: false,
         role: creamui_render::platform::WindowRole::Normal,
         // The C ABI keeps its existing close semantics; the new app/tray

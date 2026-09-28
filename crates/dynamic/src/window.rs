@@ -66,6 +66,13 @@ impl WindowHandle {
     pub fn set_always_on_top(&self, enabled: bool) {
         unsafe { (self.rt.sym.window_set_always_on_top)(self.ptr, enabled as c_int) };
     }
+
+    /// Requests or clears compositor-side blur. Pass one of
+    /// `creamui_abi::CUI_BLUR_*`; rectangle values are logical window-local
+    /// coordinates and are ignored for other kinds.
+    pub fn set_blur(&self, kind: c_int, x: f64, y: f64, width: f64, height: f64) {
+        unsafe { (self.rt.sym.window_set_blur)(self.ptr, kind, x, y, width, height) };
+    }
 }
 
 impl Drop for WindowHandle {

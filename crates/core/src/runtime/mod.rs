@@ -27,11 +27,12 @@ pub use mount::mount_legacy_widget;
 pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};
 pub use node::{
-    Children, CustomNode, EventState, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode,
+    Children, CustomNode, EventState, ImageContent, ImageFit, ImageNode, NodeKind, RuntimeNode,
+    RuntimeNodeId, TextNode,
 };
 pub use paint::{
     BorderPrimitive, ImagePrimitive, PaintFragment, PaintOp, PaintPrimitive, PaintState,
-    QuadPrimitive, RecordingPainter, TextPrimitive,
+    QuadPrimitive, RadialGradientPrimitive, RecordingPainter, TextPrimitive,
 };
 pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
@@ -65,9 +66,17 @@ pub struct Runtime {
     /// Bumped once per [`Runtime::compute_layout`] call.
     layout_epoch: u64,
     last_viewport: Option<crate::Size>,
-    /// Set when a mutation marks any node's HIT_TEST/STRUCTURE dirty; lets
+    /// Nodes whose layout inputs changed since the last layout.
+    layout_roots: Vec<RuntimeNodeId>,
+    /// Makes the next rect sync visit every node, e.g. after the root moved.
+    full_layout_sync: bool,
+    /// Set when the hit-test list's membership or order may have changed
+    /// (structure, interactivity, focusability, positioning); lets
     /// [`Runtime::rebuild_hit_test`] skip the tree walk otherwise.
     hit_test_dirty: bool,
+    /// Listed nodes whose rect moved, patched in place when the list's
+    /// membership is otherwise unchanged.
+    hit_rects: Vec<RuntimeNodeId>,
     hit_entries: Vec<HitEntry>,
     focus_order: Vec<RuntimeNodeId>,
     pointer: PointerState,
@@ -94,7 +103,10 @@ impl Runtime {
             layout_dirty: false,
             layout_epoch: 0,
             last_viewport: None,
+            layout_roots: Vec::new(),
+            full_layout_sync: false,
             hit_test_dirty: false,
+            hit_rects: Vec::new(),
             hit_entries: Vec::new(),
             focus_order: Vec::new(),
             pointer: PointerState::default(),
@@ -120,6 +132,10 @@ impl Runtime {
     }
 
     pub fn set_root(&mut self, id: Option<RuntimeNodeId>) {
+        if self.root != id {
+            self.full_layout_sync = true;
+            self.hit_test_dirty = true;
+        }
         self.root = id;
     }
 
@@ -184,13 +200,30 @@ impl Runtime {
 
         self.layout_dirty = false;
         self.layout_epoch += 1;
+        self.mark_layout_paths();
         self.sync_layout_rects(root)
+    }
+
+    fn mark_layout_paths(&mut self) {
+        for id in std::mem::take(&mut self.layout_roots) {
+            let mut current = Some(id);
+            while let Some(node) = current.and_then(|id| self.nodes.get_mut(id)) {
+                if node.on_layout_path {
+                    break;
+                }
+                node.on_layout_path = true;
+                current = node.parent;
+            }
+        }
     }
 
     /// Iterative top-down pass (a deep tree can overflow the stack under
     /// recursion) computing each node's window-space rect from `taffy`'s
-    /// parent-relative output.
+    /// parent-relative output. A subtree is skipped when it is not on a
+    /// changed node's ancestor path and its root kept its rect: `taffy`
+    /// lays it out from the same inputs, so nothing inside it moved.
     fn sync_layout_rects(&mut self, root: RuntimeNodeId) -> Vec<crate::Rect> {
+        let full = std::mem::take(&mut self.full_layout_sync);
         let mut damage = Vec::new();
         let mut stack: Vec<(RuntimeNodeId, crate::Point)> = vec![(root, crate::Point::default())];
         while let Some((id, parent_origin)) = stack.pop() {
@@ -207,6 +240,22 @@ impl Runtime {
                 width: layout.size.width,
                 height: layout.size.height,
             };
+            let content_rect = crate::Rect {
+                x: rect.x + layout.border.left + layout.padding.left,
+                y: rect.y + layout.border.top + layout.padding.top,
+                width: (rect.width
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.padding.left
+                    - layout.padding.right)
+                    .max(0.0),
+                height: (rect.height
+                    - layout.border.top
+                    - layout.border.bottom
+                    - layout.padding.top
+                    - layout.padding.bottom)
+                    .max(0.0),
+            };
             let child_origin = crate::Point {
                 x: rect.x,
                 y: rect.y,
@@ -214,14 +263,19 @@ impl Runtime {
             let children: Vec<RuntimeNodeId> = node.children.as_slice().to_vec();
 
             let node = self.nodes.get_mut(id).expect("checked above");
-            if node.layout.rect != rect {
+            let on_path = std::mem::take(&mut node.on_layout_path);
+            let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
+            if moved {
                 damage.push(node.layout.rect);
                 damage.push(rect);
                 node.layout.previous_rect = node.layout.rect;
                 node.layout.rect = rect;
+                node.layout.content_rect = content_rect;
                 node.layout.last_layout_epoch = self.layout_epoch;
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
-                self.hit_test_dirty = true;
+                if node.hit_slot.is_some() {
+                    self.hit_rects.push(id);
+                }
                 self.paint_queue.push(id);
                 // A clipping node's rect feeds its children's effective_clip.
                 // The node's own effective_clip is unaffected, so
@@ -237,7 +291,9 @@ impl Runtime {
                 }
             }
 
-            stack.extend(children.into_iter().map(|child| (child, child_origin)));
+            if full || on_path || moved {
+                stack.extend(children.into_iter().map(|child| (child, child_origin)));
+            }
         }
         damage
     }
@@ -415,6 +471,75 @@ impl Default for Runtime {
 mod tests {
     use super::*;
 
+    fn sized(width: f32, height: f32) -> taffy::style::Style {
+        taffy::style::Style {
+            size: taffy::geometry::Size {
+                width: taffy::style::Dimension::Length(width),
+                height: taffy::style::Dimension::Length(height),
+            },
+            ..Default::default()
+        }
+    }
+
+    const VIEWPORT: crate::Size = crate::Size {
+        width: 800.0,
+        height: 600.0,
+    };
+
+    #[test]
+    fn incremental_rect_sync_matches_a_full_one() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: taffy::style::Style {
+                flex_direction: taffy::style::FlexDirection::Column,
+                ..Default::default()
+            },
+        });
+        let mut leaves = Vec::new();
+        let mut nested = Vec::new();
+        for _ in 0..4 {
+            let row = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, row, None);
+            let leaf = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: leaf,
+                style: sized(20.0, 20.0),
+            });
+            tx.insert_child(row, leaf, None);
+            let inner = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: inner,
+                style: sized(10.0, 10.0),
+            });
+            tx.insert_child(row, inner, None);
+            leaves.push(leaf);
+            nested.push(inner);
+        }
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        let before = runtime.get(nested[3]).unwrap().layout.rect;
+
+        let mut tx = runtime.transaction();
+        tx.apply(Mutation::SetLayoutStyle {
+            node: leaves[0],
+            style: sized(20.0, 50.0),
+        });
+        drop(tx);
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(
+            runtime.get(nested[3]).unwrap().layout.rect.y,
+            before.y + 30.0
+        );
+
+        runtime.full_layout_sync = true;
+        runtime.layout_dirty = true;
+        assert!(runtime.compute_layout(VIEWPORT).is_empty());
+    }
+
     #[test]
     fn create_and_insert_child_link_both_directions() {
         let mut runtime = Runtime::new();
@@ -554,6 +679,66 @@ mod tests {
     }
 
     #[test]
+    fn explicit_dimensions_override_aspect_ratio_and_auto_restores_it() {
+        let mut runtime = Runtime::new();
+        let root = full_size_root(&mut runtime);
+        runtime.set_root(Some(root));
+        for (height, expected) in [
+            (crate::LengthValue::Px(40.0), 40.0),
+            (crate::LengthValue::Auto, 80.0),
+        ] {
+            runtime.transaction().apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: crate::Style::new()
+                    .width(160.0)
+                    .height(height)
+                    .aspect_ratio(2.0)
+                    .layout,
+            });
+            runtime.compute_layout(size(640.0, 480.0));
+            assert_eq!(runtime.get(root).unwrap().layout.rect.height, expected);
+        }
+    }
+
+    #[test]
+    fn paint_border_changes_reserve_and_release_layout_space() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: crate::Style::new()
+                .width(80.0)
+                .height(40.0)
+                .padding(10.0)
+                .layout,
+        });
+        tx.apply(Mutation::SetLayoutStyle {
+            node: child,
+            style: crate::Style::new().width(10.0).height(10.0).layout,
+        });
+        tx.insert_child(root, child, None);
+        drop(tx);
+        runtime.set_root(Some(root));
+
+        for (border_width, expected_x) in [(4.0, 14.0), (0.0, 10.0)] {
+            runtime.transaction().apply(Mutation::SetPaintStyle {
+                node: root,
+                style: if border_width > 0.0 {
+                    crate::Style::new()
+                        .border(creamui_theme::Color::rgb(1, 2, 3), border_width)
+                        .paint
+                } else {
+                    crate::PaintStyle::default()
+                },
+            });
+            runtime.compute_layout(size(300.0, 200.0));
+            assert_eq!(runtime.get(child).unwrap().layout.rect.x, expected_x);
+        }
+    }
+
+    #[test]
     fn creating_the_root_produces_damage_on_first_compute() {
         let mut runtime = Runtime::new();
         let root = full_size_root(&mut runtime);
@@ -685,6 +870,35 @@ mod tests {
                 }
             ))]
         );
+    }
+
+    #[test]
+    fn rebuild_paint_resolves_radial_gradient_geometry_and_theme() {
+        let mut runtime = Runtime::new();
+        let node = full_size_root(&mut runtime);
+        runtime.set_root(Some(node));
+        runtime.transaction().apply(Mutation::SetPaintStyle {
+            node,
+            style: crate::Style::new()
+                .background(
+                    crate::RadialGradient::new(
+                        crate::ColorToken::Accent,
+                        crate::ColorToken::Surface,
+                    )
+                    .at(0.0, 0.0),
+                )
+                .paint,
+        });
+        runtime.compute_layout(size(30.0, 40.0));
+        let colors = creamui_theme::ColorScheme::dark();
+        runtime.rebuild_paint(&colors);
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::RadialGradient(gradient)) = &fragment.ops[0] else {
+            panic!("expected radial gradient");
+        };
+        assert_eq!(gradient.radius, 50.0);
+        assert_eq!(gradient.start, colors.accent);
+        assert_eq!(gradient.end, colors.surface);
     }
 
     #[test]

@@ -131,11 +131,102 @@ impl LinearGradient {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadialGradient {
+    pub start: ColorValue,
+    pub end: ColorValue,
+    /// Center coordinates as fractions of the background box.
+    pub center: crate::Point,
+}
+
+impl RadialGradient {
+    pub fn new(start: impl Into<ColorValue>, end: impl Into<ColorValue>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+            center: crate::Point { x: 0.5, y: 0.5 },
+        }
+    }
+
+    pub fn at(mut self, x: f32, y: f32) -> Self {
+        assert!(
+            x.is_finite() && y.is_finite(),
+            "radial gradient center must be finite"
+        );
+        self.center = crate::Point { x, y };
+        self
+    }
+
+    pub fn geometry(self, rect: crate::Rect) -> (crate::Point, f32) {
+        let x = self.center.x * rect.width;
+        let y = self.center.y * rect.height;
+        let radius = x
+            .abs()
+            .max((rect.width - x).abs())
+            .hypot(y.abs().max((rect.height - y).abs()));
+        (
+            crate::Point {
+                x: rect.x + x,
+                y: rect.y + y,
+            },
+            radius,
+        )
+    }
+}
+
+impl FromStr for RadialGradient {
+    type Err = StyleParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let invalid = || {
+            StyleParseError(format!(
+                "expected `radial-gradient(circle [at x% y%], start, end)`, got `{input}`"
+            ))
+        };
+        let body = input
+            .trim()
+            .strip_prefix("radial-gradient(")
+            .and_then(|value| value.strip_suffix(')'))
+            .ok_or_else(invalid)?;
+        let mut parts = body.split(',').map(str::trim);
+        let shape = parts.next().ok_or_else(invalid)?;
+        let start = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
+        let end = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
+        if parts.next().is_some() {
+            return Err(invalid());
+        }
+        let mut tokens = shape.split_whitespace();
+        if tokens.next() != Some("circle") {
+            return Err(invalid());
+        }
+        let mut gradient = Self::new(start, end);
+        if let Some(token) = tokens.next() {
+            if token != "at" {
+                return Err(invalid());
+            }
+            let percent = |token: Option<&str>| {
+                token
+                    .and_then(|value| value.strip_suffix('%'))
+                    .and_then(|value| value.parse::<f32>().ok())
+                    .filter(|value| value.is_finite())
+                    .map(|value| value / 100.0)
+                    .ok_or_else(invalid)
+            };
+            gradient = gradient.at(percent(tokens.next())?, percent(tokens.next())?);
+        }
+        if tokens.next().is_some() {
+            return Err(invalid());
+        }
+        Ok(gradient)
+    }
+}
+
 /// A solid or gradient component background.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Background {
     Solid(ColorValue),
     LinearGradient(LinearGradient),
+    RadialGradient(RadialGradient),
 }
 
 impl From<ColorValue> for Background {
@@ -162,6 +253,12 @@ impl From<LinearGradient> for Background {
     }
 }
 
+impl From<RadialGradient> for Background {
+    fn from(gradient: RadialGradient) -> Self {
+        Self::RadialGradient(gradient)
+    }
+}
+
 impl From<&str> for Background {
     fn from(value: &str) -> Self {
         value
@@ -181,6 +278,9 @@ impl FromStr for Background {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let input = input.trim();
+        if input.starts_with("radial-gradient(") {
+            return input.parse::<RadialGradient>().map(Self::RadialGradient);
+        }
         let Some(body) = input
             .strip_prefix("linear-gradient(")
             .and_then(|value| value.strip_suffix(')'))
@@ -339,6 +439,126 @@ impl From<String> for LengthValue {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeValues {
+    pub top: LengthValue,
+    pub right: LengthValue,
+    pub bottom: LengthValue,
+    pub left: LengthValue,
+}
+
+impl EdgeValues {
+    pub const fn new(
+        top: LengthValue,
+        right: LengthValue,
+        bottom: LengthValue,
+        left: LengthValue,
+    ) -> Self {
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+
+    fn padding(
+        self,
+    ) -> Result<crate::layout::Rect<crate::layout::LengthPercentage>, StyleParseError> {
+        for value in [self.top, self.right, self.bottom, self.left] {
+            match value {
+                LengthValue::Px(value) | LengthValue::Percent(value)
+                    if value.is_finite() && value >= 0.0 => {}
+                _ => {
+                    return Err(StyleParseError(
+                        "padding requires non-negative lengths".into(),
+                    ))
+                }
+            }
+        }
+        Ok(crate::layout::Rect {
+            top: self.top.length_percentage(),
+            right: self.right.length_percentage(),
+            bottom: self.bottom.length_percentage(),
+            left: self.left.length_percentage(),
+        })
+    }
+
+    pub(crate) fn padding_rect(self) -> crate::layout::Rect<crate::layout::LengthPercentage> {
+        self.padding()
+            .unwrap_or_else(|error| panic!("invalid CreamUI padding: {error}"))
+    }
+
+    pub(crate) fn auto_rect(self) -> crate::layout::Rect<crate::layout::LengthPercentageAuto> {
+        crate::layout::Rect {
+            top: self.top.length_percentage_auto(),
+            right: self.right.length_percentage_auto(),
+            bottom: self.bottom.length_percentage_auto(),
+            left: self.left.length_percentage_auto(),
+        }
+    }
+}
+
+impl From<LengthValue> for EdgeValues {
+    fn from(value: LengthValue) -> Self {
+        Self::new(value, value, value, value)
+    }
+}
+
+impl From<f32> for EdgeValues {
+    fn from(value: f32) -> Self {
+        LengthValue::Px(value).into()
+    }
+}
+
+impl From<&str> for EdgeValues {
+    fn from(value: &str) -> Self {
+        value
+            .parse()
+            .unwrap_or_else(|error| panic!("invalid CreamUI spacing `{value}`: {error}"))
+    }
+}
+
+impl From<String> for EdgeValues {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl FromStr for EdgeValues {
+    type Err = StyleParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let mut values = [LengthValue::Auto; 4];
+        let mut count = 0;
+        for part in input.split_whitespace() {
+            if count == values.len() {
+                return Err(StyleParseError(format!(
+                    "expected one to four lengths, got `{input}`"
+                )));
+            }
+            let value = if part == "0" {
+                LengthValue::Px(0.0)
+            } else {
+                part.parse()?
+            };
+            if matches!(value, LengthValue::Px(v) | LengthValue::Percent(v) if !v.is_finite()) {
+                return Err(StyleParseError(format!("invalid spacing `{input}`")));
+            }
+            values[count] = value;
+            count += 1;
+        }
+        let [top, right, bottom, left] = values;
+        match count {
+            1 => Ok(top.into()),
+            2 => Ok(Self::new(top, right, top, right)),
+            3 => Ok(Self::new(top, right, bottom, right)),
+            4 => Ok(Self::new(top, right, bottom, left)),
+            _ => Err(StyleParseError("expected one to four lengths".into())),
+        }
+    }
+}
+
 /// Error returned by CSS-value and property parsing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StyleParseError(pub String);
@@ -436,6 +656,10 @@ pub struct Border {
 
 impl Border {
     pub fn new(color: impl Into<ColorValue>, width: f32) -> Self {
+        assert!(
+            width.is_finite() && width >= 0.0,
+            "border width must be finite and non-negative"
+        );
         Self {
             color: color.into(),
             width,
@@ -534,6 +758,8 @@ macro_rules! creamui_style_property_schema {
             MinHeight(crate::LengthValue) => "min-height" |target, value| { target.layout.min_size.height = value.dimension(); } => min_height(value: impl Into<crate::LengthValue>) |style| { style.layout.min_size.height = value.into().dimension(); };
             MaxWidth(crate::LengthValue) => "max-width" |target, value| { target.layout.max_size.width = value.dimension(); } => max_width(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.width = value.into().dimension(); };
             MaxHeight(crate::LengthValue) => "max-height" |target, value| { target.layout.max_size.height = value.dimension(); } => max_height(value: impl Into<crate::LengthValue>) |style| { style.layout.max_size.height = value.into().dimension(); };
+            AspectRatio(Option<f32>) => "aspect-ratio" |target, value| { target.layout.aspect_ratio = value; } => aspect_ratio(value: impl Into<Option<f32>>) |style| { style.layout.aspect_ratio = value.into(); };
+            BoxSizing(crate::layout::BoxSizing) => "box-sizing" |target, value| { target.layout.box_sizing = value; } => box_sizing(value: crate::layout::BoxSizing) |style| { style.layout.box_sizing = value; };
             Display(crate::layout::Display) => "display" |target, value| { target.layout.display = value; } => display(value: crate::layout::Display) |style| { style.layout.display = value; };
             FlexDirection(crate::layout::FlexDirection) => "flex-direction" |target, value| { target.layout.flex_direction = value; } => flex_direction(value: crate::layout::FlexDirection) |style| { style.layout.flex_direction = value; };
             FlexWrap(crate::layout::FlexWrap) => "flex-wrap" |target, value| { target.layout.flex_wrap = value; } => flex_wrap(value: crate::layout::FlexWrap) |style| { style.layout.flex_wrap = value; };
@@ -543,12 +769,14 @@ macro_rules! creamui_style_property_schema {
             Gap(crate::LengthValue) => "gap" |target, value| { let value = value.length_percentage(); target.layout.gap = crate::layout::Size { width: value, height: value }; } => gap(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage(); style.layout.gap = crate::layout::Size { width: value, height: value }; };
             RowGap(crate::LengthValue) => "row-gap" |target, value| { target.layout.gap.height = value.length_percentage(); } => row_gap(value: impl Into<crate::LengthValue>) |style| { style.layout.gap.height = value.into().length_percentage(); };
             ColumnGap(crate::LengthValue) => "column-gap" |target, value| { target.layout.gap.width = value.length_percentage(); } => column_gap(value: impl Into<crate::LengthValue>) |style| { style.layout.gap.width = value.into().length_percentage(); };
-            Padding(crate::LengthValue) => "padding" |target, value| { let value = value.length_percentage(); target.layout.padding = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; } => padding(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage(); style.layout.padding = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; };
+            Padding(crate::LengthValue) => "padding" |target, value| { target.layout.padding = crate::EdgeValues::from(value).padding_rect(); } => padding(value: impl Into<crate::EdgeValues>) |style| { style.layout.padding = value.into().padding_rect(); };
+            PaddingEdges(crate::EdgeValues) => "padding" |target, value| { target.layout.padding = value.padding_rect(); } => padding_edges(value: impl Into<crate::EdgeValues>) |style| { style.layout.padding = value.into().padding_rect(); };
             PaddingTop(crate::LengthValue) => "padding-top" |target, value| { target.layout.padding.top = value.length_percentage(); } => padding_top(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.top = value.into().length_percentage(); };
             PaddingRight(crate::LengthValue) => "padding-right" |target, value| { target.layout.padding.right = value.length_percentage(); } => padding_right(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.right = value.into().length_percentage(); };
             PaddingBottom(crate::LengthValue) => "padding-bottom" |target, value| { target.layout.padding.bottom = value.length_percentage(); } => padding_bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.bottom = value.into().length_percentage(); };
             PaddingLeft(crate::LengthValue) => "padding-left" |target, value| { target.layout.padding.left = value.length_percentage(); } => padding_left(value: impl Into<crate::LengthValue>) |style| { style.layout.padding.left = value.into().length_percentage(); };
-            Margin(crate::LengthValue) => "margin" |target, value| { let value = value.length_percentage_auto(); target.layout.margin = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; } => margin(value: impl Into<crate::LengthValue>) |style| { let value = value.into().length_percentage_auto(); style.layout.margin = crate::layout::Rect { left: value, right: value, top: value, bottom: value }; };
+            Margin(crate::LengthValue) => "margin" |target, value| { target.layout.margin = crate::EdgeValues::from(value).auto_rect(); } => margin(value: impl Into<crate::EdgeValues>) |style| { style.layout.margin = value.into().auto_rect(); };
+            MarginEdges(crate::EdgeValues) => "margin" |target, value| { target.layout.margin = value.auto_rect(); } => margin_edges(value: impl Into<crate::EdgeValues>) |style| { style.layout.margin = value.into().auto_rect(); };
             MarginTop(crate::LengthValue) => "margin-top" |target, value| { target.layout.margin.top = value.length_percentage_auto(); } => margin_top(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.top = value.into().length_percentage_auto(); };
             MarginRight(crate::LengthValue) => "margin-right" |target, value| { target.layout.margin.right = value.length_percentage_auto(); } => margin_right(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.right = value.into().length_percentage_auto(); };
             MarginBottom(crate::LengthValue) => "margin-bottom" |target, value| { target.layout.margin.bottom = value.length_percentage_auto(); } => margin_bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.margin.bottom = value.into().length_percentage_auto(); };
@@ -558,6 +786,7 @@ macro_rules! creamui_style_property_schema {
             JustifyContent(crate::layout::JustifyContent) => "justify-content" |target, value| { target.layout.justify_content = Some(value); } => justify_content(value: crate::layout::JustifyContent) |style| { style.layout.justify_content = Some(value); };
             AlignContent(crate::layout::AlignContent) => "align-content" |target, value| { target.layout.align_content = Some(value); } => content_alignment(value: crate::layout::AlignContent) |style| { style.layout.align_content = Some(value); };
             Position(crate::layout::Position) => "position" |target, value| { target.layout.position = value; } => position(value: crate::layout::Position) |style| { style.layout.position = value; };
+            Inset(crate::EdgeValues) => "inset" |target, value| { target.layout.inset = value.auto_rect(); } => inset(value: impl Into<crate::EdgeValues>) |style| { style.layout.inset = value.into().auto_rect(); };
             Top(crate::LengthValue) => "top" |target, value| { target.layout.inset.top = value.length_percentage_auto(); } => top(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.top = value.into().length_percentage_auto(); };
             Right(crate::LengthValue) => "right" |target, value| { target.layout.inset.right = value.length_percentage_auto(); } => right(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.right = value.into().length_percentage_auto(); };
             Bottom(crate::LengthValue) => "bottom" |target, value| { target.layout.inset.bottom = value.length_percentage_auto(); } => bottom(value: impl Into<crate::LengthValue>) |style| { style.layout.inset.bottom = value.into().length_percentage_auto(); };
@@ -712,6 +941,45 @@ impl Style {
         Self::default()
     }
 
+    pub(crate) fn border_width(&self) -> Option<f32> {
+        [
+            self.paint.border,
+            self.states.hover.paint.border,
+            self.states.pressed.paint.border,
+            self.states.focus.paint.border,
+            self.states.disabled.paint.border,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|border| border.width)
+        .filter(|width| width.is_finite() && *width >= 0.0)
+        .max_by(f32::total_cmp)
+    }
+
+    pub(crate) fn layout_with_border(&self) -> crate::layout::Style {
+        layout_with_border(self.layout.clone(), self.border_width())
+    }
+
+    /// Returns the content box inside this style's padding and layout border.
+    /// Percentage padding is resolved against the box width.
+    pub fn content_rect(&self, rect: crate::Rect) -> crate::Rect {
+        let layout = self.layout_with_border();
+        let resolve = |value: crate::layout::LengthPercentage| match value {
+            crate::layout::LengthPercentage::Length(length) => length,
+            crate::layout::LengthPercentage::Percent(percent) => percent * rect.width,
+        };
+        let left = resolve(layout.border.left) + resolve(layout.padding.left);
+        let right = resolve(layout.border.right) + resolve(layout.padding.right);
+        let top = resolve(layout.border.top) + resolve(layout.padding.top);
+        let bottom = resolve(layout.border.bottom) + resolve(layout.padding.bottom);
+        crate::Rect {
+            x: rect.x + left,
+            y: rect.y + top,
+            width: (rect.width - left - right).max(0.0),
+            height: (rect.height - top - bottom).max(0.0),
+        }
+    }
+
     pub fn layout(mut self, layout: crate::layout::Style) -> Self {
         self.layout = layout;
         self
@@ -763,6 +1031,31 @@ impl Style {
         }
         ResolvedStyle { paint, typography }
     }
+}
+
+pub(crate) fn normalize_aspect_ratio(mut style: crate::layout::Style) -> crate::layout::Style {
+    if style.size.width != crate::layout::Dimension::Auto
+        && style.size.height != crate::layout::Dimension::Auto
+    {
+        style.aspect_ratio = None;
+    }
+    style
+}
+
+pub(crate) fn layout_with_border(
+    mut layout: crate::layout::Style,
+    width: Option<f32>,
+) -> crate::layout::Style {
+    if let Some(width) = width {
+        let width = crate::layout::LengthPercentage::Length(width);
+        layout.border = crate::layout::Rect {
+            top: width,
+            right: width,
+            bottom: width,
+            left: width,
+        };
+    }
+    layout
 }
 
 impl From<crate::layout::Style> for Style {
@@ -953,7 +1246,11 @@ impl StyleProp {
             if parts.next().is_some() {
                 return Err(StyleParseError(format!("invalid border `{value}`")));
             }
-            Ok(Border::new(color.parse::<ColorValue>()?, number(width)?))
+            let width = number(width)?;
+            if !width.is_finite() || width < 0.0 {
+                return Err(StyleParseError(format!("invalid border width `{width}`")));
+            }
+            Ok(Border::new(color.parse::<ColorValue>()?, width))
         };
         let align_items = |value: &str| match value.trim() {
             "start" => Ok(crate::layout::AlignItems::Start),
@@ -1015,6 +1312,32 @@ impl StyleProp {
             "min-height" => Ok(Self::MinHeight(value.parse()?)),
             "max-width" => Ok(Self::MaxWidth(value.parse()?)),
             "max-height" => Ok(Self::MaxHeight(value.parse()?)),
+            "box-sizing" => Ok(Self::BoxSizing(match value.trim() {
+                "border-box" => crate::layout::BoxSizing::BorderBox,
+                "content-box" => crate::layout::BoxSizing::ContentBox,
+                other => return Err(StyleParseError(format!("invalid box-sizing `{other}`"))),
+            })),
+            "aspect-ratio" => {
+                let value = value.trim();
+                if value == "auto" {
+                    return Ok(Self::AspectRatio(None));
+                }
+                let positive = |part: &str| {
+                    part.trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|number| number.is_finite() && *number > 0.0)
+                        .ok_or_else(|| StyleParseError(format!("invalid aspect-ratio `{value}`")))
+                };
+                let ratio = match value.split_once('/') {
+                    Some((width, height)) => positive(width)? / positive(height)?,
+                    None => positive(value)?,
+                };
+                if !ratio.is_finite() || ratio <= 0.0 {
+                    return Err(StyleParseError(format!("invalid aspect-ratio `{value}`")));
+                }
+                Ok(Self::AspectRatio(Some(ratio)))
+            }
             "display" => Ok(Self::Display(match value.trim() {
                 "block" => crate::layout::Display::Block,
                 "flex" => crate::layout::Display::Flex,
@@ -1041,12 +1364,16 @@ impl StyleProp {
             "gap" => Ok(Self::Gap(spacing(value)?)),
             "row-gap" => Ok(Self::RowGap(spacing(value)?)),
             "column-gap" => Ok(Self::ColumnGap(spacing(value)?)),
-            "padding" => Ok(Self::Padding(spacing(value)?)),
+            "padding" => {
+                let edges = value.parse::<EdgeValues>()?;
+                edges.padding()?;
+                Ok(Self::PaddingEdges(edges))
+            }
             "padding-top" => Ok(Self::PaddingTop(spacing(value)?)),
             "padding-right" => Ok(Self::PaddingRight(spacing(value)?)),
             "padding-bottom" => Ok(Self::PaddingBottom(spacing(value)?)),
             "padding-left" => Ok(Self::PaddingLeft(spacing(value)?)),
-            "margin" => Ok(Self::Margin(value.parse()?)),
+            "margin" => Ok(Self::MarginEdges(value.parse()?)),
             "margin-top" => Ok(Self::MarginTop(value.parse()?)),
             "margin-right" => Ok(Self::MarginRight(value.parse()?)),
             "margin-bottom" => Ok(Self::MarginBottom(value.parse()?)),
@@ -1060,6 +1387,7 @@ impl StyleProp {
                 "absolute" => crate::layout::Position::Absolute,
                 other => return Err(StyleParseError(format!("invalid position `{other}`"))),
             })),
+            "inset" => Ok(Self::Inset(value.parse()?)),
             "top" => Ok(Self::Top(value.parse()?)),
             "right" => Ok(Self::Right(value.parse()?)),
             "bottom" => Ok(Self::Bottom(value.parse()?)),
@@ -1114,6 +1442,193 @@ impl Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radial_gradients_parse_centers_and_theme_colors() {
+        let expected =
+            RadialGradient::new(ColorToken::Accent, Color::rgba(0, 0, 0, 0)).at(0.25, 0.75);
+        let background: Background = "radial-gradient(circle at 25% 75%, var(--accent), #00000000)"
+            .parse()
+            .unwrap();
+        assert_eq!(background, Background::RadialGradient(expected));
+        let style = Style::new()
+            .background(expected)
+            .hover(StateStyle::new().background("radial-gradient(circle, #ffffff, #000000)"));
+        assert_eq!(
+            style.resolve(InteractionState::Normal).paint.background,
+            Some(background)
+        );
+        assert_eq!(
+            style.resolve(InteractionState::Hover).paint.background,
+            Some(RadialGradient::new(Color::rgb(255, 255, 255), Color::rgb(0, 0, 0)).into())
+        );
+    }
+
+    #[test]
+    fn radial_gradient_uses_the_farthest_corner() {
+        let gradient = RadialGradient::new(ColorToken::Accent, ColorToken::Surface).at(0.0, 0.0);
+        let (center, radius) = gradient.geometry(crate::Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 30.0,
+            height: 40.0,
+        });
+        assert_eq!(center, crate::Point { x: 10.0, y: 20.0 });
+        assert_eq!(radius, 50.0);
+    }
+
+    #[test]
+    fn radial_gradients_reject_unsupported_or_nonfinite_geometry() {
+        for input in [
+            "radial-gradient(#ffffff, #000000)",
+            "radial-gradient(ellipse, #ffffff, #000000)",
+            "radial-gradient(circle closest-side, #ffffff, #000000)",
+            "radial-gradient(circle at 10px 20px, #ffffff, #000000)",
+            "radial-gradient(circle at NaN% 50%, #ffffff, #000000)",
+            "radial-gradient(circle at 10% 20% 30%, #ffffff, #000000)",
+            "radial-gradient(circle, #ffffff)",
+            "radial-gradient(circle, #ffffff, #000000, #ff0000)",
+        ] {
+            assert!(input.parse::<Background>().is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn spacing_shorthands_expand_in_css_order() {
+        for (input, expected) in [
+            ("1px", [1.0, 1.0, 1.0, 1.0]),
+            ("1px 2px", [1.0, 2.0, 1.0, 2.0]),
+            ("1px 2px 3px", [1.0, 2.0, 3.0, 2.0]),
+            ("1px 2px 3px 4px", [1.0, 2.0, 3.0, 4.0]),
+        ] {
+            let edges = input.parse::<EdgeValues>().unwrap();
+            assert_eq!(
+                [edges.top, edges.right, edges.bottom, edges.left],
+                expected.map(LengthValue::Px)
+            );
+            for property in ["padding", "margin", "inset"] {
+                assert!(StyleProp::parse(property, input).is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn spacing_shorthands_preserve_percent_auto_and_longhand_overrides() {
+        let style = Style::new().properties([
+            StyleProp::parse("padding", "0 10%").unwrap(),
+            StyleProp::parse("padding-left", "7px").unwrap(),
+            StyleProp::parse("margin", "-2px auto").unwrap(),
+            StyleProp::parse("inset", "auto 5% 0").unwrap(),
+        ]);
+        assert_eq!(
+            style.layout.padding.left,
+            crate::layout::LengthPercentage::Length(7.0)
+        );
+        assert_eq!(
+            style.layout.padding.right,
+            crate::layout::LengthPercentage::Percent(0.1)
+        );
+        assert_eq!(
+            style.layout.margin.left,
+            crate::layout::LengthPercentageAuto::Auto
+        );
+        assert_eq!(
+            style.layout.margin.top,
+            crate::layout::LengthPercentageAuto::Length(-2.0)
+        );
+        assert_eq!(
+            style.layout.inset.top,
+            crate::layout::LengthPercentageAuto::Auto
+        );
+        assert_eq!(
+            style.layout.inset.left,
+            crate::layout::LengthPercentageAuto::Percent(0.05)
+        );
+        assert_eq!(
+            style.layout.inset.bottom,
+            crate::layout::LengthPercentageAuto::Length(0.0)
+        );
+
+        let legacy = Style::new().properties([
+            StyleProp::Padding(LengthValue::Px(2.0)),
+            StyleProp::Margin(LengthValue::Auto),
+        ]);
+        assert_eq!(
+            legacy.layout.padding.top,
+            crate::layout::LengthPercentage::Length(2.0)
+        );
+        assert_eq!(
+            legacy.layout.margin.top,
+            crate::layout::LengthPercentageAuto::Auto
+        );
+    }
+
+    #[test]
+    fn spacing_shorthands_reject_invalid_values() {
+        for value in [
+            "",
+            "1px 2px 3px 4px 5px",
+            "NaNpx",
+            "inf%",
+            "1px invalid",
+            "2",
+        ] {
+            for property in ["padding", "margin", "inset"] {
+                assert!(
+                    StyleProp::parse(property, value).is_err(),
+                    "{property}: {value}"
+                );
+            }
+        }
+        for value in ["auto", "1px auto", "1px -2px", "-10%"] {
+            assert!(StyleProp::parse("padding", value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn box_sizing_parses_both_box_models() {
+        for (value, expected) in [
+            ("border-box", crate::layout::BoxSizing::BorderBox),
+            ("content-box", crate::layout::BoxSizing::ContentBox),
+        ] {
+            let style = Style::new().property(StyleProp::parse("box-sizing", value).unwrap());
+            assert_eq!(style.layout.box_sizing, expected);
+        }
+        assert!(StyleProp::parse("box-sizing", "padding-box").is_err());
+    }
+
+    #[test]
+    fn border_width_must_be_valid() {
+        for value in ["-1px #ffffff", "NaNpx #ffffff", "infpx #ffffff"] {
+            assert!(StyleProp::parse("border", value).is_err());
+        }
+    }
+
+    #[test]
+    fn aspect_ratio_parses_ratios_numbers_and_auto() {
+        for value in ["16 / 9", "16/9", " 1.7777778 "] {
+            let style = Style::new().property(StyleProp::parse("aspect-ratio", value).unwrap());
+            assert_eq!(style.layout.aspect_ratio, Some(16.0 / 9.0));
+        }
+        let style = Style::new()
+            .aspect_ratio(2.0)
+            .property(StyleProp::parse("aspect-ratio", "auto").unwrap());
+        assert_eq!(style.layout.aspect_ratio, None);
+        for value in [
+            "",
+            "0",
+            "-1",
+            "1/0",
+            "1/-2",
+            "1/2/3",
+            "NaN",
+            "inf",
+            "2px",
+            "1e38/1e-38",
+        ] {
+            assert!(StyleProp::parse("aspect-ratio", value).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn pressed_cascades_over_hover_and_base_without_touching_layout() {

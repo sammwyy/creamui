@@ -152,7 +152,6 @@ release APK commands, secure keystore handling, and Windows desktop builds.
 
 CreamUI is licensed under [Apache-2.0](LICENSE-APACHE). It permits commercial, private, and open-source use.
 
-CreamUI bundles DejaVu Sans regular and bold under the permissive Bitstream Vera license; the notice ships with the crates that use those fonts.
 
 ## Contributing
 

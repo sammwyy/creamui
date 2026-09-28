@@ -4,6 +4,102 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Text shaping selects another installed font per missing glyph cluster, and
+  the CPU/GPU glyph caches rasterize it with that face. Registered font
+  changes invalidate the affected layout caches.
+- Text layout applies Unicode bidirectional visual ordering after line
+  breaking while keeping source-byte positions stable for editing.
+- Measured the conditional `HeightIndex` middle-insert requirement against
+  current consumers; no dynamic list caller exists, so the compact Fenwick
+  index remains unchanged until such a workload appears.
+- `ResourceReady::into_mutation` now converts successful background image
+  decodes into `Runtime` image mutations, preserving fit and paint invalidation.
+- ABI-v2 now exposes color-scheme driven paint-fragment readback and C click
+  callbacks with userdata; `creamui-dynamic` owns a `RuntimeTree` wrapper for
+  the same retained tree operations.
+- C callers can request or clear compositor blur on a live window handle with
+  `creamui_window_set_blur`, including a window-wide or rectangular region.
+- Background image decoding now uses a bounded queue and reusable workers,
+  avoiding one unbounded thread per request.
+- `creamui-dynamic::RuntimeTree` now covers node counts, layout/paint/text
+  mutations, layout, retained paint readback, and click dispatch.
+- ABI paint text readback now carries an explicit UTF-8 byte length instead of
+  assuming the retained string is NUL-terminated.
+- `RawVirtualList` uses a fixed height declared in its style as the viewport;
+  the explicit viewport remains a fallback for auto-sized lists.
+- Keyboard focus follows a retained widget through keyed sibling insertions
+  and removals; `keyed(widget, key)` lets existing controls opt into stable
+  identity. Removing the focused widget clears focus.
+- The persistent runtime retains decoded image pixels and legacy `Custom`
+  widgets in paint fragments. Recorded text keeps italic and selection data;
+  image fragments keep fit geometry and clipping. `ImageFit::None` now anchors
+  the original pixels at the top-left as documented.
+- `creamui-platform` now compiles for `wasm32-unknown-unknown`: its winit
+  adapter shares one handler implementation between borrowed and owned
+  handlers, and its control-flow clock matches `web_time` on the web target.
+- Widget measurement and rendering now reuse a bounded, thread-local shaped
+  text layout cache in `creamui-fonts`; rendering keeps its separate glyph
+  bitmap cache.
+- Text inputs and text areas place text, selections, carets, and pointer
+  selection within their layout-resolved padding and borders. Themed defaults
+  now declare their spacing as style padding.
+- CPU linear gradients with different stop alpha values now interpolate
+  premultiplied colors, matching the GPU through transparent stops.
+- Animations follow the display: after a frame reaches a presenter or
+  platform that holds the next one until the display refreshes (a GPU
+  surface, or winit on Wayland) the next frame is requested right away;
+  elsewhere a timer runs at the monitor's reported refresh rate instead of
+  a fixed 16 ms. Every widget in a frame reads the same animation time.
+  `PlatformWindow` gained `paces_redraws` and `refresh_interval`.
+- Scroll views record their content as a scroll layer
+  (`Painter::push_scroll_layer`/`pop_scroll_layer`) in its own content
+  space. The frame diff (`display_list::diff`) aligns rows entering and
+  leaving the viewport, and when one layer moved by whole pixels over a
+  solid backdrop the CPU rasterizer shifts its pixels
+  (`Rasterizer::scroll`/`apply`) and repaints only the exposed strip; the
+  GPU applies layer offsets in the vertex shader.
+- A clipping container passes its own rect to `Painter::push_clip_rounded`
+  instead of the rect already cut by enclosing clips, so its rounded corners
+  stay on its own edges when it is partly scrolled out of view.
+- Fixed partial CPU repaints antialiasing rounded corners differently from
+  full ones where a corner crossed the damage boundary.
+- The GPU renderer uploads only the instances, clip table and globals a
+  frame changed, finds a glyph's atlas slot without hashing, and uses
+  FxHash for the text and clip caches.
+- Text layouts no longer depend on their box height, so resizing a box
+  vertically reuses the layout (`TextSystem::layout` lost its `height`
+  parameter; `TextLayout::height` is the block height to center).
+- `Runtime::compute_layout` only syncs rects along changed nodes' ancestor
+  paths and subtrees that moved, and `Runtime::rebuild_hit_test` patches
+  moved entries in place, rebuilding only when membership changes.
+- Startup: the GPU adapter and device are requested on a background
+  thread while the first window is created, pipelines use a driver
+  pipeline cache persisted under the user cache directory, and the system
+  font index is cached there too, validated by directory modification
+  times.
+
+- Replaced `fontdue` with `swash`: fonts are memory-mapped and parsed on
+  demand instead of copied and fully decoded, and text is shaped (kerning,
+  ligatures, per-script runs) and broken at Unicode line-break
+  opportunities by `creamui_fonts::layout`, shared by measurement and
+  painting. `FontFace` is now `creamui_fonts::FontFace`.
+- Fixed `creamui_fonts::resolve` returning a family's regular face for bold
+  requests once the regular one had been loaded, so system bold faces were
+  never used.
+- GPU windows on one device share the shader, pipelines, glyph atlas and
+  image textures (`GpuShared`); `GpuRenderer::new` takes the shared
+  resources. Instances shrank from 128 to 56 bytes by packing colors and
+  moving clips into a per-frame lookup texture. A full glyph atlas is
+  cleared of stale glyphs before it grows and shrinks again when mostly
+  unused, and the instance buffer shrinks after large frames.
+- Images are uploaded downscaled to the size they are drawn at, and
+  `ImageData` loaded from bytes or a path drops its decoded pixels after
+  upload, decoding again only if they are needed. `RgbaImage::pixels`
+  returns an `Arc<[u8]>`; `RgbaImage::reloadable` and
+  `RgbaImage::discard_pixels` were added.
+- The text layout and glyph caches are shared by every window on the UI
+  thread.
+
 - Replaced CPU-raster-then-upload rendering with a retained display list:
   widgets record primitives, consecutive frames are diffed into damage,
   and only changed pixels are redrawn and presented. The GPU backend now

@@ -1,19 +1,29 @@
 //! Global font registry: register font files, then resolve a CSS-style
 //! family stack (`"Inter, sans-serif"`) to a loaded face.
 
-use fontdue::{Font as FontFace, FontSettings};
+mod face;
+mod layout;
+
+pub use face::{FontFace, LineMetrics};
+pub use layout::{
+    cached_layout, layout, CharPosition, HorizontalAlign, LayoutSettings, Line, PositionedGlyph,
+    TextLayout,
+};
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::{env, fs};
+use swash::text::cluster::{CharCluster, Status};
 
-/// Family name the bundled DejaVu Sans font is registered under.
-pub const DEFAULT_FAMILY: &str = "sans-serif";
-
-const DEFAULT_REGULAR_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
-const DEFAULT_BOLD_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans-Bold.ttf");
+/// Generic UI family resolved from the operating system on first use.
+///
+/// CreamUI deliberately does not bundle a font: shipping one makes every
+/// executable larger, while system fonts are already on disk and are
+/// memory-mapped rather than copied.
+pub const DEFAULT_FAMILY: &str = "system-ui";
 
 /// Embeds a font file's bytes at compile time.
 #[macro_export]
@@ -41,30 +51,28 @@ impl std::error::Error for FontError {}
 
 struct Registry {
     faces: HashMap<(String, FontWeight), Rc<FontFace>>,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct FallbackCache {
+    files: HashMap<PathBuf, Option<Rc<FontFace>>>,
+    chars: HashMap<(u64, u64, char), Option<Rc<FontFace>>>,
 }
 
 impl Registry {
     fn with_defaults() -> Self {
-        let mut faces = HashMap::new();
-        faces.insert(
-            (DEFAULT_FAMILY.to_string(), FontWeight::Regular),
-            Rc::new(parse(DEFAULT_REGULAR_BYTES).expect("bundled font is a valid, fixed asset")),
-        );
-        faces.insert(
-            (DEFAULT_FAMILY.to_string(), FontWeight::Bold),
-            Rc::new(parse(DEFAULT_BOLD_BYTES).expect("bundled font is a valid, fixed asset")),
-        );
-        Registry { faces }
+        Registry {
+            faces: HashMap::new(),
+            generation: 0,
+        }
     }
 }
 
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::with_defaults());
     static PREFERRED_FAMILY: RefCell<Option<String>> = RefCell::new(None);
-}
-
-fn parse(bytes: &[u8]) -> Result<FontFace, FontError> {
-    FontFace::from_bytes(bytes, FontSettings::default()).map_err(|e| FontError(e.to_string()))
+    static FALLBACK_FACES: RefCell<FallbackCache> = RefCell::new(FallbackCache::default());
 }
 
 /// Registers `bytes` as `family`'s face for `weight`, replacing any face
@@ -74,58 +82,206 @@ pub fn register_bytes(
     weight: FontWeight,
     bytes: impl AsRef<[u8]>,
 ) -> Result<(), FontError> {
-    let face = parse(bytes.as_ref())?;
-    REGISTRY.with(|registry| {
-        registry
-            .borrow_mut()
-            .faces
-            .insert((family.into(), weight), Rc::new(face));
-    });
+    register_face(family.into(), weight, FontFace::from_bytes(bytes.as_ref())?);
     Ok(())
 }
 
-/// Reads `path` from disk and registers it.
+/// Memory-maps `path` and registers it.
 pub fn register_file(
     family: impl Into<String>,
     weight: FontWeight,
     path: impl AsRef<Path>,
 ) -> std::io::Result<()> {
-    let bytes = std::fs::read(path)?;
-    register_bytes(family, weight, bytes)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    let face = FontFace::from_path(path.as_ref())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    register_face(family.into(), weight, face);
+    Ok(())
 }
 
-/// Resolves a CSS-style comma-separated family stack against the registry:
-/// the first family with a face registered for `weight` wins. A family
-/// registered only at `Regular` still matches a `Bold` request. Falls back
-/// to [`DEFAULT_FAMILY`] if nothing in the stack matches.
-pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
+fn register_face(family: String, weight: FontWeight, face: FontFace) {
     REGISTRY.with(|registry| {
-        let registry = registry.borrow();
-        for family in spec.split(',').map(str::trim).filter(|f| !f.is_empty()) {
-            if let Some(face) = registry.faces.get(&(family.to_string(), weight)) {
-                return face.clone();
+        let mut registry = registry.borrow_mut();
+        registry.faces.insert((family, weight), Rc::new(face));
+        registry.generation += 1;
+    });
+}
+
+/// Changes whenever a face is registered, including lazy system loading.
+pub fn registry_generation() -> u64 {
+    REGISTRY.with(|registry| registry.borrow().generation)
+}
+
+fn fallback_face(primary: &FontFace, cluster: &mut CharCluster) -> Option<Rc<FontFace>> {
+    let primary_font = primary.font_ref();
+    let primary_charmap = primary_font.charmap();
+    let primary_status = cluster.map(|ch| primary_charmap.map(ch));
+    if primary_status == Status::Complete || cluster.info().is_whitespace() {
+        return None;
+    }
+    let cache_key = (cluster.chars().len() == 1)
+        .then(|| (primary.id(), registry_generation(), cluster.chars()[0].ch));
+    if let Some(cached) = cache_key
+        .and_then(|key| FALLBACK_FACES.with(|cache| cache.borrow().chars.get(&key).cloned()))
+    {
+        if let Some(face) = &cached {
+            let font = face.font_ref();
+            let charmap = font.charmap();
+            cluster.map(|ch| charmap.map(ch));
+        }
+        return cached;
+    }
+    let mut best = None;
+    let registered: Vec<_> =
+        REGISTRY.with(|registry| registry.borrow().faces.values().cloned().collect());
+    for face in registered {
+        if face.id() == primary.id() {
+            continue;
+        }
+        let font = face.font_ref();
+        let charmap = font.charmap();
+        match cluster.map(|ch| charmap.map(ch)) {
+            Status::Complete => return remember_fallback(cache_key, Some(face)),
+            Status::Keep => best = Some(face),
+            Status::Discard => {}
+        }
+    }
+    for (_, path) in system_font_index() {
+        let face = FALLBACK_FACES.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            cache
+                .files
+                .entry(path.clone())
+                .or_insert_with(|| FontFace::from_path(path).ok().map(Rc::new))
+                .clone()
+        });
+        let Some(face) = face else { continue };
+        if face.id() == primary.id() {
+            continue;
+        }
+        let font = face.font_ref();
+        let charmap = font.charmap();
+        match cluster.map(|ch| charmap.map(ch)) {
+            Status::Complete => return remember_fallback(cache_key, Some(face)),
+            Status::Keep => best = Some(face),
+            Status::Discard => {}
+        }
+    }
+    remember_fallback(cache_key, best)
+}
+
+fn remember_fallback(
+    key: Option<(u64, u64, char)>,
+    face: Option<Rc<FontFace>>,
+) -> Option<Rc<FontFace>> {
+    if let Some(key) = key {
+        FALLBACK_FACES.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.chars.len() >= 4096 {
+                cache.chars.clear();
             }
-            if weight == FontWeight::Bold {
-                if let Some(face) = registry
-                    .faces
-                    .get(&(family.to_string(), FontWeight::Regular))
-                {
-                    return face.clone();
-                }
+            cache.chars.insert(key, face.clone());
+        });
+    }
+    face
+}
+
+/// Resolves a CSS-style comma-separated family stack against the registry and
+/// the operating system. Faces are parsed only when their family and weight
+/// are first requested. A `Bold` request falls back to its family's regular
+/// face before trying [`DEFAULT_FAMILY`].
+pub fn resolve(spec: &str, weight: FontWeight) -> Rc<FontFace> {
+    let families: Vec<&str> = spec
+        .split(',')
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .collect();
+    for family in &families {
+        if let Some(face) = registered_face(family, weight) {
+            return face;
+        }
+        if is_generic_family(family) {
+            continue;
+        }
+        if load_system_face(family, family, weight) {
+            return registered_face(family, weight)
+                .expect("a successfully loaded system face is registered");
+        }
+        if weight == FontWeight::Bold {
+            if let Some(face) = registered_face(family, FontWeight::Regular) {
+                return face;
             }
         }
+    }
+    default_face(weight)
+}
+
+fn registered_face(family: &str, weight: FontWeight) -> Option<Rc<FontFace>> {
+    REGISTRY.with(|registry| {
         registry
+            .borrow()
             .faces
-            .get(&(DEFAULT_FAMILY.to_string(), weight))
-            .or_else(|| {
-                registry
-                    .faces
-                    .get(&(DEFAULT_FAMILY.to_string(), FontWeight::Regular))
-            })
-            .expect("DEFAULT_FAMILY is always registered")
-            .clone()
+            .get(&(family.to_owned(), weight))
+            .cloned()
     })
+}
+
+fn default_face(weight: FontWeight) -> Rc<FontFace> {
+    let weights: &[FontWeight] = match weight {
+        FontWeight::Regular => &[FontWeight::Regular],
+        FontWeight::Bold => &[FontWeight::Bold, FontWeight::Regular],
+    };
+    for &weight in weights {
+        if let Some(face) = registered_face(DEFAULT_FAMILY, weight) {
+            return face;
+        }
+        for family in system_font_candidates() {
+            if load_system_face(DEFAULT_FAMILY, family, weight) {
+                return registered_face(DEFAULT_FAMILY, weight)
+                    .expect("a successfully loaded system face is registered");
+            }
+        }
+    }
+    panic!(
+        "creamui-fonts: no usable system UI font was found; register one with register_file/register_bytes"
+    );
+}
+
+fn load_system_face(registry_family: &str, lookup_family: &str, weight: FontWeight) -> bool {
+    let Some(path) = find_system_font(lookup_family, weight) else {
+        return false;
+    };
+    match FontFace::from_path(&path) {
+        Ok(face) => {
+            log::debug!(
+                "creamui-fonts: mapped {} as {registry_family} {weight:?}",
+                path.display()
+            );
+            register_face(registry_family.to_owned(), weight, face);
+            true
+        }
+        Err(err) => {
+            log::warn!("creamui-fonts: skipping {err}");
+            false
+        }
+    }
+}
+
+fn is_generic_family(family: &str) -> bool {
+    matches!(
+        family.trim().to_ascii_lowercase().as_str(),
+        "system-ui" | "sans-serif" | "serif" | "monospace"
+    )
+}
+
+#[cfg(target_os = "windows")]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Segoe UI", "Arial"];
+#[cfg(target_os = "macos")]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Helvetica Neue", "Helvetica", "Arial"];
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"];
+
+fn system_font_candidates() -> &'static [&'static str] {
+    SYSTEM_FONT_CANDIDATES
 }
 
 /// The family stack [`resolve`] and [`use_font`] fall back to when no
@@ -149,20 +305,10 @@ pub fn set_preferred_family(family: Option<String>) {
 /// and the preferred family untouched and returns `false` when no
 /// matching font file is found on disk.
 pub fn use_system_font(family: &str) -> bool {
-    let Some(regular) = find_system_font(family, FontWeight::Regular) else {
-        return false;
-    };
-    let Ok(bytes) = fs::read(&regular) else {
-        return false;
-    };
-    if register_bytes(family, FontWeight::Regular, bytes).is_err() {
+    if !load_system_face(family, family, FontWeight::Regular) {
         return false;
     }
-    if let Some(bold) = find_system_font(family, FontWeight::Bold) {
-        if let Ok(bytes) = fs::read(bold) {
-            let _ = register_bytes(family, FontWeight::Bold, bytes);
-        }
-    }
+    let _ = load_system_face(family, family, FontWeight::Bold);
     set_preferred_family(Some(family.to_owned()));
     true
 }
@@ -178,11 +324,31 @@ fn match_font(index: &[(String, PathBuf)], family: &str, weight: FontWeight) -> 
         .filter(|(stem, _)| stem.starts_with(&target))
         .collect();
     let wants_bold = weight == FontWeight::Bold;
-    matches
+    let preferred_stems = if wants_bold {
+        [format!("{target}bold"), format!("{target}semibold")]
+    } else {
+        [target.clone(), format!("{target}regular")]
+    };
+    preferred_stems
         .iter()
-        .find(|(stem, _)| stem.contains("bold") == wants_bold)
-        .or_else(|| (!wants_bold).then(|| matches.first()).flatten())
-        .map(|(_, path)| path.clone())
+        .find_map(|preferred| {
+            matches
+                .iter()
+                .find(|(stem, _)| stem == preferred)
+                .map(|(_, path)| path.clone())
+        })
+        .or_else(|| {
+            matches
+                .iter()
+                .find(|(stem, _)| stem.contains("bold") == wants_bold)
+                .map(|(_, path)| path.clone())
+        })
+        .or_else(|| {
+            (!wants_bold)
+                .then(|| matches.first())
+                .flatten()
+                .map(|(_, path)| path.clone())
+        })
 }
 
 fn normalize_font_name(name: &str) -> String {
@@ -192,38 +358,157 @@ fn normalize_font_name(name: &str) -> String {
         .to_ascii_lowercase()
 }
 
+type FontIndex = Vec<(String, PathBuf)>;
+
+const INDEX_CACHE_HEADER: &str = "creamui-font-index 1";
+
 fn system_font_index() -> &'static [(String, PathBuf)] {
-    static INDEX: OnceLock<Vec<(String, PathBuf)>> = OnceLock::new();
+    static INDEX: OnceLock<FontIndex> = OnceLock::new();
     INDEX.get_or_init(|| {
+        let roots = system_font_directories();
+        let cache = user_cache_dir().map(|dir| dir.join("creamui").join("font-index"));
+        if let Some(entries) = cache.as_deref().and_then(|path| load_index(path, &roots)) {
+            return entries;
+        }
         let mut entries = Vec::new();
-        for directory in system_font_directories() {
-            collect_font_files(&directory, &mut entries);
+        let mut directories = Vec::new();
+        for root in &roots {
+            collect_font_files(root, &mut entries, &mut directories);
+        }
+        if let Some(path) = cache {
+            if let Err(err) = save_index(&path, &roots, &directories, &entries) {
+                log::debug!("creamui-fonts: not caching the font index at {path:?}: {err}");
+            }
         }
         entries
     })
 }
 
+fn user_cache_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    return env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    return env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Caches"));
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    return env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+}
+
+fn modified_nanos(path: &Path) -> Option<u128> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    Some(
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+    )
+}
+
+/// Reads a cached index, valid while the same roots are searched and no
+/// directory it walked has been modified (a directory's modification time
+/// changes whenever an entry is added to or removed from it).
+fn load_index(path: &Path, roots: &[PathBuf]) -> Option<FontIndex> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    if lines.next()? != INDEX_CACHE_HEADER {
+        return None;
+    }
+    let mut cached_roots = Vec::new();
+    let mut entries = Vec::new();
+    for line in lines {
+        let mut fields = line.splitn(3, '\t');
+        match (fields.next()?, fields.next()?, fields.next()?) {
+            ("r", _, root) => cached_roots.push(PathBuf::from(root)),
+            ("d", modified, directory) => {
+                let current = modified_nanos(Path::new(directory)).map(|m| m.to_string());
+                if current.as_deref().unwrap_or("-") != modified {
+                    return None;
+                }
+            }
+            ("f", stem, font) => entries.push((stem.to_owned(), PathBuf::from(font))),
+            _ => return None,
+        }
+    }
+    (cached_roots == roots).then_some(entries)
+}
+
+fn save_index(
+    path: &Path,
+    roots: &[PathBuf],
+    directories: &[PathBuf],
+    entries: &[(String, PathBuf)],
+) -> std::io::Result<()> {
+    let mut text = format!("{INDEX_CACHE_HEADER}\n");
+    let paths = roots
+        .iter()
+        .map(|root| ("r", String::new(), root))
+        .chain(roots.iter().chain(directories).map(|directory| {
+            let modified = modified_nanos(directory).map_or("-".to_owned(), |m| m.to_string());
+            ("d", modified, directory)
+        }))
+        .chain(entries.iter().map(|(stem, font)| ("f", stem.clone(), font)));
+    for (kind, value, path) in paths {
+        let Some(path) = path.to_str() else {
+            return Err(std::io::Error::other("non-UTF-8 font path"));
+        };
+        text.push_str(&format!("{kind}\t{value}\t{path}\n"));
+    }
+    fs::create_dir_all(path.parent().expect("cache file lives in a directory"))?;
+    let partial = path.with_extension("partial");
+    fs::write(&partial, text)?;
+    fs::rename(partial, path)
+}
+
 fn system_font_directories() -> Vec<PathBuf> {
-    let mut directories = vec![
+    let mut directories = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(windir) = env::var_os("WINDIR") {
+            directories.push(PathBuf::from(windir).join("Fonts"));
+        }
+        if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+            directories.push(PathBuf::from(local_app_data).join("Microsoft/Windows/Fonts"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    directories.extend([
+        PathBuf::from("/System/Library/Fonts"),
+        PathBuf::from("/Library/Fonts"),
+    ]);
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    directories.extend([
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),
-    ];
+    ]);
     if let Some(home) = env::var_os("HOME") {
         let home = PathBuf::from(home);
         directories.push(home.join(".local/share/fonts"));
         directories.push(home.join(".fonts"));
+        #[cfg(target_os = "macos")]
+        directories.push(home.join("Library/Fonts"));
     }
     directories
 }
 
-fn collect_font_files(directory: &Path, entries: &mut Vec<(String, PathBuf)>) {
+fn collect_font_files(
+    directory: &Path,
+    entries: &mut Vec<(String, PathBuf)>,
+    directories: &mut Vec<PathBuf>,
+) {
     let Ok(read_dir) = fs::read_dir(directory) else {
         return;
     };
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            collect_font_files(&path, entries);
+        let is_dir = match entry.file_type() {
+            Ok(kind) if kind.is_symlink() => path.is_dir(),
+            Ok(kind) => kind.is_dir(),
+            Err(_) => false,
+        };
+        if is_dir {
+            directories.push(path.clone());
+            collect_font_files(&path, entries, directories);
             continue;
         }
         let is_font = path
@@ -275,8 +560,16 @@ pub fn use_font(spec: impl AsRef<str>) -> FontHandle {
 mod tests {
     use super::*;
 
+    fn test_font_bytes() -> Vec<u8> {
+        let path = system_font_candidates()
+            .iter()
+            .find_map(|family| find_system_font(family, FontWeight::Regular))
+            .expect("tests need one of the supported system UI fonts");
+        fs::read(path).expect("system UI font remains readable")
+    }
+
     #[test]
-    fn resolves_the_bundled_default_family() {
+    fn resolves_the_system_default_family() {
         let face = resolve(DEFAULT_FAMILY, FontWeight::Regular);
         assert!(face.glyph_count() > 0);
     }
@@ -290,7 +583,7 @@ mod tests {
 
     #[test]
     fn css_style_stack_resolves_to_the_first_registered_family() {
-        register_bytes("Test Family A", FontWeight::Regular, DEFAULT_REGULAR_BYTES).unwrap();
+        register_bytes("Test Family A", FontWeight::Regular, test_font_bytes()).unwrap();
         let resolved = resolve(
             "Nonexistent, Test Family A, sans-serif",
             FontWeight::Regular,
@@ -301,10 +594,17 @@ mod tests {
 
     #[test]
     fn bold_falls_back_to_the_family_s_own_regular_before_the_default() {
-        register_bytes("Test Family B", FontWeight::Regular, DEFAULT_REGULAR_BYTES).unwrap();
+        register_bytes("Test Family B", FontWeight::Regular, test_font_bytes()).unwrap();
         let own_regular = resolve("Test Family B", FontWeight::Regular);
         let bold_request = resolve("Test Family B", FontWeight::Bold);
         assert!(Rc::ptr_eq(&own_regular, &bold_request));
+    }
+
+    #[test]
+    fn bold_loads_its_own_system_face_after_the_regular_one() {
+        let regular = resolve(DEFAULT_FAMILY, FontWeight::Regular);
+        let bold = resolve(DEFAULT_FAMILY, FontWeight::Bold);
+        assert!(!Rc::ptr_eq(&regular, &bold));
     }
 
     #[test]
@@ -328,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn preferred_family_defaults_to_the_bundled_family() {
+    fn preferred_family_defaults_to_the_system_family() {
         set_preferred_family(None);
         assert_eq!(preferred_family(), DEFAULT_FAMILY);
         set_preferred_family(Some("Inter".to_owned()));
@@ -361,6 +661,24 @@ mod tests {
         assert_eq!(
             match_font(&index, "Inter", FontWeight::Bold),
             Some(PathBuf::from("/fonts/Inter-Bold.ttf"))
+        );
+    }
+
+    #[test]
+    fn prefers_an_exact_latin_family_over_a_prefixed_cjk_variant() {
+        let index = vec![
+            (
+                normalize_font_name("NotoSansCJK-Regular"),
+                PathBuf::from("/fonts/NotoSansCJK-Regular.ttf"),
+            ),
+            (
+                normalize_font_name("NotoSans-Regular"),
+                PathBuf::from("/fonts/NotoSans-Regular.ttf"),
+            ),
+        ];
+        assert_eq!(
+            match_font(&index, "Noto Sans", FontWeight::Regular),
+            Some(PathBuf::from("/fonts/NotoSans-Regular.ttf"))
         );
     }
 
@@ -405,10 +723,38 @@ mod tests {
         fs::write(root.join("notes.txt"), b"ignore me").unwrap();
 
         let mut entries = Vec::new();
-        collect_font_files(&root, &mut entries);
+        let mut directories = Vec::new();
+        collect_font_files(&root, &mut entries, &mut directories);
         entries.sort();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|(stem, _)| stem == "sample"));
+        assert_eq!(directories, vec![nested]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_index_cache_is_reused_until_a_walked_directory_changes() {
+        let root = std::env::temp_dir().join(format!("creamui-fonts-cache-{}", std::process::id()));
+        let fonts = root.join("fonts");
+        let nested = fonts.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("Sample.ttf"), b"not a real font").unwrap();
+        let cache = root.join("cache").join("font-index");
+        let roots = vec![fonts.clone(), root.join("missing")];
+
+        let mut entries = Vec::new();
+        let mut directories = Vec::new();
+        for root in &roots {
+            collect_font_files(root, &mut entries, &mut directories);
+        }
+        save_index(&cache, &roots, &directories, &entries).unwrap();
+        assert_eq!(load_index(&cache, &roots), Some(entries));
+        assert_eq!(load_index(&cache, &roots[..1]), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(nested.join("Other.ttf"), b"not a real font").unwrap();
+        assert_eq!(load_index(&cache, &roots), None);
 
         fs::remove_dir_all(root).unwrap();
     }

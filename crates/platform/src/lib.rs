@@ -20,6 +20,7 @@ pub use ::winit::platform::android::activity::AndroidApp;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
@@ -35,6 +36,15 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     /// Called right before a frame is handed to the compositor, so the
     /// platform can throttle redraws to the display.
     fn pre_present_notify(&self) {}
+    /// Whether redraws requested after [`PlatformWindow::pre_present_notify`]
+    /// are delivered at most once per display refresh.
+    fn paces_redraws(&self) -> bool {
+        false
+    }
+    /// The refresh period of the display showing this window, when known.
+    fn refresh_interval(&self) -> Option<Duration> {
+        None
+    }
     fn close(&self);
     fn request_inner_size(&self, size: LogicalSize);
     fn set_outer_position(&self, position: LogicalPosition);
@@ -51,6 +61,12 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn drag_resize_window(&self, direction: ResizeDirection) -> Result<(), String>;
     fn set_cursor(&self, icon: CursorIcon);
     fn focus(&self);
+    /// Requests compositor-side background blur behind `region`, or clears
+    /// it with `None`. Default: unsupported, for backends/compositors with
+    /// no such protocol (the window stays plain-transparent instead).
+    fn set_blur_region(&self, region: Option<BlurRegion>) {
+        let _ = region;
+    }
     /// Starts a real drag-and-drop grab (e.g. a desktop icon dragged toward
     /// the dock or an external app), handed off to the compositor from
     /// `serial` — the input serial of the pointer-button-press that

@@ -11,23 +11,31 @@ use creamui_core::layout::Dimension;
 use creamui_core::{Painter, Rect, RgbaImage, Style, Styled, Widget};
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
+pub use creamui_core::runtime::ImageFit;
 #[cfg(feature = "svg")]
 pub use svg::SvgSize;
 
-/// How an [`Image`] fits its source pixels inside its layout box.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum ImageFit {
-    /// Stretch to the layout box.
-    Fill,
-    /// Preserve aspect ratio; the complete image remains visible.
-    Contain,
-    /// Preserve aspect ratio while filling the layout box; excess is clipped.
-    #[default]
-    Cover,
-    /// Keep the source pixel dimensions, anchored at the top-left.
-    None,
+fn premultiply(pixels: &mut [u8]) {
+    for pixel in pixels.chunks_exact_mut(4) {
+        let alpha = pixel[3] as u16;
+        pixel[0] = (pixel[0] as u16 * alpha / 255) as u8;
+        pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
+        pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
+    }
+}
+
+/// Decodes to premultiplied RGBA8.
+fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), ImageError> {
+    let rgba = image_rs::load_from_memory(bytes)
+        .map_err(ImageError::Decode)?
+        .to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut pixels = rgba.into_raw();
+    premultiply(&mut pixels);
+    Ok((width, height, pixels))
 }
 
 /// A decoded RGBA image ready for reuse across widget-tree rebuilds.
@@ -39,16 +47,33 @@ pub struct ImageData {
 impl ImageData {
     /// Decodes PNG, JPEG, or WebP bytes when its corresponding crate feature
     /// is enabled.
+    ///
+    /// The encoded bytes are kept so a renderer that has uploaded the image
+    /// can drop the much larger decoded pixels and decode again on demand.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ImageError> {
-        let image = image_rs::load_from_memory(bytes).map_err(ImageError::Decode)?;
-        let rgba = image.to_rgba8();
-        Self::from_rgba(rgba.width(), rgba.height(), rgba.into_raw())
+        Self::from_encoded(bytes.into())
     }
 
     /// Reads and decodes an image from the local filesystem.
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let bytes = std::fs::read(path).map_err(ImageError::Io)?;
-        Self::from_bytes(&bytes)
+        Self::from_encoded(bytes.into())
+    }
+
+    fn from_encoded(bytes: Arc<[u8]>) -> Result<Self, ImageError> {
+        let (width, height, pixels) = decode(&bytes)?;
+        let length = pixels.len();
+        RgbaImage::reloadable(width, height, pixels, move || {
+            decode(&bytes)
+                .expect("bytes that decoded once decode again")
+                .2
+        })
+        .map(|image| Self { image })
+        .ok_or(ImageError::InvalidPixels {
+            width,
+            height,
+            length,
+        })
     }
 
     /// Creates image data from straight-alpha RGBA8 pixels.
@@ -64,12 +89,7 @@ impl ImageData {
                 length,
             });
         }
-        for pixel in pixels.chunks_exact_mut(4) {
-            let alpha = pixel[3] as u16;
-            pixel[0] = (pixel[0] as u16 * alpha / 255) as u8;
-            pixel[1] = (pixel[1] as u16 * alpha / 255) as u8;
-            pixel[2] = (pixel[2] as u16 * alpha / 255) as u8;
-        }
+        premultiply(&mut pixels);
         RgbaImage::new(width, height, pixels)
             .map(|image| Self { image })
             .ok_or(ImageError::InvalidPixels {
@@ -85,7 +105,7 @@ impl ImageData {
     pub fn height(&self) -> u32 {
         self.image.height()
     }
-    pub fn pixels(&self) -> &[u8] {
+    pub fn pixels(&self) -> Arc<[u8]> {
         self.image.pixels()
     }
     pub fn image(&self) -> &RgbaImage {
@@ -181,7 +201,14 @@ impl Image {
             ImageFit::Fill => return rect,
             ImageFit::Contain => (rect.width / source_width).min(rect.height / source_height),
             ImageFit::Cover => (rect.width / source_width).max(rect.height / source_height),
-            ImageFit::None => 1.0,
+            ImageFit::None => {
+                return Rect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: source_width,
+                    height: source_height,
+                };
+            }
         };
         let width = source_width * scale;
         let height = source_height * scale;
@@ -197,6 +224,12 @@ impl Image {
 impl Widget for Image {
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
+    }
+
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        Some(creamui_core::runtime::NodeKind::Image(
+            creamui_core::runtime::ImageNode::decoded(self.data.image().clone()).with_fit(self.fit),
+        ))
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
@@ -267,6 +300,157 @@ mod tests {
     }
 
     #[test]
+    fn none_fit_anchors_original_pixels_at_the_top_left() {
+        let data = ImageData::from_rgba(4, 2, vec![255; 32]).unwrap();
+        let image = Image::new(data).fit(ImageFit::None);
+        assert_eq!(
+            image.destination(Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 100.0
+            }),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 4.0,
+                height: 2.0
+            }
+        );
+    }
+
+    #[test]
+    fn decoded_image_mounts_as_an_image_and_reaches_its_paint_fragment() {
+        use creamui_core::runtime::{
+            mount_legacy_widget, ImageContent, NodeKind, PaintOp, PaintPrimitive, Runtime,
+        };
+
+        let data = ImageData::from_rgba(1, 1, vec![255, 0, 0, 128]).unwrap();
+        let image_id = data.image().id();
+        let mut runtime = Runtime::new();
+        let node = mount_legacy_widget(
+            &mut runtime.transaction(),
+            Box::new(Image::new(data.clone())),
+            None,
+        );
+        runtime.set_root(Some(node));
+        runtime.compute_layout(Size {
+            width: 10.0,
+            height: 10.0,
+        });
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+
+        let NodeKind::Image(image) = &runtime.get(node).unwrap().kind else {
+            panic!("decoded image should mount as an image node");
+        };
+        let ImageContent::Decoded(pixels) = &image.content else {
+            panic!("image node should retain decoded pixels");
+        };
+        assert_eq!(pixels.id(), image_id);
+        assert!(Arc::ptr_eq(&pixels.pixels(), &data.pixels()));
+
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let primitive = fragment
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                PaintOp::Primitive(PaintPrimitive::Image(image)) => Some(image),
+                _ => None,
+            })
+            .expect("image fragment should contain an image primitive");
+        assert!(
+            matches!(&primitive.content, ImageContent::Decoded(pixels) if pixels.id() == image_id)
+        );
+    }
+
+    #[test]
+    fn runtime_image_fragment_preserves_contain_and_cover_geometry() {
+        use creamui_core::runtime::{mount_legacy_widget, PaintOp, PaintPrimitive, Runtime};
+
+        let data = ImageData::from_rgba(4, 2, vec![255; 32]).unwrap();
+        let render = |fit| {
+            let widget = Image::new(data.clone())
+                .fit(fit)
+                .layout(creamui_core::layout::Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Length(100.0),
+                        height: Dimension::Length(100.0),
+                    },
+                    ..Default::default()
+                });
+            let mut runtime = Runtime::new();
+            let node = mount_legacy_widget(&mut runtime.transaction(), Box::new(widget), None);
+            runtime.set_root(Some(node));
+            runtime.compute_layout(Size {
+                width: 100.0,
+                height: 100.0,
+            });
+            runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+            runtime
+                .get(node)
+                .unwrap()
+                .paint
+                .fragment
+                .as_ref()
+                .unwrap()
+                .ops
+                .clone()
+        };
+
+        let contain = render(ImageFit::Contain);
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &contain[0] else {
+            panic!("expected contained image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: 0.0,
+                y: 25.0,
+                width: 100.0,
+                height: 50.0
+            }
+        );
+
+        let cover = render(ImageFit::Cover);
+        assert_eq!(
+            cover[0],
+            PaintOp::PushClip(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0
+            })
+        );
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &cover[1] else {
+            panic!("expected covered image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: -50.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0
+            }
+        );
+        assert_eq!(cover[2], PaintOp::PopClip);
+
+        let original = render(ImageFit::None);
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &original[0] else {
+            panic!("expected original-size image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 4.0,
+                height: 2.0
+            }
+        );
+    }
+
+    #[test]
     fn rejects_image_sizes_that_overflow_rgba_buffer_length() {
         let result = ImageData::from_rgba(u32::MAX, u32::MAX, Vec::new());
         assert!(matches!(result, Err(ImageError::InvalidPixels { .. })));
@@ -278,13 +462,30 @@ mod tests {
         let data = ImageData::from_rgba(1, 1, vec![255, 0, 0, 128])
             .unwrap()
             .tinted(creamui_theme::Color::rgb(0, 255, 0));
-        let [r, g, b, a] = data.pixels() else {
+        let [r, g, b, a] = data.pixels()[..] else {
             unreachable!()
         };
-        assert_eq!(*r, 0);
-        assert!(*g > 0, "green channel should carry the tint");
-        assert_eq!(*b, 0);
-        assert_eq!(*a, 128, "alpha must survive the tint unchanged");
+        assert_eq!(r, 0);
+        assert!(g > 0, "green channel should carry the tint");
+        assert_eq!(b, 0);
+        assert_eq!(a, 128, "alpha must survive the tint unchanged");
+    }
+
+    #[test]
+    fn decoded_images_reload_after_discarding_their_pixels() {
+        let mut png = Vec::new();
+        image_rs::RgbaImage::from_fn(3, 2, |x, y| {
+            image_rs::Rgba([x as u8 * 80, y as u8 * 90, 7, 200])
+        })
+        .write_to(
+            &mut std::io::Cursor::new(&mut png),
+            image_rs::ImageFormat::Png,
+        )
+        .unwrap();
+        let data = ImageData::from_bytes(&png).unwrap();
+        let original = data.pixels();
+        assert!(data.image().discard_pixels());
+        assert_eq!(data.pixels(), original);
     }
 
     #[cfg(feature = "svg")]

@@ -110,6 +110,13 @@ impl RawVirtualList {
         self.scrollbar = visible;
         self
     }
+
+    fn effective_viewport_height(&self) -> f32 {
+        match self.style.layout.size.height {
+            creamui_core::layout::Dimension::Length(height) => height.max(0.0),
+            _ => self.viewport_height,
+        }
+    }
 }
 
 impl Widget for RawVirtualList {
@@ -125,9 +132,11 @@ impl Widget for RawVirtualList {
     fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
 
     fn children(&mut self) -> Vec<BoxedWidget> {
-        let range =
-            self.state
-                .visible_range(self.controller.peek(), self.viewport_height, self.overscan);
+        let range = self.state.visible_range(
+            self.controller.peek(),
+            self.effective_viewport_height(),
+            self.overscan,
+        );
 
         let rows: Vec<BoxedWidget> = range
             .map(|index| {
@@ -251,5 +260,28 @@ mod tests {
         state.set_height(1, 40.0);
         assert_eq!(state.height(1), 40.0);
         assert_eq!(state.total_height(), 60.0);
+    }
+
+    #[test]
+    fn a_fixed_style_height_is_used_as_the_viewport() {
+        let state = VirtualListState::new(100, 10.0);
+        let controller = ScrollController::new(200.0);
+        let built = Rc::new(RefCell::new(Vec::new()));
+        let built_for_item = built.clone();
+        let mut list = RawVirtualList::new(
+            creamui_core::Style::new().height(30.0),
+            state,
+            controller,
+            1.0,
+            move |index| {
+                built_for_item.borrow_mut().push(index);
+                Box::new(RawView::new(Style::default())) as BoxedWidget
+            },
+        )
+        .overscan(0);
+
+        let _ = Widget::children(&mut list);
+
+        assert_eq!(*built.borrow(), vec![20, 21, 22, 23]);
     }
 }

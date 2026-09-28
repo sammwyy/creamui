@@ -485,8 +485,8 @@ pub struct AppearanceSelection {
     pub theme: Option<String>,
     pub variant: Option<String>,
     pub accent: Option<Color>,
-    /// A CSS-style family stack (e.g. `"Inter, sans-serif"`) preferred over
-    /// the bundled default, resolved by loading it from the system.
+    /// A CSS-style family stack (e.g. `"Inter, system-ui"`) preferred over
+    /// the default system UI font, resolved by loading it from the system.
     pub font_family: Option<String>,
     pub corners: Option<CornerStyle>,
 }

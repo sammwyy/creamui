@@ -13,17 +13,17 @@ pub use creamui_theme as theme;
 pub use creamui_widgets as widgets;
 
 pub use creamui_core::{
-    Border, BoxedWidget, ColorToken, ColorValue, InteractionState, LengthValue, PaintStyle,
-    Painter, Size, StateStyle, Style, StyleParseError, StyleProp, StyleState, Styled,
-    TypographyStyle, Widget,
+    Background, Border, BoxShadow, BoxedWidget, ColorToken, ColorValue, EdgeValues,
+    InteractionState, LengthValue, LinearGradient, PaintStyle, Painter, RadialGradient, Size,
+    StateStyle, Style, StyleParseError, StyleProp, StyleState, Styled, TypographyStyle, Widget,
 };
 #[cfg(feature = "devtools")]
 pub use creamui_devtools as devtools;
 pub use creamui_fonts::{include_font, use_font, FontHandle, FontWeight};
 pub use creamui_reactive::{create_effect, Effect, Signal};
 pub use creamui_render::{
-    run, AppBuilder, AppHandle, CloseBehavior, PanicDetails, RenderBackend, WindowHandle,
-    WindowOptions,
+    run, AppBuilder, AppHandle, BlurRegion, CloseBehavior, PanicDetails, RenderBackend,
+    WindowHandle, WindowOptions,
 };
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 pub use creamui_render::{run_android, AndroidApp};

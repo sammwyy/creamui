@@ -1,8 +1,8 @@
 use crate::{
-    BackendKind, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition, LogicalSize,
-    Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend,
-    PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId,
-    WindowLevel, WindowRole,
+    BackendKind, BlurRegion, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition,
+    LogicalSize, Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize,
+    PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent,
+    WindowId, WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -65,6 +65,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 use xkbcommon::xkb;
+
+mod blur;
 
 const USER_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -137,6 +139,7 @@ impl<T: 'static> EventLoop<T> {
             XdgShell::bind(&globals, &queue_handle).map_err(|error| error.to_string())?;
         let cursor_shape_manager = CursorShapeManager::bind(&globals, &queue_handle).ok();
         let layer_shell = globals.bind(&queue_handle, 1..=5, ()).ok();
+        let blur = blur::BlurBackend::bind(&globals, &queue_handle);
         let seat: Option<wl_seat::WlSeat> = globals.bind(&queue_handle, 1..=9, ()).ok();
         let data_device_manager = DataDeviceManagerState::bind(&globals, &queue_handle).ok();
         let data_device = data_device_manager
@@ -154,6 +157,7 @@ impl<T: 'static> EventLoop<T> {
             seat,
             cursor_shape_manager,
             layer_shell,
+            blur,
             data_device_manager,
             data_device,
             icon_pool,
@@ -182,6 +186,7 @@ impl<T: 'static> EventLoop<T> {
             runtime.borrow_mut().close_requested();
             runtime.borrow_mut().apply_cursor_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
+            runtime.borrow_mut().apply_blur_requests(&queue_handle);
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
@@ -271,6 +276,7 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.blur_requests.clone(),
             attributes.size,
             false,
         ));
@@ -328,6 +334,7 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.blur_requests.clone(),
             attributes.size,
             false,
         ));
@@ -388,6 +395,8 @@ struct Runtime {
     xkb_state: Option<xkb::State>,
     cursor_shape_manager: Option<CursorShapeManager>,
     layer_shell: Option<ZwlrLayerShellV1>,
+    blur: Option<blur::BlurBackend>,
+    blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     cursor_serial: Option<u32>,
     pointer_focus: Option<WindowId>,
@@ -417,6 +426,16 @@ struct DragRequest {
     icon: Option<DragIcon>,
 }
 
+/// Queued by [`Window::set_blur_region`], drained by [`Runtime::apply_blur_requests`].
+struct BlurRequest {
+    window_id: WindowId,
+    #[cfg_attr(
+        not(any(feature = "blur-kwin", feature = "blur-blair")),
+        allow(dead_code)
+    )]
+    region: Option<BlurRegion>,
+}
+
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -426,6 +445,7 @@ impl Runtime {
         seat: Option<wl_seat::WlSeat>,
         cursor_shape_manager: Option<CursorShapeManager>,
         layer_shell: Option<ZwlrLayerShellV1>,
+        blur: Option<blur::BlurBackend>,
         data_device_manager: Option<DataDeviceManagerState>,
         data_device: Option<DataDevice>,
         icon_pool: SlotPool,
@@ -441,6 +461,8 @@ impl Runtime {
             xkb_state: None,
             cursor_shape_manager,
             layer_shell,
+            blur,
+            blur_requests: Arc::new(Mutex::new(Vec::new())),
             cursor_shape_device: None,
             cursor_serial: None,
             pointer_focus: None,
@@ -492,6 +514,9 @@ impl Runtime {
             {
                 layer_surface.destroy();
                 handle.surface.destroy();
+            }
+            if let Some(backend) = self.blur.as_mut() {
+                backend.forget(id);
             }
             if self.pointer_focus == Some(id) {
                 self.pointer_focus = None;
@@ -559,6 +584,21 @@ impl Runtime {
             source.start_drag(device, &origin, icon.as_ref(), request.serial);
             self.active_drag = Some(source);
         }
+    }
+
+    /// Applies each queued [`BlurRequest`] through whichever [`blur::BlurBackend`]
+    /// bound at startup. A no-op when the compositor advertises neither.
+    fn apply_blur_requests(&mut self, qh: &QueueHandle<DispatchState>) {
+        let requests = std::mem::take(
+            &mut *self
+                .blur_requests
+                .lock()
+                .expect("blur request lock poisoned"),
+        );
+        let Some(backend) = self.blur.as_mut() else {
+            return;
+        };
+        backend.apply(&self.compositor, &self.windows, &requests, qh);
     }
 
     /// Renders `icon` into a fresh `wl_surface` to hand to `start_drag`.
@@ -672,6 +712,7 @@ fn create_layer_window(
         runtime.close_requests.clone(),
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
+        runtime.blur_requests.clone(),
         attributes.size,
         overlay,
     ));
@@ -1367,6 +1408,7 @@ pub struct Window {
     close_requests: Arc<Mutex<Vec<WindowId>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+    blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     pointer_passthrough: bool,
 }
 
@@ -1379,6 +1421,7 @@ impl Window {
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+        blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1397,6 +1440,7 @@ impl Window {
             close_requests,
             cursor_requests,
             drag_requests,
+            blur_requests,
             pointer_passthrough,
         }
     }
@@ -1499,6 +1543,17 @@ impl PlatformWindow for Window {
         requests.push((self.id, icon));
     }
     fn focus(&self) {}
+    fn set_blur_region(&self, region: Option<BlurRegion>) {
+        let mut requests = self
+            .blur_requests
+            .lock()
+            .expect("blur request lock poisoned");
+        requests.retain(|request| request.window_id != self.id);
+        requests.push(BlurRequest {
+            window_id: self.id,
+            region,
+        });
+    }
     fn start_drag(
         &self,
         serial: crate::InputSerial,

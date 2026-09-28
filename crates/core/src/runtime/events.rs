@@ -30,11 +30,26 @@ impl Runtime {
     /// flow sibling's regardless of tree depth/order. A node nested inside
     /// an already-deferred absolute subtree is not independently deferred
     /// again — its whole ancestor subtree already moved as one unit.
+    ///
+    /// When only listed nodes moved, their entries' rects are patched in
+    /// place instead.
     pub fn rebuild_hit_test(&mut self) {
         if !self.hit_test_dirty {
+            for id in self.hit_rects.drain(..) {
+                if let Some(node) = self.nodes.get(id) {
+                    if let Some(slot) = node.hit_slot {
+                        self.hit_entries[slot as usize].rect = node.layout.rect;
+                    }
+                }
+            }
             return;
         }
-        self.hit_entries.clear();
+        self.hit_rects.clear();
+        for entry in self.hit_entries.drain(..) {
+            if let Some(node) = self.nodes.get_mut(entry.node) {
+                node.hit_slot = None;
+            }
+        }
         self.focus_order.clear();
         let Some(root) = self.root else {
             self.hit_test_dirty = false;
@@ -87,6 +102,11 @@ impl Runtime {
             }
         }
 
+        for (slot, entry) in self.hit_entries.iter().enumerate() {
+            if let Some(node) = self.nodes.get_mut(entry.node) {
+                node.hit_slot = Some(slot as u32);
+            }
+        }
         self.hit_test_dirty = false;
     }
 
@@ -250,6 +270,30 @@ mod tests {
             width: w,
             height: h,
         }
+    }
+
+    #[test]
+    fn a_moved_node_is_found_at_its_new_rect_without_a_rebuild() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let node = leaf_at(&mut runtime, root, rect(0.0, 0.0, 10.0, 10.0));
+        clickable(&mut runtime, node);
+        runtime.rebuild_hit_test();
+
+        clickable(&mut runtime, node);
+        assert!(!runtime.hit_test_dirty);
+        runtime.nodes.get_mut(node).unwrap().layout.rect = rect(50.0, 50.0, 10.0, 10.0);
+        runtime.hit_rects.push(node);
+        runtime.rebuild_hit_test();
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 55.0, y: 55.0 }),
+            Some(node)
+        );
+        assert_eq!(runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }), None);
     }
 
     #[test]

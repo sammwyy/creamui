@@ -1,4 +1,4 @@
-use super::node::{EventState, RuntimeNodeId};
+use super::node::{EventState, ImageContent, ImageFit, RuntimeNodeId};
 use std::rc::Rc;
 
 /// 2D translation only; no rotation/scale.
@@ -28,6 +28,12 @@ pub enum Mutation {
     SetText {
         node: RuntimeNodeId,
         text: Rc<str>,
+    },
+    /// Replaces an image node's decoded or source content and fit mode.
+    SetImage {
+        node: RuntimeNodeId,
+        content: ImageContent,
+        fit: ImageFit,
     },
     SetTransform {
         node: RuntimeNodeId,

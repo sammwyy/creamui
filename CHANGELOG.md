@@ -9,6 +9,9 @@ All notable changes to CreamUI will be documented in this file.
   changes invalidate the affected layout caches.
 - Text layout applies Unicode bidirectional visual ordering after line
   breaking while keeping source-byte positions stable for editing.
+- Measured the conditional `HeightIndex` middle-insert requirement against
+  current consumers; no dynamic list caller exists, so the compact Fenwick
+  index remains unchanged until such a workload appears.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

@@ -41,9 +41,6 @@ Current limitations and work still to do. Implemented changes belong in
   receive measured row heights automatically. The caller currently supplies
   `viewport_height`, and rows use estimated heights or manual
   `VirtualListState::set_height` updates.
-- Add efficient middle insert/remove operations to `HeightIndex` if dynamic
-  lists need them. It currently supports `push` and `truncate`; changing
-  item count through `VirtualListState::set_item_count` rebuilds the index.
 - Add virtual tables (columns, sticky headers, selection) and virtual trees
   (flattened expanded nodes with stable keys). `RawTable` and `TreeView`
   still materialize every item. `RawVirtualList` has no themed wrapper or

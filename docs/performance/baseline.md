@@ -674,8 +674,8 @@ are `O(log n)` prefix-sum reads, and `index_at_offset` is the `O(log n)`
 binary-search "find by prefix sum" that turns a scroll offset into an
 item index (REFACTOR.md 17.2). `visible_range` layers overscan and
 bounds-clamping on top to get the index range a virtualized list should
-mount. `truncate` rebuilds in `O(n)`; there is no mid-sequence
-insert/remove yet (see `TODO.md`).
+mount. `truncate` rebuilds in `O(n)`; there is no mid-sequence insert/remove
+yet.
 
 ### Measured
 
@@ -693,6 +693,15 @@ Logarithmic, not flat: a 100x increase in item count costs roughly a
 constant few nanoseconds more, not a 100x slowdown — the `O(log n)`
 shape 17.2 asks for, distinct from the `O(1)` shape of Phases 7/9/10's
 single-node update benchmarks.
+
+### Decision
+
+The repository has no dynamic virtual-list caller: `RawVirtualList` is the
+only consumer and its state exposes only count replacement and point height
+updates. The existing benchmark therefore has no representative middle
+insert/remove workload to measure. Keep the compact Fenwick representation
+until a list API needs item-level insertion; at that point benchmark the
+actual mutation pattern before choosing a dynamic index.
 
 ### Not done
 

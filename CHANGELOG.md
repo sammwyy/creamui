@@ -21,6 +21,8 @@ All notable changes to CreamUI will be documented in this file.
   `creamui_window_set_blur`, including a window-wide or rectangular region.
 - Background image decoding now uses a bounded queue and reusable workers,
   avoiding one unbounded thread per request.
+- `creamui-dynamic::RuntimeTree` now covers node counts, layout/paint/text
+  mutations, layout, retained paint readback, and click dispatch.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

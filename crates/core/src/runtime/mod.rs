@@ -27,7 +27,8 @@ pub use mount::mount_legacy_widget;
 pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};
 pub use node::{
-    Children, CustomNode, EventState, ImageNode, NodeKind, RuntimeNode, RuntimeNodeId, TextNode,
+    Children, CustomNode, EventState, ImageContent, ImageNode, NodeKind, RuntimeNode,
+    RuntimeNodeId, TextNode,
 };
 pub use paint::{
     BorderPrimitive, ImagePrimitive, PaintFragment, PaintOp, PaintPrimitive, PaintState,

@@ -74,9 +74,45 @@ pub struct TextNode {
     pub text: Rc<str>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+pub enum ImageContent {
+    Source(Rc<str>),
+    Decoded(crate::RgbaImage),
+}
+
+impl PartialEq for ImageContent {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Source(a), Self::Source(b)) => a == b,
+            (Self::Decoded(a), Self::Decoded(b)) => a.id() == b.id(),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ImageNode {
-    pub source: Rc<str>,
+    pub content: ImageContent,
+}
+
+impl Default for ImageNode {
+    fn default() -> Self {
+        Self::source("")
+    }
+}
+
+impl ImageNode {
+    pub fn source(source: impl Into<Rc<str>>) -> Self {
+        Self {
+            content: ImageContent::Source(source.into()),
+        }
+    }
+
+    pub fn decoded(image: crate::RgbaImage) -> Self {
+        Self {
+            content: ImageContent::Decoded(image),
+        }
+    }
 }
 
 /// Payload for a node not (yet) expressed as one of [`NodeKind`]'s other

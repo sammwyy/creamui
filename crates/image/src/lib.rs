@@ -232,6 +232,12 @@ impl Widget for Image {
         self.style.clone()
     }
 
+    fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
+        Some(creamui_core::runtime::NodeKind::Image(
+            creamui_core::runtime::ImageNode::decoded(self.data.image().clone()),
+        ))
+    }
+
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let corner_radius = self.style.paint.corner_radius.unwrap_or(0.0);
         if matches!(self.fit, ImageFit::Cover) || corner_radius > 0.0 {
@@ -297,6 +303,45 @@ mod tests {
         let (rect, width, height) = painter.image.unwrap();
         assert_eq!((width, height), (4, 2));
         assert_eq!((rect.width, rect.height), (100., 50.));
+    }
+
+    #[test]
+    fn decoded_image_mounts_as_an_image_and_reaches_its_paint_fragment() {
+        use creamui_core::runtime::{
+            mount_legacy_widget, ImageContent, NodeKind, PaintOp, PaintPrimitive, Runtime,
+        };
+
+        let data = ImageData::from_rgba(1, 1, vec![255, 0, 0, 128]).unwrap();
+        let image_id = data.image().id();
+        let mut runtime = Runtime::new();
+        let node = mount_legacy_widget(
+            &mut runtime.transaction(),
+            Box::new(Image::new(data.clone())),
+            None,
+        );
+        runtime.set_root(Some(node));
+        runtime.compute_layout(Size {
+            width: 10.0,
+            height: 10.0,
+        });
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+
+        let NodeKind::Image(image) = &runtime.get(node).unwrap().kind else {
+            panic!("decoded image should mount as an image node");
+        };
+        let ImageContent::Decoded(pixels) = &image.content else {
+            panic!("image node should retain decoded pixels");
+        };
+        assert_eq!(pixels.id(), image_id);
+        assert!(Arc::ptr_eq(&pixels.pixels(), &data.pixels()));
+
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::Image(primitive)) = &fragment.ops[0] else {
+            panic!("image fragment should contain an image primitive");
+        };
+        assert!(
+            matches!(&primitive.content, ImageContent::Decoded(pixels) if pixels.id() == image_id)
+        );
     }
 
     #[test]

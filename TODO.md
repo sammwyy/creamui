@@ -19,13 +19,12 @@ Current limitations and work still to do. Implemented changes belong in
   reactive expressions, conditional branches, keyed lists, and events.
   The macro currently expands to widget builders. Add
   `CREAMUI_DUMP_JSX` support and validate the rewrite against the examples.
-- Represent already-decoded images in `NodeKind::Image`. Its current
-  `source: Rc<str>` cannot hold the pixels owned by `creamui_image::Image`,
-  which therefore remains a `NodeKind::Custom` legacy mount.
 - Preserve or adapt legacy widgets so `Custom` nodes can paint after layout.
   `mount_legacy_widget` consumes the widget and `Runtime::generate_fragment`
   produces an empty fragment for it. `RecordingPainter` is not used in that
-  path; `TextPrimitive` also lacks selection and italic data.
+  path; `TextPrimitive` also lacks selection and italic data. Decoded image
+  fragments still need fit and crop semantics when the runtime presenter is
+  connected.
 - Feed `effective_transform`, `effective_opacity`, and `effective_clip` to the
   renderer. The runtime computes them, but live windows do not consume them.
   Add retained clipping and opacity composition, a layer promotion policy,

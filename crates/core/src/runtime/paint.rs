@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::node::{NodeKind, RuntimeNode};
+use super::node::{ImageContent, NodeKind, RuntimeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuadPrimitive {
@@ -52,7 +52,7 @@ pub struct TextPrimitive {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImagePrimitive {
     pub rect: crate::Rect,
-    pub source: Rc<str>,
+    pub content: ImageContent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,7 +150,7 @@ pub(super) fn generate_fragment(
         NodeKind::Image(image) => {
             ops.push(PaintOp::Primitive(PaintPrimitive::Image(ImagePrimitive {
                 rect,
-                source: image.source.clone(),
+                content: image.content.clone(),
             })));
         }
         NodeKind::Container | NodeKind::Custom(_) => {}

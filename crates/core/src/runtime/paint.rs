@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::node::{ImageContent, NodeKind, RuntimeNode};
+use super::node::{ImageContent, ImageFit, NodeKind, RuntimeNode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuadPrimitive {
@@ -90,6 +90,40 @@ pub struct PaintState {
     pub fragment: Option<PaintFragment>,
 }
 
+fn image_destination(rect: crate::Rect, content: &ImageContent, fit: ImageFit) -> crate::Rect {
+    let ImageContent::Decoded(image) = content else {
+        return rect;
+    };
+    if fit == ImageFit::Fill {
+        return rect;
+    }
+    let width = image.width() as f32;
+    let height = image.height() as f32;
+    if fit == ImageFit::None {
+        return crate::Rect {
+            x: rect.x,
+            y: rect.y,
+            width,
+            height,
+        };
+    }
+    let scale_x = rect.width / width;
+    let scale_y = rect.height / height;
+    let scale = if fit == ImageFit::Contain {
+        scale_x.min(scale_y)
+    } else {
+        scale_x.max(scale_y)
+    };
+    let width = width * scale;
+    let height = height * scale;
+    crate::Rect {
+        x: rect.x + (rect.width - width) / 2.0,
+        y: rect.y + (rect.height - height) / 2.0,
+        width,
+        height,
+    }
+}
+
 /// Regenerates `node`'s fragment from its own style/content.
 pub(super) fn generate_fragment(
     node: &RuntimeNode,
@@ -151,11 +185,23 @@ pub(super) fn generate_fragment(
             })));
         }
         NodeKind::Image(image) => {
+            let radius = paint.corner_radius.unwrap_or(0.0);
+            let clipped = image.fit == ImageFit::Cover || radius > 0.0;
+            if clipped {
+                if radius > 0.0 {
+                    ops.push(PaintOp::PushRoundedClip(rect, radius));
+                } else {
+                    ops.push(PaintOp::PushClip(rect));
+                }
+            }
             ops.push(PaintOp::Primitive(PaintPrimitive::Image(ImagePrimitive {
-                rect,
+                rect: image_destination(rect, &image.content, image.fit),
                 content: image.content.clone(),
                 tint: None,
             })));
+            if clipped {
+                ops.push(PaintOp::PopClip);
+            }
         }
         NodeKind::Custom(custom) => {
             if let Some(widget) = &custom.widget {

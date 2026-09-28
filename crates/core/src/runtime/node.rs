@@ -93,6 +93,21 @@ impl PartialEq for ImageContent {
 #[derive(Debug, Clone)]
 pub struct ImageNode {
     pub content: ImageContent,
+    pub fit: ImageFit,
+}
+
+/// How decoded pixels map into an image node's layout box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ImageFit {
+    /// Stretch to the layout box.
+    Fill,
+    /// Preserve aspect ratio; keep the entire image visible.
+    Contain,
+    /// Preserve aspect ratio; crop to fill the layout box.
+    #[default]
+    Cover,
+    /// Keep source dimensions at the box's top-left corner.
+    None,
 }
 
 impl Default for ImageNode {
@@ -105,13 +120,20 @@ impl ImageNode {
     pub fn source(source: impl Into<Rc<str>>) -> Self {
         Self {
             content: ImageContent::Source(source.into()),
+            fit: ImageFit::Cover,
         }
     }
 
     pub fn decoded(image: crate::RgbaImage) -> Self {
         Self {
             content: ImageContent::Decoded(image),
+            fit: ImageFit::Cover,
         }
+    }
+
+    pub fn with_fit(mut self, fit: ImageFit) -> Self {
+        self.fit = fit;
+        self
     }
 }
 

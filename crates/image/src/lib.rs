@@ -14,22 +14,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub use background::{BackgroundImageLoader, LoadOutcome, ResourceId, ResourceReady};
+pub use creamui_core::runtime::ImageFit;
 #[cfg(feature = "svg")]
 pub use svg::SvgSize;
-
-/// How an [`Image`] fits its source pixels inside its layout box.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum ImageFit {
-    /// Stretch to the layout box.
-    Fill,
-    /// Preserve aspect ratio; the complete image remains visible.
-    Contain,
-    /// Preserve aspect ratio while filling the layout box; excess is clipped.
-    #[default]
-    Cover,
-    /// Keep the source pixel dimensions, anchored at the top-left.
-    None,
-}
 
 fn premultiply(pixels: &mut [u8]) {
     for pixel in pixels.chunks_exact_mut(4) {
@@ -214,7 +201,14 @@ impl Image {
             ImageFit::Fill => return rect,
             ImageFit::Contain => (rect.width / source_width).min(rect.height / source_height),
             ImageFit::Cover => (rect.width / source_width).max(rect.height / source_height),
-            ImageFit::None => 1.0,
+            ImageFit::None => {
+                return Rect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: source_width,
+                    height: source_height,
+                };
+            }
         };
         let width = source_width * scale;
         let height = source_height * scale;
@@ -234,7 +228,7 @@ impl Widget for Image {
 
     fn legacy_node_kind(&self) -> Option<creamui_core::runtime::NodeKind> {
         Some(creamui_core::runtime::NodeKind::Image(
-            creamui_core::runtime::ImageNode::decoded(self.data.image().clone()),
+            creamui_core::runtime::ImageNode::decoded(self.data.image().clone()).with_fit(self.fit),
         ))
     }
 
@@ -306,6 +300,26 @@ mod tests {
     }
 
     #[test]
+    fn none_fit_anchors_original_pixels_at_the_top_left() {
+        let data = ImageData::from_rgba(4, 2, vec![255; 32]).unwrap();
+        let image = Image::new(data).fit(ImageFit::None);
+        assert_eq!(
+            image.destination(Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 100.0
+            }),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 4.0,
+                height: 2.0
+            }
+        );
+    }
+
+    #[test]
     fn decoded_image_mounts_as_an_image_and_reaches_its_paint_fragment() {
         use creamui_core::runtime::{
             mount_legacy_widget, ImageContent, NodeKind, PaintOp, PaintPrimitive, Runtime,
@@ -336,11 +350,103 @@ mod tests {
         assert!(Arc::ptr_eq(&pixels.pixels(), &data.pixels()));
 
         let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
-        let PaintOp::Primitive(PaintPrimitive::Image(primitive)) = &fragment.ops[0] else {
-            panic!("image fragment should contain an image primitive");
-        };
+        let primitive = fragment
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                PaintOp::Primitive(PaintPrimitive::Image(image)) => Some(image),
+                _ => None,
+            })
+            .expect("image fragment should contain an image primitive");
         assert!(
             matches!(&primitive.content, ImageContent::Decoded(pixels) if pixels.id() == image_id)
+        );
+    }
+
+    #[test]
+    fn runtime_image_fragment_preserves_contain_and_cover_geometry() {
+        use creamui_core::runtime::{mount_legacy_widget, PaintOp, PaintPrimitive, Runtime};
+
+        let data = ImageData::from_rgba(4, 2, vec![255; 32]).unwrap();
+        let render = |fit| {
+            let widget = Image::new(data.clone())
+                .fit(fit)
+                .layout(creamui_core::layout::Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Length(100.0),
+                        height: Dimension::Length(100.0),
+                    },
+                    ..Default::default()
+                });
+            let mut runtime = Runtime::new();
+            let node = mount_legacy_widget(&mut runtime.transaction(), Box::new(widget), None);
+            runtime.set_root(Some(node));
+            runtime.compute_layout(Size {
+                width: 100.0,
+                height: 100.0,
+            });
+            runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+            runtime
+                .get(node)
+                .unwrap()
+                .paint
+                .fragment
+                .as_ref()
+                .unwrap()
+                .ops
+                .clone()
+        };
+
+        let contain = render(ImageFit::Contain);
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &contain[0] else {
+            panic!("expected contained image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: 0.0,
+                y: 25.0,
+                width: 100.0,
+                height: 50.0
+            }
+        );
+
+        let cover = render(ImageFit::Cover);
+        assert_eq!(
+            cover[0],
+            PaintOp::PushClip(Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0
+            })
+        );
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &cover[1] else {
+            panic!("expected covered image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: -50.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0
+            }
+        );
+        assert_eq!(cover[2], PaintOp::PopClip);
+
+        let original = render(ImageFit::None);
+        let PaintOp::Primitive(PaintPrimitive::Image(image)) = &original[0] else {
+            panic!("expected original-size image");
+        };
+        assert_eq!(
+            image.rect,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 4.0,
+                height: 2.0
+            }
         );
     }
 

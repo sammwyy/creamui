@@ -17,6 +17,8 @@ All notable changes to CreamUI will be documented in this file.
 - ABI-v2 now exposes color-scheme driven paint-fragment readback and C click
   callbacks with userdata; `creamui-dynamic` owns a `RuntimeTree` wrapper for
   the same retained tree operations.
+- C callers can request or clear compositor blur on a live window handle with
+  `creamui_window_set_blur`, including a window-wide or rectangular region.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

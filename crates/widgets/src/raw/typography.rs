@@ -91,6 +91,10 @@ impl Widget for RawPre {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.paint_content(painter, rect, rect);
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, _rect: Rect, content: Rect) {
         let typography = self
             .style
             .resolve(creamui_core::StyleState::NORMAL)
@@ -102,10 +106,10 @@ impl Widget for RawPre {
             .unwrap_or(Color::rgb(0, 0, 0));
         let font_size = typography.font_size.unwrap_or(14.0);
         let inset = Rect {
-            x: rect.x + self.padding,
-            y: rect.y + self.padding,
-            width: (rect.width - self.padding * 2.0).max(0.0),
-            height: (rect.height - self.padding * 2.0).max(0.0),
+            x: content.x + self.padding,
+            y: content.y + self.padding,
+            width: (content.width - self.padding * 2.0).max(0.0),
+            height: (content.height - self.padding * 2.0).max(0.0),
         };
         painter.fill_text_font(
             inset,
@@ -219,6 +223,10 @@ impl Widget for RawLink {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.paint_content(painter, rect, rect);
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
         let state = creamui_core::StyleState::NORMAL
             .with_hovered(!self.disabled && painter.hovered(rect))
             .with_disabled(self.disabled);
@@ -231,7 +239,7 @@ impl Widget for RawLink {
         let font_size = typography.font_size.unwrap_or(14.0);
         let align = typography.align.unwrap_or(TextAlign::Start);
         painter.fill_text_font(
-            rect,
+            content,
             &self.text,
             color,
             font_size,
@@ -242,7 +250,7 @@ impl Widget for RawLink {
         );
         super::draw_text_decorations(
             painter,
-            rect,
+            content,
             &self.text,
             font_size,
             typography.font_family.as_deref(),

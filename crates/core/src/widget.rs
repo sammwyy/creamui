@@ -258,6 +258,15 @@ pub trait Painter {
         width: f32,
         corner_radius: f32,
     );
+    fn stroke_rect_inside(
+        &mut self,
+        rect: Rect,
+        color: creamui_theme::Color,
+        width: f32,
+        corner_radius: f32,
+    ) {
+        self.stroke_rect(rect.inflate(-width / 2.0), color, width, corner_radius);
+    }
     fn fill_text(
         &mut self,
         rect: Rect,
@@ -373,6 +382,10 @@ pub trait Widget {
     /// the parent's coordinate space). The renderer paints the common
     /// background, border, radius, and outline first. Does not paint children.
     fn paint(&self, painter: &mut dyn Painter, rect: Rect);
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, _content: Rect) {
+        self.paint(painter, rect);
+    }
 
     /// This widget's fundamental content, for [`crate::runtime::mount_legacy_widget`]
     /// to classify as [`crate::runtime::NodeKind::Text`]/[`crate::runtime::NodeKind::Image`]

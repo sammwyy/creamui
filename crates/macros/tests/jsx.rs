@@ -14,6 +14,161 @@ struct TextPainter(Vec<String>);
 #[derive(Default)]
 struct BoundsPainter(Vec<Rect>);
 
+#[derive(Default)]
+struct BorderPainter {
+    backgrounds: Vec<Rect>,
+    strokes: Vec<(Rect, f32)>,
+}
+
+#[derive(Default)]
+struct TextBoxPainter {
+    backgrounds: Vec<Rect>,
+    text: Vec<(Rect, Color)>,
+}
+
+impl Painter for TextBoxPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.backgrounds.push(rect);
+    }
+
+    fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
+
+    fn fill_text(&mut self, rect: Rect, _: &str, color: Color, _: f32, _: TextAlign) {
+        self.text.push((rect, color));
+    }
+}
+
+#[test]
+fn text_uses_the_layout_content_box_and_explicit_color() {
+    let widget = jsx! {
+        <RawText width={100.0} height={50.0} padding={"10px 20px"}
+            border={(Color::rgb(0, 0, 255), 4.0)}
+            background={Color::rgb(255, 255, 255)} color={Color::rgb(255, 0, 0)}>
+            "Inside"
+        </RawText>
+    };
+    let mut painter = TextBoxPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 300.0,
+            height: 200.0,
+        },
+        &mut painter,
+    );
+    assert_eq!(
+        painter.backgrounds[0],
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0
+        }
+    );
+    assert_eq!(
+        painter.text[0],
+        (
+            Rect {
+                x: 24.0,
+                y: 14.0,
+                width: 52.0,
+                height: 22.0
+            },
+            Color::rgb(255, 0, 0)
+        )
+    );
+}
+
+impl Painter for BorderPainter {
+    fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
+        self.backgrounds.push(rect);
+    }
+
+    fn stroke_rect(&mut self, rect: Rect, _: Color, width: f32, _: f32) {
+        self.strokes.push((rect, width));
+    }
+
+    fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
+}
+
+#[test]
+fn borders_reserve_space_and_paint_inside_both_box_models() {
+    use creamui_core::layout::BoxSizing;
+    use creamui_widgets::raw::RawView;
+
+    for (sizing, outer_width, outer_height) in [
+        (BoxSizing::BorderBox, 80.0, 40.0),
+        (BoxSizing::ContentBox, 108.0, 68.0),
+    ] {
+        let root = jsx! {
+            <RawView width={80.0} height={40.0} padding={10.0} box_sizing={sizing}
+                border={(Color::rgb(0, 0, 255), 4.0)} background={Color::rgb(1, 2, 3)}>
+                <RawView width={10.0} height={10.0} background={Color::rgb(4, 5, 6)} />
+            </RawView>
+        };
+        let mut painter = BorderPainter::default();
+        render_frame(
+            Box::new(root),
+            Size {
+                width: 300.0,
+                height: 200.0,
+            },
+            &mut painter,
+        );
+        assert_eq!(painter.backgrounds[0].width, outer_width);
+        assert_eq!(painter.backgrounds[0].height, outer_height);
+        assert_eq!(
+            (painter.backgrounds[1].x, painter.backgrounds[1].y),
+            (14.0, 14.0)
+        );
+        assert_eq!(
+            painter.strokes,
+            [(
+                Rect {
+                    x: 2.0,
+                    y: 2.0,
+                    width: outer_width - 4.0,
+                    height: outer_height - 4.0
+                },
+                4.0
+            )]
+        );
+    }
+
+    let root = RawView::new(
+        CommonStyle::new()
+            .width(80.0)
+            .height(40.0)
+            .padding(10.0)
+            .border(Color::rgb(0, 0, 255), 2.0)
+            .background(Color::rgb(1, 2, 3))
+            .focus(StateStyle::new().border(Color::rgb(0, 0, 255), 6.0)),
+    )
+    .child(Box::new(RawView::new(
+        CommonStyle::new()
+            .width(10.0)
+            .height(10.0)
+            .background(Color::rgb(4, 5, 6)),
+    )));
+    let mut painter = BorderPainter::default();
+    render_frame(
+        Box::new(root),
+        Size {
+            width: 300.0,
+            height: 200.0,
+        },
+        &mut painter,
+    );
+    assert_eq!(
+        (painter.backgrounds[0].width, painter.backgrounds[0].height),
+        (80.0, 40.0)
+    );
+    assert_eq!(
+        (painter.backgrounds[1].x, painter.backgrounds[1].y),
+        (16.0, 16.0)
+    );
+}
+
 impl Painter for BoundsPainter {
     fn fill_rect(&mut self, rect: Rect, _: Color, _: f32) {
         self.0.push(rect);

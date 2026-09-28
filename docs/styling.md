@@ -25,9 +25,15 @@ width and height take precedence. Native styles and widgets support
 
 `box-sizing` accepts `"border-box"` (the default) and `"content-box"`.
 Use `.box_sizing(creamui::core::layout::BoxSizing::ContentBox)` or the
-`box_sizing` JSX prop. Content-box sizes exclude layout padding and borders;
-border-box sizes include them. Common `.border(...)` declarations are paint
-decorations; only `Style::layout.border` reserves border space in layout.
+`box_sizing` JSX prop. Content-box sizes exclude padding and borders;
+border-box sizes include them. Common `.border(...)` declarations reserve
+space on all four sides and paint inside the border box. Interaction-state
+borders reserve their maximum declared width so focus and hover cannot move
+the layout. Outlines and shadows remain outside the box without affecting
+layout.
+
+`RawText`, `Text`, `Heading`, `RawPre`, `Pre`, `RawLink`, and `Link` paint text
+within the resolved content box, including percentage padding and borders.
 
 `padding`, `margin`, and `inset` accept one to four whitespace-separated values
 in CSS order: all sides; vertical/horizontal; top/horizontal/bottom; or

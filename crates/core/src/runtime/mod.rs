@@ -683,6 +683,44 @@ mod tests {
     }
 
     #[test]
+    fn paint_border_changes_reserve_and_release_layout_space() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        let child = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: crate::Style::new()
+                .width(80.0)
+                .height(40.0)
+                .padding(10.0)
+                .layout,
+        });
+        tx.apply(Mutation::SetLayoutStyle {
+            node: child,
+            style: crate::Style::new().width(10.0).height(10.0).layout,
+        });
+        tx.insert_child(root, child, None);
+        drop(tx);
+        runtime.set_root(Some(root));
+
+        for (border_width, expected_x) in [(4.0, 14.0), (0.0, 10.0)] {
+            runtime.transaction().apply(Mutation::SetPaintStyle {
+                node: root,
+                style: if border_width > 0.0 {
+                    crate::Style::new()
+                        .border(creamui_theme::Color::rgb(1, 2, 3), border_width)
+                        .paint
+                } else {
+                    crate::PaintStyle::default()
+                },
+            });
+            runtime.compute_layout(size(300.0, 200.0));
+            assert_eq!(runtime.get(child).unwrap().layout.rect.x, expected_x);
+        }
+    }
+
+    #[test]
     fn creating_the_root_produces_damage_on_first_compute() {
         let mut runtime = Runtime::new();
         let root = full_size_root(&mut runtime);

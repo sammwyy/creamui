@@ -366,6 +366,29 @@ impl Painter for SceneRecorder {
         }));
     }
 
+    fn stroke_rect_inside(&mut self, rect: Rect, color: Color, width: f32, corner_radius: f32) {
+        if color.a == 0 || width <= 0.0 {
+            return;
+        }
+        let bounds = self.bounds(rect);
+        if bounds.is_empty() {
+            return;
+        }
+        self.push(Primitive::Quad(Quad {
+            bounds,
+            background: TRANSPARENT,
+            gradient: None,
+            radius: (corner_radius * self.scale)
+                .min(bounds.width() / 2.0)
+                .min(bounds.height() / 2.0)
+                .max(0.0),
+            border_width: (width * self.scale)
+                .min(bounds.width())
+                .min(bounds.height()),
+            border_color: color,
+        }));
+    }
+
     fn stroke_rect(&mut self, rect: Rect, color: Color, width: f32, corner_radius: f32) {
         if color.a == 0 || width <= 0.0 {
             return;

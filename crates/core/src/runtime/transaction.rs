@@ -216,6 +216,15 @@ impl<'a> RuntimeTransaction<'a> {
                     if let Some(taffy_node) =
                         self.runtime.nodes.get(node).map(|n| n.layout.taffy_node)
                     {
+                        let border = self
+                            .runtime
+                            .nodes
+                            .get(node)
+                            .and_then(|n| n.paint_style.border);
+                        let style = crate::style::layout_with_border(
+                            style,
+                            border.map(|border| border.width),
+                        );
                         let _ = self
                             .runtime
                             .taffy
@@ -227,12 +236,30 @@ impl<'a> RuntimeTransaction<'a> {
                 }
             }
             Mutation::SetPaintStyle { node, style } => {
+                let before = self
+                    .runtime
+                    .nodes
+                    .get(node)
+                    .and_then(|n| n.paint_style.border);
                 let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
                     let changed = n.paint_style != style;
                     n.paint_style = style;
                     changed
                 });
                 if changed {
+                    if before != style.border {
+                        if let Some(current) = self.runtime.nodes.get(node) {
+                            let layout = crate::style::layout_with_border(
+                                current.layout_style.clone(),
+                                style.border.map(|border| border.width),
+                            );
+                            let _ = self.runtime.taffy.set_style(
+                                current.layout.taffy_node,
+                                crate::style::normalize_aspect_ratio(layout),
+                            );
+                            self.touch(node, DirtyFlags::LAYOUT);
+                        }
+                    }
                     self.touch(node, DirtyFlags::PAINT);
                 }
             }

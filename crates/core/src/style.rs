@@ -656,6 +656,10 @@ pub struct Border {
 
 impl Border {
     pub fn new(color: impl Into<ColorValue>, width: f32) -> Self {
+        assert!(
+            width.is_finite() && width >= 0.0,
+            "border width must be finite and non-negative"
+        );
         Self {
             color: color.into(),
             width,
@@ -937,6 +941,25 @@ impl Style {
         Self::default()
     }
 
+    pub(crate) fn border_width(&self) -> Option<f32> {
+        [
+            self.paint.border,
+            self.states.hover.paint.border,
+            self.states.pressed.paint.border,
+            self.states.focus.paint.border,
+            self.states.disabled.paint.border,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|border| border.width)
+        .filter(|width| width.is_finite() && *width >= 0.0)
+        .max_by(f32::total_cmp)
+    }
+
+    pub(crate) fn layout_with_border(&self) -> crate::layout::Style {
+        layout_with_border(self.layout.clone(), self.border_width())
+    }
+
     pub fn layout(mut self, layout: crate::layout::Style) -> Self {
         self.layout = layout;
         self
@@ -997,6 +1020,22 @@ pub(crate) fn normalize_aspect_ratio(mut style: crate::layout::Style) -> crate::
         style.aspect_ratio = None;
     }
     style
+}
+
+pub(crate) fn layout_with_border(
+    mut layout: crate::layout::Style,
+    width: Option<f32>,
+) -> crate::layout::Style {
+    if let Some(width) = width {
+        let width = crate::layout::LengthPercentage::Length(width);
+        layout.border = crate::layout::Rect {
+            top: width,
+            right: width,
+            bottom: width,
+            left: width,
+        };
+    }
+    layout
 }
 
 impl From<crate::layout::Style> for Style {
@@ -1187,7 +1226,11 @@ impl StyleProp {
             if parts.next().is_some() {
                 return Err(StyleParseError(format!("invalid border `{value}`")));
             }
-            Ok(Border::new(color.parse::<ColorValue>()?, number(width)?))
+            let width = number(width)?;
+            if !width.is_finite() || width < 0.0 {
+                return Err(StyleParseError(format!("invalid border width `{width}`")));
+            }
+            Ok(Border::new(color.parse::<ColorValue>()?, width))
         };
         let align_items = |value: &str| match value.trim() {
             "start" => Ok(crate::layout::AlignItems::Start),
@@ -1532,6 +1575,13 @@ mod tests {
             assert_eq!(style.layout.box_sizing, expected);
         }
         assert!(StyleProp::parse("box-sizing", "padding-box").is_err());
+    }
+
+    #[test]
+    fn border_width_must_be_valid() {
+        for value in ["-1px #ffffff", "NaNpx #ffffff", "infpx #ffffff"] {
+            assert!(StyleProp::parse("border", value).is_err());
+        }
     }
 
     #[test]

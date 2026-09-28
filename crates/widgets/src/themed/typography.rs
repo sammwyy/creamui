@@ -85,6 +85,10 @@ impl Widget for Pre {
         self.inner.paint(painter, rect);
     }
 
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content);
+    }
+
     fn measure(&self) -> Option<creamui_core::MeasureFn> {
         self.inner.measure()
     }
@@ -135,6 +139,10 @@ impl Widget for Link {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect);
+    }
+
+    fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
+        self.inner.paint_content(painter, rect, content);
     }
 
     fn measure(&self) -> Option<creamui_core::MeasureFn> {

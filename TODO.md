@@ -2,8 +2,6 @@
 
 - Extend radial backgrounds beyond two-stop, farthest-corner circles to
   ellipses, explicit radii, additional color stops, and repeating gradients.
-- Common paint borders do not reserve layout space; CSS border-box sizing
-  currently accounts only for borders declared in `Style::layout.border`.
 - CPU linear gradients interpolate unpremultiplied colors in tiny-skia,
   while GPU linear gradients interpolate premultiplied colors. Align their
   interpolation when stop alpha values differ, as radial gradients do.

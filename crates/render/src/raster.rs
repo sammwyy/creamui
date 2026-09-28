@@ -763,6 +763,19 @@ mod tests {
     }
 
     #[test]
+    fn inside_border_keeps_its_outer_edge_within_the_layout_box() {
+        let list = record(|p| {
+            p.fill_rect(rect(5.0, 5.0, 20.0, 20.0), Color::rgb(255, 255, 255), 0.0);
+            p.stroke_rect_inside(rect(5.0, 5.0, 20.0, 20.0), Color::rgb(255, 0, 0), 4.0, 0.0);
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert_eq!(rgba(&raster, 4, 15), [10, 20, 30, 255]);
+        assert_eq!(rgba(&raster, 5, 15), [255, 0, 0, 255]);
+        assert_eq!(rgba(&raster, 10, 15), [255, 255, 255, 255]);
+    }
+
+    #[test]
     fn radial_gradient_transparency_uses_premultiplied_colors() {
         let mut recorder = SceneRecorder::new();
         recorder.begin(40, 30, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());

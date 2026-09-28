@@ -87,7 +87,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             children.push(child);
         }
         let node_id = tree
-            .new_with_children(constrain_inflow(new_style.layout.clone()), &child_ids)
+            .new_with_children(constrain_inflow(new_style.layout_with_border()), &child_ids)
             .expect("taffy node creation is infallible for well-formed styles");
         tree.set_node_context(node_id, new_measure)
             .expect("setting the context of a freshly created node should not fail");
@@ -115,9 +115,13 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         } else {
             max_paint_overflow(&new_style)
         };
-    if old.style.layout != new_style.layout {
-        tree.set_style(old.node_id, constrain_inflow(new_style.layout.clone()))
-            .expect("updating the style of an existing node should not fail");
+    if old.style.layout != new_style.layout || old.style.border_width() != new_style.border_width()
+    {
+        tree.set_style(
+            old.node_id,
+            constrain_inflow(new_style.layout_with_border()),
+        )
+        .expect("updating the style of an existing node should not fail");
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.taffy_style_writes += 1);
     }
@@ -276,10 +280,9 @@ thread_local! {
 /// How far a border or outline paints outside its own rect.
 fn paint_overflow(paint: &crate::PaintStyle) -> f32 {
     let decoration = paint
-        .border
-        .map(|b| b.width / 2.0)
-        .unwrap_or(0.0)
-        .max(paint.outline.map(|o| o.width * 1.5).unwrap_or(0.0));
+        .outline
+        .map(|outline| outline.width * 1.5)
+        .unwrap_or(0.0);
     let shadow = paint
         .box_shadow
         .map(|shadow| {
@@ -394,14 +397,31 @@ fn paint_instance(
                 }
             }
         }
-        instance.widget.paint(painter, rect);
+        let content = Rect {
+            x: rect.x + layout.border.left + layout.padding.left,
+            y: rect.y + layout.border.top + layout.padding.top,
+            width: (rect.width
+                - layout.border.left
+                - layout.border.right
+                - layout.padding.left
+                - layout.padding.right)
+                .max(0.0),
+            height: (rect.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.padding.top
+                - layout.padding.bottom)
+                .max(0.0),
+        };
+        instance.widget.paint_content(painter, rect, content);
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.paint_nodes_recorded += 1);
         // Borders and outlines sit over component-specific content, matching
         // CSS box painting and preventing edge-to-edge content from hiding
         // the common decoration.
         if let Some(border) = resolved.paint.border {
-            painter.stroke_rect(rect, border.color.resolve(&colors), border.width, radius);
+            let width = border.width.max(0.0).min(rect.width).min(rect.height);
+            painter.stroke_rect_inside(rect, border.color.resolve(&colors), width, radius);
         }
         if let Some(outline) = resolved.paint.outline {
             painter.stroke_rect(
@@ -1063,10 +1083,10 @@ mod tests {
         }
     }
 
-    struct BorderedWidget {
-        border_width: f32,
+    struct OutlinedWidget {
+        outline_width: f32,
     }
-    impl crate::widget::Widget for BorderedWidget {
+    impl crate::widget::Widget for OutlinedWidget {
         fn style(&self) -> crate::Style {
             crate::Style {
                 layout: taffy::style::Style {
@@ -1078,7 +1098,7 @@ mod tests {
                 },
                 ..Default::default()
             }
-            .border(Color::rgb(0, 0, 0), self.border_width)
+            .outline(Color::rgb(0, 0, 0), self.outline_width)
         }
         fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
     }
@@ -1100,28 +1120,25 @@ mod tests {
     }
 
     #[test]
-    fn a_clipping_containers_child_clip_covers_the_childs_border_overflow() {
+    fn a_clipping_containers_child_clip_covers_the_childs_outline_overflow() {
         let mut renderer = Renderer::new();
         let mut painter = ClipRecorder::default();
         renderer.render(
             Box::new(Root {
                 children: vec![Box::new(ClippingRoot {
-                    child: Some(Box::new(BorderedWidget { border_width: 8.0 })),
+                    child: Some(Box::new(OutlinedWidget { outline_width: 8.0 })),
                 })],
             }),
             VIEWPORT,
             &mut painter,
         );
 
-        // The container shrinks to fit its 10x10 child exactly, so its own
-        // edge sits flush against the child's — a naive clip there would cut
-        // off the border's overflow past that edge.
         let clip = painter
             .last_push_clip_rect
             .expect("a clipping container pushes a clip");
         assert!(
             clip.width > 10.0 && clip.height > 10.0,
-            "child clip {clip:?} must have headroom for the child's border overflow"
+            "child clip {clip:?} must have headroom for the child's outline overflow"
         );
     }
 

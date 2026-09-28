@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Text shaping selects another installed font per missing glyph cluster, and
+  the CPU/GPU glyph caches rasterize it with that face. Registered font
+  changes invalidate the affected layout caches.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

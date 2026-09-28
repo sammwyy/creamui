@@ -26,6 +26,12 @@ pub struct FontFace {
     key: CacheKey,
 }
 
+impl std::fmt::Debug for FontFace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FontFace").field("id", &self.id()).finish()
+    }
+}
+
 /// Vertical metrics of one line of text, in pixels, rounded up to whole
 /// pixels so baselines land on the pixel grid.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::{env, fs};
+use swash::text::cluster::{CharCluster, Status};
 
 /// Generic UI family resolved from the operating system on first use.
 ///
@@ -50,12 +51,20 @@ impl std::error::Error for FontError {}
 
 struct Registry {
     faces: HashMap<(String, FontWeight), Rc<FontFace>>,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct FallbackCache {
+    files: HashMap<PathBuf, Option<Rc<FontFace>>>,
+    chars: HashMap<(u64, u64, char), Option<Rc<FontFace>>>,
 }
 
 impl Registry {
     fn with_defaults() -> Self {
         Registry {
             faces: HashMap::new(),
+            generation: 0,
         }
     }
 }
@@ -63,6 +72,7 @@ impl Registry {
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::with_defaults());
     static PREFERRED_FAMILY: RefCell<Option<String>> = RefCell::new(None);
+    static FALLBACK_FACES: RefCell<FallbackCache> = RefCell::new(FallbackCache::default());
 }
 
 /// Registers `bytes` as `family`'s face for `weight`, replacing any face
@@ -90,11 +100,89 @@ pub fn register_file(
 
 fn register_face(family: String, weight: FontWeight, face: FontFace) {
     REGISTRY.with(|registry| {
-        registry
-            .borrow_mut()
-            .faces
-            .insert((family, weight), Rc::new(face));
+        let mut registry = registry.borrow_mut();
+        registry.faces.insert((family, weight), Rc::new(face));
+        registry.generation += 1;
     });
+}
+
+/// Changes whenever a face is registered, including lazy system loading.
+pub fn registry_generation() -> u64 {
+    REGISTRY.with(|registry| registry.borrow().generation)
+}
+
+fn fallback_face(primary: &FontFace, cluster: &mut CharCluster) -> Option<Rc<FontFace>> {
+    let primary_font = primary.font_ref();
+    let primary_charmap = primary_font.charmap();
+    let primary_status = cluster.map(|ch| primary_charmap.map(ch));
+    if primary_status == Status::Complete || cluster.info().is_whitespace() {
+        return None;
+    }
+    let cache_key = (cluster.chars().len() == 1)
+        .then(|| (primary.id(), registry_generation(), cluster.chars()[0].ch));
+    if let Some(cached) = cache_key
+        .and_then(|key| FALLBACK_FACES.with(|cache| cache.borrow().chars.get(&key).cloned()))
+    {
+        if let Some(face) = &cached {
+            let font = face.font_ref();
+            let charmap = font.charmap();
+            cluster.map(|ch| charmap.map(ch));
+        }
+        return cached;
+    }
+    let mut best = None;
+    let registered: Vec<_> =
+        REGISTRY.with(|registry| registry.borrow().faces.values().cloned().collect());
+    for face in registered {
+        if face.id() == primary.id() {
+            continue;
+        }
+        let font = face.font_ref();
+        let charmap = font.charmap();
+        match cluster.map(|ch| charmap.map(ch)) {
+            Status::Complete => return remember_fallback(cache_key, Some(face)),
+            Status::Keep => best = Some(face),
+            Status::Discard => {}
+        }
+    }
+    for (_, path) in system_font_index() {
+        let face = FALLBACK_FACES.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            cache
+                .files
+                .entry(path.clone())
+                .or_insert_with(|| FontFace::from_path(path).ok().map(Rc::new))
+                .clone()
+        });
+        let Some(face) = face else { continue };
+        if face.id() == primary.id() {
+            continue;
+        }
+        let font = face.font_ref();
+        let charmap = font.charmap();
+        match cluster.map(|ch| charmap.map(ch)) {
+            Status::Complete => return remember_fallback(cache_key, Some(face)),
+            Status::Keep => best = Some(face),
+            Status::Discard => {}
+        }
+    }
+    remember_fallback(cache_key, best)
+}
+
+fn remember_fallback(
+    key: Option<(u64, u64, char)>,
+    face: Option<Rc<FontFace>>,
+) -> Option<Rc<FontFace>> {
+    if let Some(key) = key {
+        FALLBACK_FACES.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.chars.len() >= 4096 {
+                cache.chars.clear();
+            }
+            cache.chars.insert(key, face.clone());
+        });
+    }
+    face
 }
 
 /// Resolves a CSS-style comma-separated family stack against the registry and

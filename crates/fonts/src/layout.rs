@@ -27,6 +27,7 @@ struct LayoutCache {
 
 struct CachedLayout {
     face: u64,
+    registry_generation: u64,
     text: Box<str>,
     px: u32,
     width: Option<u32>,
@@ -49,9 +50,11 @@ pub fn cached_layout(
         settings.max_width.map(f32::to_bits),
         settings.max_height.map(f32::to_bits),
     );
+    let registry_generation = crate::registry_generation();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (
         face.id(),
+        registry_generation,
         text,
         px_bits,
         width_bits,
@@ -66,6 +69,7 @@ pub fn cached_layout(
         let tick = cache.tick;
         if let Some(entry) = cache.entries.get_mut(&key) {
             if entry.face == face.id()
+                && entry.registry_generation == registry_generation
                 && &*entry.text == text
                 && entry.px == px_bits
                 && entry.width == width_bits
@@ -88,6 +92,7 @@ pub fn cached_layout(
             key,
             CachedLayout {
                 face: face.id(),
+                registry_generation,
                 text: text.into(),
                 px: px_bits,
                 width: width_bits,
@@ -122,6 +127,8 @@ pub struct LayoutSettings {
 #[derive(Clone, Copy, Debug)]
 pub struct PositionedGlyph {
     pub id: u16,
+    /// Zero uses the requested face; other values index [`TextLayout::fallback_faces`].
+    pub face: usize,
     pub x: f32,
     pub y: f32,
     pub byte_offset: usize,
@@ -150,6 +157,7 @@ pub struct Line {
 #[derive(Clone, Debug, Default)]
 pub struct TextLayout {
     pub glyphs: Vec<PositionedGlyph>,
+    pub fallback_faces: Vec<Rc<FontFace>>,
     pub chars: Vec<CharPosition>,
     pub lines: Vec<Line>,
     pub height: f32,
@@ -157,6 +165,7 @@ pub struct TextLayout {
 
 struct ShapedGlyph {
     id: u16,
+    face: usize,
     x: f32,
     y: f32,
     advance: f32,
@@ -173,6 +182,7 @@ struct Cluster {
 struct Shaped {
     clusters: Vec<Cluster>,
     glyphs: Vec<ShapedGlyph>,
+    fallback_faces: Vec<Rc<FontFace>>,
 }
 
 /// Splits `text` into runs of one script each; common and inherited
@@ -197,7 +207,6 @@ fn script_runs(text: &str) -> Vec<(Range<usize>, Script)> {
 
 fn shape(face: &FontFace, text: &str, px: f32) -> Shaped {
     let font = face.font_ref();
-    let charmap = font.charmap();
     let tokens: Vec<Token> = text
         .char_indices()
         .zip(analyze(text.chars()))
@@ -212,45 +221,77 @@ fn shape(face: &FontFace, text: &str, px: f32) -> Shaped {
     let mut shaped = Shaped {
         clusters: Vec::new(),
         glyphs: Vec::new(),
+        fallback_faces: Vec::new(),
     };
     SHAPER.with(|context| {
         let mut context = context.borrow_mut();
         let mut cluster = CharCluster::new();
         for (range, script) in script_runs(text) {
-            let mut shaper = context.builder(font).script(script).size(px).build();
             let first = tokens.partition_point(|token| (token.offset as usize) < range.start);
             let last = tokens.partition_point(|token| (token.offset as usize) < range.end);
             let mut parser = Parser::new(script, tokens[first..last].iter().copied());
+            let mut prepared = Vec::new();
             while parser.next(&mut cluster) {
-                cluster.map(|ch| charmap.map(ch));
-                shaper.add_cluster(&cluster);
-            }
-            shaper.shape_with(|glyph_cluster| {
-                let start = shaped.glyphs.len();
-                let control = glyph_cluster.info.whitespace() == Whitespace::Newline;
-                if !control {
+                let fallback = crate::fallback_face(face, &mut cluster);
+                let face_index = fallback.map_or(0, |fallback| {
                     shaped
-                        .glyphs
-                        .extend(glyph_cluster.glyphs.iter().map(|glyph| ShapedGlyph {
-                            id: glyph.id,
-                            x: glyph.x,
-                            y: glyph.y,
-                            advance: glyph.advance,
-                        }));
-                }
-                let source = glyph_cluster.source;
-                shaped.clusters.push(Cluster {
-                    source: source.start as usize..source.end as usize,
-                    advance: if control {
-                        0.0
-                    } else {
-                        glyph_cluster.advance()
-                    },
-                    glyphs: start..shaped.glyphs.len(),
-                    boundary: glyph_cluster.info.boundary(),
-                    whitespace: glyph_cluster.info.is_whitespace(),
+                        .fallback_faces
+                        .iter()
+                        .position(|candidate| candidate.id() == fallback.id())
+                        .map_or_else(
+                            || {
+                                shaped.fallback_faces.push(fallback);
+                                shaped.fallback_faces.len()
+                            },
+                            |index| index + 1,
+                        )
                 });
-            });
+                prepared.push((cluster, face_index));
+            }
+            let mut start_index = 0;
+            while start_index < prepared.len() {
+                let face_index = prepared[start_index].1;
+                let end_index = (start_index + 1..prepared.len())
+                    .find(|&i| prepared[i].1 != face_index)
+                    .unwrap_or(prepared.len());
+                let selected = if face_index == 0 {
+                    font
+                } else {
+                    shaped.fallback_faces[face_index - 1].font_ref()
+                };
+                let mut shaper = context.builder(selected).script(script).size(px).build();
+                for (cluster, _) in &prepared[start_index..end_index] {
+                    shaper.add_cluster(cluster);
+                }
+                shaper.shape_with(|glyph_cluster| {
+                    let start = shaped.glyphs.len();
+                    let control = glyph_cluster.info.whitespace() == Whitespace::Newline;
+                    if !control {
+                        shaped
+                            .glyphs
+                            .extend(glyph_cluster.glyphs.iter().map(|glyph| ShapedGlyph {
+                                id: glyph.id,
+                                face: face_index,
+                                x: glyph.x,
+                                y: glyph.y,
+                                advance: glyph.advance,
+                            }));
+                    }
+                    let source = glyph_cluster.source;
+                    shaped.clusters.push(Cluster {
+                        source: source.start as usize..source.end as usize,
+                        advance: if control {
+                            0.0
+                        } else {
+                            glyph_cluster.advance()
+                        },
+                        glyphs: start..shaped.glyphs.len(),
+                        boundary: glyph_cluster.info.boundary(),
+                        whitespace: glyph_cluster.info.is_whitespace(),
+                    });
+                });
+                start_index = end_index;
+            }
         }
     });
     shaped
@@ -321,6 +362,7 @@ pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -
 
     let mut result = TextLayout {
         glyphs: Vec::with_capacity(shaped.glyphs.len()),
+        fallback_faces: shaped.fallback_faces,
         chars: Vec::with_capacity(text.len()),
         lines: Vec::with_capacity(starts.len()),
         height,
@@ -344,6 +386,7 @@ pub fn layout(face: &FontFace, text: &str, px: f32, settings: &LayoutSettings) -
             for glyph in &shaped.glyphs[cluster.glyphs.clone()] {
                 result.glyphs.push(PositionedGlyph {
                     id: glyph.id,
+                    face: glyph.face,
                     x: pen + glyph.x,
                     y: baseline - glyph.y,
                     byte_offset: cluster.source.start,
@@ -541,5 +584,34 @@ mod tests {
         assert_eq!(runs.len(), 3);
         assert_eq!(runs[0], (0..3, Script::Latin));
         assert_eq!(runs[1].1, Script::Han);
+    }
+
+    #[test]
+    fn missing_glyph_uses_an_installed_face_with_coverage() {
+        let primary = resolve(DEFAULT_FAMILY, FontWeight::Regular);
+        let primary_font = primary.font_ref();
+        let primary_charmap = primary_font.charmap();
+        let missing = ['\u{0905}', '\u{05d0}', '\u{4e2d}', '\u{1f600}']
+            .into_iter()
+            .find(|&ch| {
+                primary_charmap.map(ch) == 0
+                    && crate::system_font_index().iter().any(|(_, path)| {
+                        FontFace::from_path(path)
+                            .ok()
+                            .is_some_and(|face| face.font_ref().charmap().map(ch) != 0)
+                    })
+            });
+        let ch = missing.expect("an installed font must cover a script absent from the UI face");
+
+        let text = format!("A{ch}B");
+        let layout = layout(&primary, &text, 16.0, &LayoutSettings::default());
+        let fallback = layout
+            .glyphs
+            .iter()
+            .find(|glyph| glyph.byte_offset == 1)
+            .expect("missing character should produce a glyph");
+        assert!(fallback.face > 0);
+        assert_ne!(fallback.id, 0);
+        assert_ne!(layout.fallback_faces[fallback.face - 1].id(), primary.id());
     }
 }

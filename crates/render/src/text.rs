@@ -57,6 +57,7 @@ pub struct TextLayout {
 
 struct LayoutEntry {
     face: u64,
+    registry_generation: u64,
     text: Box<str>,
     size: u32,
     width: u32,
@@ -67,6 +68,7 @@ struct LayoutEntry {
 
 pub struct TextSystem {
     faces: Vec<(Option<String>, bool, Rc<FontFace>)>,
+    face_generation: u64,
     scaler: ScaleContext,
     layouts: FxHashMap<u64, LayoutEntry>,
     glyphs: FxHashMap<GlyphKey, (Rc<GlyphBitmap>, u64)>,
@@ -83,6 +85,7 @@ impl TextSystem {
     pub fn new() -> Self {
         Self {
             faces: Vec::new(),
+            face_generation: creamui_fonts::registry_generation(),
             scaler: ScaleContext::new(),
             layouts: FxHashMap::default(),
             glyphs: FxHashMap::default(),
@@ -96,6 +99,11 @@ impl TextSystem {
     }
 
     fn face(&mut self, family: Option<&str>, bold: bool) -> Rc<FontFace> {
+        let generation = creamui_fonts::registry_generation();
+        if self.face_generation != generation {
+            self.faces.clear();
+            self.face_generation = generation;
+        }
         if let Some((_, _, face)) = self
             .faces
             .iter()
@@ -112,6 +120,7 @@ impl TextSystem {
             .map(str::to_owned)
             .unwrap_or_else(creamui_fonts::preferred_family);
         let face = creamui_fonts::resolve(&preferred, weight);
+        self.face_generation = creamui_fonts::registry_generation();
         self.faces
             .push((family.map(str::to_owned), bold, face.clone()));
         face
@@ -170,13 +179,23 @@ impl TextSystem {
     ) -> Rc<TextLayout> {
         let face = self.face(family, bold);
         let face_id = face.id();
+        let registry_generation = creamui_fonts::registry_generation();
         let (size_bits, width_bits) = (size.to_bits(), width.to_bits());
         let mut hasher = FxHasher::default();
-        (face_id, text, size_bits, width_bits, align as u8).hash(&mut hasher);
+        (
+            face_id,
+            registry_generation,
+            text,
+            size_bits,
+            width_bits,
+            align as u8,
+        )
+            .hash(&mut hasher);
         let hash = hasher.finish();
         let frame = self.frame;
         if let Some(entry) = self.layouts.get_mut(&hash) {
             if entry.face == face_id
+                && entry.registry_generation == registry_generation
                 && entry.size == size_bits
                 && entry.width == width_bits
                 && entry.align == align
@@ -207,12 +226,17 @@ impl TextSystem {
         let mut ink = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
         let mut glyphs = Vec::with_capacity(shaped.glyphs.len());
         for g in &shaped.glyphs {
+            let glyph_face = if g.face == 0 {
+                &face
+            } else {
+                &shaped.fallback_faces[g.face - 1]
+            };
             let key = GlyphKey {
-                face: face_id,
+                face: glyph_face.id(),
                 glyph: g.id,
                 px: size_bits,
             };
-            let bitmap = self.glyph(&face, key, size);
+            let bitmap = self.glyph(glyph_face, key, size);
             if bitmap.width == 0 || bitmap.height == 0 {
                 continue;
             }
@@ -243,6 +267,7 @@ impl TextSystem {
             hash,
             LayoutEntry {
                 face: face_id,
+                registry_generation,
                 text: text.into(),
                 size: size_bits,
                 width: width_bits,
@@ -314,5 +339,30 @@ mod tests {
         }
         assert_eq!(text.cached_layouts(), 0);
         assert_eq!(text.cached_glyphs(), 0);
+    }
+
+    #[test]
+    fn rasterizes_fallback_glyph_with_its_own_face() {
+        let face = creamui_fonts::resolve(creamui_fonts::DEFAULT_FAMILY, FontWeight::Regular);
+        let chosen = ['\u{0905}', '\u{05d0}', '\u{4e2d}', '\u{1f600}']
+            .into_iter()
+            .find_map(|ch| {
+                let sample = ch.to_string();
+                let shaped =
+                    creamui_fonts::layout(&face, &sample, 18.0, &LayoutSettings::default());
+                shaped
+                    .glyphs
+                    .first()
+                    .filter(|glyph| glyph.face > 0)
+                    .map(|glyph| (sample, shaped.fallback_faces[glyph.face - 1].id()))
+            });
+        let (sample, fallback_id) =
+            chosen.expect("an installed font must cover a script absent from the UI face");
+
+        let mut text = TextSystem::new();
+        let layout = text.layout(None, false, &sample, 18.0, 100.0, TextAlign::Start);
+        assert!(!layout.glyphs.is_empty());
+        assert_eq!(layout.glyphs[0].bitmap.key.face, fallback_id);
+        assert_ne!(layout.glyphs[0].bitmap.key.face, face.id());
     }
 }

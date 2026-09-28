@@ -118,9 +118,19 @@ impl ImageNode {
 /// Payload for a node not (yet) expressed as one of [`NodeKind`]'s other
 /// primitives — e.g. one translated wholesale from a legacy `Widget` by
 /// [`super::mount::mount_legacy_widget`].
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct CustomNode {
     pub label: &'static str,
+    pub(super) widget: Option<Rc<dyn crate::Widget>>,
+}
+
+impl std::fmt::Debug for CustomNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomNode")
+            .field("label", &self.label)
+            .field("has_widget", &self.widget.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +149,7 @@ pub struct LayoutState {
     pub measure_fingerprint: Option<u64>,
     /// Window-space rect as of the last [`super::Runtime::compute_layout`].
     pub rect: crate::Rect,
+    pub content_rect: crate::Rect,
     pub previous_rect: crate::Rect,
     /// Layout epoch as of the last time `rect` actually changed.
     pub last_layout_epoch: u64,
@@ -241,6 +252,7 @@ impl RuntimeNode {
                 taffy_node,
                 measure_fingerprint: None,
                 rect: crate::Rect::default(),
+                content_rect: crate::Rect::default(),
                 previous_rect: crate::Rect::default(),
                 last_layout_epoch: 0,
                 effective_transform: super::mutation::Transform2D::default(),

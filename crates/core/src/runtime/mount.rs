@@ -5,8 +5,8 @@ use crate::BoxedWidget;
 
 /// Translates a legacy `Widget` subtree into the runtime tree, once. This
 /// is a one-shot adapter (not a retained diff against a previous mount):
-/// the widget is fully consumed, and the runtime tree becomes the only
-/// place its style/structure lives afterward.
+/// the runtime tree becomes the only place its style/structure lives
+/// afterward. Widgets without a primitive kind are retained for painting.
 pub fn mount_legacy_widget(
     tx: &mut RuntimeTransaction,
     mut widget: BoxedWidget,
@@ -16,10 +16,21 @@ pub fn mount_legacy_widget(
     crate::metrics::record(|m| m.legacy_widgets_mounted += 1);
 
     let style = widget.style();
-    let kind = widget
-        .legacy_node_kind()
-        .unwrap_or_else(|| NodeKind::Custom(CustomNode::default()));
+    let kind = widget.legacy_node_kind();
     let child_widgets = widget.children();
+    let measure = widget.measure();
+    let measure_fingerprint = widget.measure_fingerprint();
+    let kind = match kind {
+        Some(NodeKind::Custom(mut custom)) => {
+            custom.widget = Some(std::rc::Rc::from(widget));
+            NodeKind::Custom(custom)
+        }
+        Some(kind) => kind,
+        None => NodeKind::Custom(CustomNode {
+            widget: Some(std::rc::Rc::from(widget)),
+            ..Default::default()
+        }),
+    };
 
     let id = tx.create_node(kind);
     tx.apply(Mutation::SetLayoutStyle {
@@ -34,6 +45,13 @@ pub fn mount_legacy_widget(
         node: id,
         style: style.typography,
     });
+    if measure.is_some() {
+        tx.apply(Mutation::SetMeasure {
+            node: id,
+            measure,
+            fingerprint: measure_fingerprint,
+        });
+    }
 
     if let Some(parent) = parent {
         tx.insert_child(parent, id, None);
@@ -49,7 +67,7 @@ pub fn mount_legacy_widget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{Runtime, TextNode};
+    use crate::runtime::{PaintOp, PaintPrimitive, Runtime, TextNode};
     use crate::{Painter, Rect, Widget};
 
     struct Branch {
@@ -128,6 +146,123 @@ mod tests {
             runtime.get(root).unwrap().kind,
             NodeKind::Custom(_)
         ));
+    }
+
+    struct ContentWidget;
+
+    impl Widget for ContentWidget {
+        fn style(&self) -> crate::Style {
+            let mut layout = taffy::style::Style::default();
+            layout.size.width = taffy::style::Dimension::Length(40.0);
+            layout.size.height = taffy::style::Dimension::Length(30.0);
+            layout.padding = taffy::geometry::Rect {
+                left: taffy::style::LengthPercentage::Length(5.0),
+                right: taffy::style::LengthPercentage::Length(5.0),
+                top: taffy::style::LengthPercentage::Length(5.0),
+                bottom: taffy::style::LengthPercentage::Length(5.0),
+            };
+            layout.into()
+        }
+
+        fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+
+        fn paint_content(&self, painter: &mut dyn Painter, _: Rect, content: Rect) {
+            painter.fill_rect(content, creamui_theme::Color::rgb(1, 2, 3), 0.0);
+        }
+    }
+
+    #[test]
+    fn custom_widget_paints_its_resolved_content_box_after_mount() {
+        let mut runtime = Runtime::new();
+        let node = mount_legacy_widget(&mut runtime.transaction(), Box::new(ContentWidget), None);
+        runtime.set_root(Some(node));
+        runtime.compute_layout(crate::Size {
+            width: 100.0,
+            height: 100.0,
+        });
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::Quad(quad)) = &fragment.ops[0] else {
+            panic!("custom widget should record a painted quad");
+        };
+        assert_eq!(
+            quad.rect,
+            Rect {
+                x: 5.0,
+                y: 5.0,
+                width: 30.0,
+                height: 20.0
+            }
+        );
+
+        let mut style = runtime.get(node).unwrap().layout_style.clone();
+        style.padding = taffy::geometry::Rect {
+            left: taffy::style::LengthPercentage::Length(10.0),
+            right: taffy::style::LengthPercentage::Length(10.0),
+            top: taffy::style::LengthPercentage::Length(10.0),
+            bottom: taffy::style::LengthPercentage::Length(10.0),
+        };
+        runtime
+            .transaction()
+            .apply(Mutation::SetLayoutStyle { node, style });
+        runtime.compute_layout(crate::Size {
+            width: 100.0,
+            height: 100.0,
+        });
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::Quad(quad)) = &fragment.ops[0] else {
+            panic!("custom widget should repaint after padding changes");
+        };
+        assert_eq!(
+            quad.rect,
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                width: 20.0,
+                height: 10.0
+            }
+        );
+    }
+
+    struct MeasuredWidget;
+
+    impl Widget for MeasuredWidget {
+        fn style(&self) -> crate::Style {
+            crate::Style::default()
+        }
+
+        fn measure(&self) -> Option<crate::MeasureFn> {
+            Some(Box::new(|_, _| taffy::geometry::Size {
+                width: 11.0,
+                height: 7.0,
+            }))
+        }
+
+        fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+            painter.fill_rect(rect, creamui_theme::Color::rgb(1, 2, 3), 0.0);
+        }
+    }
+
+    #[test]
+    fn custom_widget_keeps_intrinsic_measurement_after_mount() {
+        let mut runtime = Runtime::new();
+        let node = mount_legacy_widget(&mut runtime.transaction(), Box::new(MeasuredWidget), None);
+        runtime.set_root(Some(node));
+        runtime.compute_layout(crate::Size {
+            width: 100.0,
+            height: 100.0,
+        });
+        assert_eq!(runtime.get(node).unwrap().layout.rect.width, 11.0);
+        assert_eq!(runtime.get(node).unwrap().layout.rect.height, 7.0);
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::Quad(quad)) = &fragment.ops[0] else {
+            panic!("measured widget should paint a quad");
+        };
+        assert_eq!(quad.rect.width, 11.0);
+        assert_eq!(quad.rect.height, 7.0);
     }
 
     struct TextWidget {

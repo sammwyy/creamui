@@ -240,6 +240,22 @@ impl Runtime {
                 width: layout.size.width,
                 height: layout.size.height,
             };
+            let content_rect = crate::Rect {
+                x: rect.x + layout.border.left + layout.padding.left,
+                y: rect.y + layout.border.top + layout.padding.top,
+                width: (rect.width
+                    - layout.border.left
+                    - layout.border.right
+                    - layout.padding.left
+                    - layout.padding.right)
+                    .max(0.0),
+                height: (rect.height
+                    - layout.border.top
+                    - layout.border.bottom
+                    - layout.padding.top
+                    - layout.padding.bottom)
+                    .max(0.0),
+            };
             let child_origin = crate::Point {
                 x: rect.x,
                 y: rect.y,
@@ -248,12 +264,13 @@ impl Runtime {
 
             let node = self.nodes.get_mut(id).expect("checked above");
             let on_path = std::mem::take(&mut node.on_layout_path);
-            let moved = node.layout.rect != rect;
+            let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
             if moved {
                 damage.push(node.layout.rect);
                 damage.push(rect);
                 node.layout.previous_rect = node.layout.rect;
                 node.layout.rect = rect;
+                node.layout.content_rect = content_rect;
                 node.layout.last_layout_epoch = self.layout_epoch;
                 node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
                 if node.hit_slot.is_some() {

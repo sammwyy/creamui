@@ -45,6 +45,8 @@ pub struct TextPrimitive {
     pub align: crate::TextAlign,
     pub family: Option<Rc<str>>,
     pub bold: bool,
+    pub italic: bool,
+    pub selection: Option<(std::ops::Range<usize>, creamui_theme::Color)>,
     pub underline: bool,
     pub strikethrough: bool,
 }
@@ -53,6 +55,7 @@ pub struct TextPrimitive {
 pub struct ImagePrimitive {
     pub rect: crate::Rect,
     pub content: ImageContent,
+    pub tint: Option<creamui_theme::Color>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +71,7 @@ pub enum PaintPrimitive {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintOp {
     PushClip(crate::Rect),
+    PushRoundedClip(crate::Rect, f32),
     PopClip,
     PushTransform(super::mutation::Transform2D),
     PopTransform,
@@ -86,10 +90,7 @@ pub struct PaintState {
     pub fragment: Option<PaintFragment>,
 }
 
-/// Regenerates `node`'s fragment from its own style/content. `Custom`
-/// nodes (legacy-mounted `Widget`s) produce an empty fragment — the
-/// widget that could paint them is dropped after
-/// [`super::mount::mount_legacy_widget`] runs.
+/// Regenerates `node`'s fragment from its own style/content.
 pub(super) fn generate_fragment(
     node: &RuntimeNode,
     colors: &creamui_theme::ColorScheme,
@@ -143,6 +144,8 @@ pub(super) fn generate_fragment(
                 align: typography.align.unwrap_or_default(),
                 family: typography.font_family.as_deref().map(Rc::from),
                 bold: typography.bold.unwrap_or(false),
+                italic: typography.italic.unwrap_or(false),
+                selection: None,
                 underline: typography.underline.unwrap_or(false),
                 strikethrough: typography.strikethrough.unwrap_or(false),
             })));
@@ -151,9 +154,17 @@ pub(super) fn generate_fragment(
             ops.push(PaintOp::Primitive(PaintPrimitive::Image(ImagePrimitive {
                 rect,
                 content: image.content.clone(),
+                tint: None,
             })));
         }
-        NodeKind::Container | NodeKind::Custom(_) => {}
+        NodeKind::Custom(custom) => {
+            if let Some(widget) = &custom.widget {
+                let mut recorder = RecordingPainter::new(*colors);
+                widget.paint_content(&mut recorder, rect, node.layout.content_rect);
+                ops.extend(recorder.into_ops());
+            }
+        }
+        NodeKind::Container => {}
     }
 
     if let Some(border) = paint.border {
@@ -201,6 +212,8 @@ impl RecordingPainter {
         align: crate::TextAlign,
         family: Option<&str>,
         bold: bool,
+        italic: bool,
+        selection: Option<(std::ops::Range<usize>, creamui_theme::Color)>,
     ) {
         self.ops
             .push(PaintOp::Primitive(PaintPrimitive::Text(TextPrimitive {
@@ -211,6 +224,8 @@ impl RecordingPainter {
                 align,
                 family: family.map(Rc::from),
                 bold,
+                italic,
+                selection,
                 underline: false,
                 strikethrough: false,
             })));
@@ -297,7 +312,9 @@ impl crate::Painter for RecordingPainter {
         font_size: f32,
         align: crate::TextAlign,
     ) {
-        self.push_text(rect, text, color, font_size, align, None, false);
+        self.push_text(
+            rect, text, color, font_size, align, None, false, false, None,
+        );
     }
 
     fn fill_text_weight(
@@ -308,9 +325,11 @@ impl crate::Painter for RecordingPainter {
         font_size: f32,
         align: crate::TextAlign,
         bold: bool,
-        _italic: bool,
+        italic: bool,
     ) {
-        self.push_text(rect, text, color, font_size, align, None, bold);
+        self.push_text(
+            rect, text, color, font_size, align, None, bold, italic, None,
+        );
     }
 
     fn fill_text_font(
@@ -322,13 +341,80 @@ impl crate::Painter for RecordingPainter {
         align: crate::TextAlign,
         family: Option<&str>,
         bold: bool,
-        _italic: bool,
+        italic: bool,
     ) {
-        self.push_text(rect, text, color, font_size, align, family, bold);
+        self.push_text(
+            rect, text, color, font_size, align, family, bold, italic, None,
+        );
+    }
+
+    fn fill_text_selected(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        selected_color: creamui_theme::Color,
+        selected: std::ops::Range<usize>,
+        font_size: f32,
+        align: crate::TextAlign,
+    ) {
+        self.push_text(
+            rect,
+            text,
+            color,
+            font_size,
+            align,
+            None,
+            false,
+            false,
+            Some((selected, selected_color)),
+        );
+    }
+
+    fn fill_text_selected_font(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        selected_color: creamui_theme::Color,
+        selected: std::ops::Range<usize>,
+        font_size: f32,
+        align: crate::TextAlign,
+        family: Option<&str>,
+    ) {
+        self.push_text(
+            rect,
+            text,
+            color,
+            font_size,
+            align,
+            family,
+            false,
+            false,
+            Some((selected, selected_color)),
+        );
+    }
+
+    fn draw_image(
+        &mut self,
+        rect: crate::Rect,
+        image: &crate::RgbaImage,
+        tint: Option<creamui_theme::Color>,
+    ) {
+        self.ops
+            .push(PaintOp::Primitive(PaintPrimitive::Image(ImagePrimitive {
+                rect,
+                content: ImageContent::Decoded(image.clone()),
+                tint,
+            })));
     }
 
     fn push_clip(&mut self, rect: crate::Rect) {
         self.ops.push(PaintOp::PushClip(rect));
+    }
+
+    fn push_clip_rounded(&mut self, rect: crate::Rect, radius: f32) {
+        self.ops.push(PaintOp::PushRoundedClip(rect, radius));
     }
 
     fn pop_clip(&mut self) {
@@ -407,6 +493,8 @@ mod recording_painter_tests {
                 align: crate::TextAlign::Start,
                 family: None,
                 bold: true,
+                italic: false,
+                selection: None,
                 underline: false,
                 strikethrough: false,
             }))]
@@ -443,9 +531,70 @@ mod recording_painter_tests {
                 align: crate::TextAlign::Start,
                 family: Some(Rc::from("Inter")),
                 bold: true,
+                italic: false,
+                selection: None,
                 underline: false,
                 strikethrough: false,
             }))]
         );
+    }
+
+    #[test]
+    fn recording_painter_keeps_italic_selection_and_image_pixels() {
+        let mut painter = RecordingPainter::new(creamui_theme::ColorScheme::default());
+        let rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 20.0,
+        };
+        let color = creamui_theme::Color::rgb(1, 2, 3);
+        painter.fill_text_font(
+            rect,
+            "hi",
+            color,
+            14.0,
+            crate::TextAlign::Start,
+            None,
+            false,
+            true,
+        );
+        painter.fill_text_selected_font(
+            rect,
+            "hello",
+            color,
+            creamui_theme::Color::rgb(4, 5, 6),
+            1..4,
+            14.0,
+            crate::TextAlign::Start,
+            Some("Inter"),
+        );
+        let image = crate::RgbaImage::new(1, 1, vec![1, 2, 3, 4]).unwrap();
+        painter.push_clip_rounded(rect, 5.0);
+        painter.draw_image(rect, &image, Some(color));
+        painter.pop_clip();
+
+        let ops = painter.into_ops();
+        let PaintOp::Primitive(PaintPrimitive::Text(italic)) = &ops[0] else {
+            panic!("expected italic text");
+        };
+        assert!(italic.italic);
+        let PaintOp::Primitive(PaintPrimitive::Text(selected)) = &ops[1] else {
+            panic!("expected selected text");
+        };
+        assert_eq!(
+            selected.selection,
+            Some((1..4, creamui_theme::Color::rgb(4, 5, 6)))
+        );
+        assert_eq!(selected.family.as_deref(), Some("Inter"));
+        assert_eq!(ops[2], PaintOp::PushRoundedClip(rect, 5.0));
+        let PaintOp::Primitive(PaintPrimitive::Image(recorded)) = &ops[3] else {
+            panic!("expected image");
+        };
+        assert!(
+            matches!(&recorded.content, ImageContent::Decoded(pixels) if pixels.id() == image.id())
+        );
+        assert_eq!(recorded.tint, Some(color));
+        assert_eq!(ops[4], PaintOp::PopClip);
     }
 }

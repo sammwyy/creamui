@@ -47,9 +47,6 @@ Current limitations and work still to do. Implemented changes belong in
   example yet.
 - Connect `ResourceReady::into_mutation` to the application runtime and
   presenter once runtime-backed windows are enabled.
-- If concurrent image loading becomes a real workload, replace
-  `BackgroundImageLoader`'s unbounded thread-per-request model with a bounded
-  pool.
 
 ## ABI and platforms
 

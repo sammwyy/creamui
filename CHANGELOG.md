@@ -19,6 +19,8 @@ All notable changes to CreamUI will be documented in this file.
   the same retained tree operations.
 - C callers can request or clear compositor blur on a live window handle with
   `creamui_window_set_blur`, including a window-wide or rectangular region.
+- Background image decoding now uses a bounded queue and reusable workers,
+  avoiding one unbounded thread per request.
 - Keyboard focus follows a retained widget through keyed sibling insertions
   and removals; `keyed(widget, key)` lets existing controls opt into stable
   identity. Removing the focused widget clears focus.

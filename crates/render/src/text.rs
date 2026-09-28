@@ -189,7 +189,7 @@ impl TextSystem {
 
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.text_layouts += 1);
-        let shaped = creamui_fonts::layout(
+        let shaped = creamui_fonts::cached_layout(
             &face,
             text,
             size,

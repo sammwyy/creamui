@@ -1,6 +1,9 @@
 use crate::FontFace;
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::rc::Rc;
 use swash::shape::ShapeContext;
 use swash::text::cluster::{Boundary, CharCluster, CharInfo, Parser, Token, Whitespace};
 use swash::text::{analyze, Codepoint, Script};
@@ -11,6 +14,91 @@ const WRAP_EPSILON: f32 = 0.001;
 
 thread_local! {
     static SHAPER: RefCell<ShapeContext> = RefCell::new(ShapeContext::new());
+    static LAYOUTS: RefCell<LayoutCache> = RefCell::new(LayoutCache::default());
+}
+
+const MAX_CACHED_LAYOUTS: usize = 2048;
+
+#[derive(Default)]
+struct LayoutCache {
+    entries: HashMap<u64, CachedLayout>,
+    tick: u64,
+}
+
+struct CachedLayout {
+    face: u64,
+    text: Box<str>,
+    px: u32,
+    width: Option<u32>,
+    height: Option<u32>,
+    align: HorizontalAlign,
+    layout: Rc<TextLayout>,
+    used: u64,
+}
+
+/// Shares shaping between widget measurement and the renderer on this thread.
+/// The cache is bounded independently of the renderer's rasterized glyph cache.
+pub fn cached_layout(
+    face: &FontFace,
+    text: &str,
+    px: f32,
+    settings: &LayoutSettings,
+) -> Rc<TextLayout> {
+    let (px_bits, width_bits, height_bits) = (
+        px.to_bits(),
+        settings.max_width.map(f32::to_bits),
+        settings.max_height.map(f32::to_bits),
+    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (
+        face.id(),
+        text,
+        px_bits,
+        width_bits,
+        height_bits,
+        settings.horizontal_align as u8,
+    )
+        .hash(&mut hasher);
+    let key = hasher.finish();
+    LAYOUTS.with(|layouts| {
+        let mut cache = layouts.borrow_mut();
+        cache.tick += 1;
+        let tick = cache.tick;
+        if let Some(entry) = cache.entries.get_mut(&key) {
+            if entry.face == face.id()
+                && &*entry.text == text
+                && entry.px == px_bits
+                && entry.width == width_bits
+                && entry.height == height_bits
+                && entry.align == settings.horizontal_align
+            {
+                entry.used = tick;
+                return entry.layout.clone();
+            }
+        }
+        let shaped = Rc::new(layout(face, text, px, settings));
+        if cache.entries.len() >= MAX_CACHED_LAYOUTS {
+            let mut usage: Vec<u64> = cache.entries.values().map(|entry| entry.used).collect();
+            let middle = usage.len() / 2;
+            usage.select_nth_unstable(middle);
+            let threshold = usage[middle];
+            cache.entries.retain(|_, entry| entry.used > threshold);
+        }
+        cache.entries.insert(
+            key,
+            CachedLayout {
+                face: face.id(),
+                text: text.into(),
+                px: px_bits,
+                width: width_bits,
+                height: height_bits,
+                align: settings.horizontal_align,
+                layout: shaped.clone(),
+                used: tick,
+            },
+        );
+        shaped
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -312,6 +400,38 @@ mod tests {
                 &text[start..end]
             })
             .collect()
+    }
+
+    #[test]
+    fn cached_layout_reuses_shaping_for_equal_requests() {
+        let face = resolve(DEFAULT_FAMILY, FontWeight::Regular);
+        let left = LayoutSettings {
+            max_width: Some(200.0),
+            ..Default::default()
+        };
+        let first = cached_layout(&face, "shared measurement", 16.0, &left);
+        let same = cached_layout(&face, "shared measurement", 16.0, &left);
+        assert!(Rc::ptr_eq(&first, &same));
+        let narrower = cached_layout(
+            &face,
+            "shared measurement",
+            16.0,
+            &LayoutSettings {
+                max_width: Some(80.0),
+                ..left
+            },
+        );
+        assert!(!Rc::ptr_eq(&first, &narrower));
+        let centered = cached_layout(
+            &face,
+            "shared measurement",
+            16.0,
+            &LayoutSettings {
+                horizontal_align: HorizontalAlign::Center,
+                ..left
+            },
+        );
+        assert!(!Rc::ptr_eq(&first, &centered));
     }
 
     #[test]

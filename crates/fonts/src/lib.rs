@@ -6,7 +6,8 @@ mod layout;
 
 pub use face::{FontFace, LineMetrics};
 pub use layout::{
-    layout, CharPosition, HorizontalAlign, LayoutSettings, Line, PositionedGlyph, TextLayout,
+    cached_layout, layout, CharPosition, HorizontalAlign, LayoutSettings, Line, PositionedGlyph,
+    TextLayout,
 };
 
 use std::cell::RefCell;

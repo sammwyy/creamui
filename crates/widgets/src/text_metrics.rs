@@ -11,8 +11,8 @@ fn font(family: Option<&str>) -> Rc<FontFace> {
     creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), FontWeight::Regular)
 }
 
-fn wrapped(face: &FontFace, text: &str, font_size: f32, max_width: f32) -> TextLayout {
-    creamui_fonts::layout(
+fn wrapped(face: &FontFace, text: &str, font_size: f32, max_width: f32) -> Rc<TextLayout> {
+    creamui_fonts::cached_layout(
         face,
         text,
         font_size,

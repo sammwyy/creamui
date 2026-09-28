@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Widget measurement and rendering now reuse a bounded, thread-local shaped
+  text layout cache in `creamui-fonts`; rendering keeps its separate glyph
+  bitmap cache.
 - Text inputs and text areas place text, selections, carets, and pointer
   selection within their layout-resolved padding and borders. Themed defaults
   now declare their spacing as style padding.

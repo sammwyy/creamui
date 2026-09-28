@@ -7,9 +7,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Extend radial backgrounds beyond two-stop, farthest-corner circles to
   ellipses, explicit radii, additional color stops, and repeating gradients.
-- Reuse or share text layouts between `widgets::text_metrics` measurement and
-  the `creamui-render` text cache. Measurement currently builds a new layout
-  on each call.
 - Add bidirectional reordering for right-to-left text and fallback to other
   installed faces when the selected face lacks a glyph.
 

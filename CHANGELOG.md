@@ -4,6 +4,13 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Keyboard focus follows a retained widget through keyed sibling insertions
+  and removals; `keyed(widget, key)` lets existing controls opt into stable
+  identity. Removing the focused widget clears focus.
+- The persistent runtime retains decoded image pixels and legacy `Custom`
+  widgets in paint fragments. Recorded text keeps italic and selection data;
+  image fragments keep fit geometry and clipping. `ImageFit::None` now anchors
+  the original pixels at the top-left as documented.
 - `creamui-platform` now compiles for `wasm32-unknown-unknown`: its winit
   adapter shares one handler implementation between borrowed and owned
   handlers, and its control-flow clock matches `web_time` on the web target.

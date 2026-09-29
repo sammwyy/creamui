@@ -432,3 +432,23 @@ pub struct CWindowOptions {
     /// One of [`CUI_RENDER_BACKEND_GPU`] / [`CUI_RENDER_BACKEND_CPU`].
     pub backend: c_int,
 }
+
+/// Compositor blur request in logical window-local coordinates. The rectangle
+/// fields are used only when `kind` is [`CUI_BLUR_RECT`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CBlurRegion {
+    pub kind: c_int,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Window creation options with an initial compositor blur request. The
+/// original [`CWindowOptions`] layout remains unchanged.
+#[repr(C)]
+pub struct CWindowOptionsV2 {
+    pub base: CWindowOptions,
+    pub blur: CBlurRegion,
+}

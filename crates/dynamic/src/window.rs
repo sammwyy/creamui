@@ -3,9 +3,12 @@
 
 use crate::arena::ClosureArena;
 use crate::runtime::Runtime;
-use crate::value::{Color, RenderBackend, Size, WindowOptions};
+use crate::value::{BlurRegion, Color, RenderBackend, Size, WindowOptions};
 use crate::widget::Widget;
-use creamui_abi::{CWindowOptions, CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU};
+use creamui_abi::{
+    CBlurRegion, CWindowOptions, CWindowOptionsV2, CUI_BLUR_NONE, CUI_BLUR_RECT, CUI_BLUR_WINDOW,
+    CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU,
+};
 use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::os::raw::c_int;
@@ -81,18 +84,49 @@ impl Drop for WindowHandle {
     }
 }
 
-fn c_window_options(options: &WindowOptions, title: &CString) -> CWindowOptions {
-    CWindowOptions {
-        title: title.as_ptr(),
-        width: options.width,
-        height: options.height,
-        resizable: options.resizable as c_int,
-        decorations: options.decorations as c_int,
-        transparent: options.transparent as c_int,
-        backend: match options.backend {
-            RenderBackend::Gpu => CUI_RENDER_BACKEND_GPU,
-            RenderBackend::Cpu => CUI_RENDER_BACKEND_CPU,
+fn c_window_options(options: &WindowOptions, title: &CString) -> CWindowOptionsV2 {
+    let blur = match options.blur {
+        None => CBlurRegion {
+            kind: CUI_BLUR_NONE,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
         },
+        Some(BlurRegion::Window) => CBlurRegion {
+            kind: CUI_BLUR_WINDOW,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        },
+        Some(BlurRegion::Rect {
+            x,
+            y,
+            width,
+            height,
+        }) => CBlurRegion {
+            kind: CUI_BLUR_RECT,
+            x,
+            y,
+            width,
+            height,
+        },
+    };
+    CWindowOptionsV2 {
+        base: CWindowOptions {
+            title: title.as_ptr(),
+            width: options.width,
+            height: options.height,
+            resizable: options.resizable as c_int,
+            decorations: options.decorations as c_int,
+            transparent: options.transparent as c_int,
+            backend: match options.backend {
+                RenderBackend::Gpu => CUI_RENDER_BACKEND_GPU,
+                RenderBackend::Cpu => CUI_RENDER_BACKEND_CPU,
+            },
+        },
+        blur,
     }
 }
 
@@ -184,7 +218,7 @@ impl AppBuilder {
         let title = CString::new(options.title.as_str()).unwrap_or_default();
         let c_options = c_window_options(&options, &title);
         unsafe {
-            (self.rt.sym.app_builder_add_window)(
+            (self.rt.sym.app_builder_add_window_v2)(
                 self.ptr,
                 c_options,
                 background,
@@ -201,5 +235,38 @@ impl AppBuilder {
     /// of them have closed.
     pub fn run(self) {
         unsafe { (self.rt.sym.app_builder_run)(self.ptr) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_options_encode_initial_blur() {
+        let title = CString::new("Blurred").unwrap();
+        let options = WindowOptions {
+            transparent: true,
+            blur: Some(BlurRegion::Rect {
+                x: 3.0,
+                y: 4.0,
+                width: 80.0,
+                height: 40.0,
+            }),
+            ..WindowOptions::default()
+        };
+        let encoded = c_window_options(&options, &title);
+        assert_eq!(encoded.base.title, title.as_ptr());
+        assert_eq!(encoded.base.transparent, 1);
+        assert_eq!(
+            encoded.blur,
+            CBlurRegion {
+                kind: CUI_BLUR_RECT,
+                x: 3.0,
+                y: 4.0,
+                width: 80.0,
+                height: 40.0,
+            }
+        );
     }
 }

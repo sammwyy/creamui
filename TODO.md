@@ -49,9 +49,7 @@ Current limitations and work still to do. Implemented changes belong in
   showcase bundle, but headless Firefox timed out before requesting the page
   in this environment, so no rendered frame has been inspected yet.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland
-  protocols if X11, Windows, or macOS support is wanted. C callers can now
-  update blur on a live handle; initial `CWindowOptions` still has no blur
-  field so it cannot request blur before the window-ready callback.
+  protocols if X11, Windows, or macOS support is wanted.
 - Verify composited per-pixel transparency for the CPU presenter on each
   platform. The code uses ARGB `wl_shm` on Wayland and passes alpha to
   `softbuffer` elsewhere; Windows and macOS behavior still needs a

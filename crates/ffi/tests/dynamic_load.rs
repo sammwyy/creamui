@@ -195,6 +195,21 @@ fn loads_dynamically_and_builds_a_widget_tree() {
 }
 
 #[test]
+fn versioned_window_entrypoints_are_exported() {
+    let lib = unsafe { Library::new(cdylib_path()) }.unwrap();
+    unsafe {
+        assert!(lib.get::<*const c_void>(b"creamui_run_v2").is_ok());
+        assert!(lib
+            .get::<*const c_void>(b"creamui_app_builder_add_window_v2")
+            .is_ok());
+        assert!(lib.get::<*const c_void>(b"creamui_run").is_ok());
+        assert!(lib
+            .get::<*const c_void>(b"creamui_app_builder_add_window")
+            .is_ok());
+    }
+}
+
+#[test]
 fn button_click_callback_crosses_the_abi_boundary() {
     let path = cdylib_path();
     let lib = unsafe { Library::new(&path) }.unwrap();

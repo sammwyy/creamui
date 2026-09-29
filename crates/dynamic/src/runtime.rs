@@ -5,8 +5,8 @@
 //! is a safe wrapper around a resolved, verified-present function pointer.
 
 use creamui_abi::{
-    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CTypographyStyle, CWindowOptions,
-    CUI_NODE_NONE,
+    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CTypographyStyle,
+    CWindowOptionsV2, CUI_NODE_NONE,
 };
 use libloading::{Library, Symbol};
 use std::ffi::{c_void, CString};
@@ -85,7 +85,7 @@ pub(crate) type WindowReadyFn = extern "C" fn(*mut c_void, *mut c_void);
 pub(crate) type AppBuilderNewFn = unsafe extern "C" fn() -> *mut c_void;
 pub(crate) type AppBuilderAddWindowFn = unsafe extern "C" fn(
     *mut c_void,
-    CWindowOptions,
+    CWindowOptionsV2,
     CColor,
     BuildFn,
     Option<WindowReadyFn>,
@@ -160,7 +160,7 @@ pub(crate) struct Symbols {
     pub(crate) window_set_blur: WindowSetBlurFn,
     pub(crate) window_handle_free: WindowHandleFreeFn,
     pub(crate) app_builder_new: AppBuilderNewFn,
-    pub(crate) app_builder_add_window: AppBuilderAddWindowFn,
+    pub(crate) app_builder_add_window_v2: AppBuilderAddWindowFn,
     pub(crate) app_builder_run: AppBuilderRunFn,
     pub(crate) cui_runtime_new: CuiRuntimeNewFn,
     pub(crate) cui_runtime_free: CuiRuntimeFreeFn,
@@ -259,7 +259,7 @@ impl Symbols {
                 window_set_blur: resolve!(lib, "creamui_window_set_blur"),
                 window_handle_free: resolve!(lib, "creamui_window_handle_free"),
                 app_builder_new: resolve!(lib, "creamui_app_builder_new"),
-                app_builder_add_window: resolve!(lib, "creamui_app_builder_add_window"),
+                app_builder_add_window_v2: resolve!(lib, "creamui_app_builder_add_window_v2"),
                 app_builder_run: resolve!(lib, "creamui_app_builder_run"),
                 cui_runtime_new: resolve!(lib, "cui_runtime_new"),
                 cui_runtime_free: resolve!(lib, "cui_runtime_free"),

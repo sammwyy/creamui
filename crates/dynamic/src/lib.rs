@@ -49,7 +49,7 @@ pub use creamui_abi::{
 };
 pub use runtime::{LoadError, Runtime, RuntimeTree};
 pub use signal::{SignalF32, SignalI32, SignalString};
-pub use value::{Color, Dimension, RenderBackend, Size, Style, Theme, WindowOptions};
+pub use value::{BlurRegion, Color, Dimension, RenderBackend, Size, Style, Theme, WindowOptions};
 pub use value::{
     ALIGN_BASELINE, ALIGN_CENTER, ALIGN_END, ALIGN_FLEX_END, ALIGN_FLEX_START, ALIGN_START,
     ALIGN_STRETCH, ALIGN_UNSET, FLEX_DIRECTION_COLUMN, FLEX_DIRECTION_COLUMN_REVERSE,

@@ -9,3 +9,12 @@ Most Rust applications should use the native crates directly. CreamUI also offer
 The ABI is intentionally separate from the normal Rust widget API. It is useful for plugin hosts and shared desktop runtimes, but it is not required for ordinary native applications.
 
 See the public Rust API documentation for `creamui-dynamic::AppBuilder` and the exported declarations in `creamui-ffi` when integrating this path.
+
+For initial compositor blur, pass `CWindowOptionsV2` to `creamui_run_v2` or
+`creamui_app_builder_add_window_v2`. Its `base` field is the original
+`CWindowOptions`, and its `blur` field selects `CUI_BLUR_NONE`,
+`CUI_BLUR_WINDOW`, or `CUI_BLUR_RECT`. Rectangle coordinates are logical pixels
+relative to the window. Set `transparent` in the base options for blur to be
+visible. The original entrypoints and struct layout remain available. The
+dynamic Rust client accepts `WindowOptions { blur: Some(BlurRegion::Window),
+..Default::default() }` or a rectangular `BlurRegion`.

@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- C callers can request compositor blur at window creation through
+  `CWindowOptionsV2` and the versioned run and builder entrypoints. The dynamic
+  Rust client exposes the same option while the original C ABI remains intact.
 - Reviewed runtime node allocation: branches and keyed lists attach their
   content directly to a parent, while every current node kind participates
   in layout. There are no layout-free nodes whose Taffy allocation can be

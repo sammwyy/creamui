@@ -44,7 +44,8 @@ use std::os::raw::c_int;
 // Re-exported here so existing code importing them from `creamui_ffi`
 // (this crate's public name) keeps working unchanged.
 pub use creamui_abi::{
-    CColor, CColorScheme, CDimension, CPaintOp, CStyle, CTheme, CTypographyStyle, CWindowOptions,
+    CBlurRegion, CColor, CColorScheme, CDimension, CPaintOp, CStyle, CTheme, CTypographyStyle,
+    CWindowOptions, CWindowOptionsV2,
 };
 pub use creamui_abi::{CUI_BLUR_NONE, CUI_BLUR_RECT, CUI_BLUR_WINDOW};
 pub use creamui_abi::{CUI_RENDER_BACKEND_CPU, CUI_RENDER_BACKEND_GPU};
@@ -1014,17 +1015,27 @@ pub unsafe extern "C" fn creamui_window_set_blur(
     if handle.is_null() {
         return;
     }
-    let region = match kind {
+    let region = blur_region_from_c(CBlurRegion {
+        kind,
+        x,
+        y,
+        width,
+        height,
+    });
+    (*handle).0.set_blur_region(region);
+}
+
+fn blur_region_from_c(blur: CBlurRegion) -> Option<creamui_render::BlurRegion> {
+    match blur.kind {
         creamui_abi::CUI_BLUR_WINDOW => Some(creamui_render::BlurRegion::Window),
         creamui_abi::CUI_BLUR_RECT => Some(creamui_render::BlurRegion::Rect {
-            x,
-            y,
-            width,
-            height,
+            x: blur.x,
+            y: blur.y,
+            width: blur.width,
+            height: blur.height,
         }),
         _ => None,
-    };
-    (*handle).0.set_blur_region(region);
+    }
 }
 
 /// Frees a handle obtained from a [`creamui_run`] `on_window_ready`
@@ -1066,6 +1077,12 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         },
         theme: Theme::default(),
     }
+}
+
+fn window_options_from_c_v2(options: CWindowOptionsV2) -> creamui_render::WindowOptions {
+    let mut native = window_options_from_c(options.base);
+    native.blur = blur_region_from_c(options.blur);
+    native
 }
 
 /// Wraps a nullable [`CWindowReadyFn`] into the `FnOnce(WindowHandle)` closure
@@ -1138,6 +1155,28 @@ pub unsafe extern "C" fn creamui_run(
     );
 }
 
+/// Opens one window with an initial compositor blur request. Other arguments
+/// and safety requirements match [`creamui_run`].
+///
+/// # Safety
+/// `options.base.title`, `build`, and `on_window_ready` must satisfy the
+/// contract of [`creamui_run`].
+#[no_mangle]
+pub unsafe extern "C" fn creamui_run_v2(
+    options: CWindowOptionsV2,
+    background: CColor,
+    build: CBuildFn,
+    on_window_ready: Option<CWindowReadyFn>,
+    userdata: *mut c_void,
+) {
+    creamui_render::run(
+        window_options_from_c_v2(options),
+        color_from_c(background),
+        window_ready_callback(on_window_ready, userdata),
+        build_callback(build, userdata),
+    );
+}
+
 /// Opaque builder for opening several windows sharing one process and one
 /// event loop — e.g. a desktop-shell dock where each icon/panel is its own
 /// window but spawning a process per icon would multiply fixed
@@ -1190,6 +1229,36 @@ pub unsafe extern "C" fn creamui_app_builder_add_window(
     ));
 }
 
+/// Queues a window with an initial compositor blur request. Other arguments
+/// and safety requirements match [`creamui_app_builder_add_window`].
+///
+/// # Safety
+/// `builder`, `options.base.title`, `build`, and `on_window_ready` must
+/// satisfy the contract of [`creamui_app_builder_add_window`].
+#[no_mangle]
+pub unsafe extern "C" fn creamui_app_builder_add_window_v2(
+    builder: *mut CAppBuilder,
+    options: CWindowOptionsV2,
+    background: CColor,
+    build: CBuildFn,
+    on_window_ready: Option<CWindowReadyFn>,
+    userdata: *mut c_void,
+) {
+    if builder.is_null() {
+        return;
+    }
+    let slot = &mut (*builder).0;
+    let owned = slot.take().expect(
+        "creamui_app_builder_add_window_v2: builder was already consumed by creamui_app_builder_run",
+    );
+    *slot = Some(owned.window(
+        window_options_from_c_v2(options),
+        color_from_c(background),
+        window_ready_callback(on_window_ready, userdata),
+        build_callback(build, userdata),
+    ));
+}
+
 /// Opens every window queued with [`creamui_app_builder_add_window`] and
 /// runs one shared event loop until all of them have closed. Consumes and
 /// frees `builder` — it must not be used again afterward.
@@ -1207,4 +1276,55 @@ pub unsafe extern "C" fn creamui_app_builder_run(builder: *mut CAppBuilder) {
         .0
         .expect("creamui_app_builder_run: builder was already consumed by an earlier creamui_app_builder_run");
     owned.run();
+}
+
+#[cfg(test)]
+mod window_option_tests {
+    use super::*;
+
+    #[test]
+    fn initial_blur_converts_without_changing_v1_defaults() {
+        let title = CString::new("Blurred").unwrap();
+        let base = || CWindowOptions {
+            title: title.as_ptr(),
+            width: 640,
+            height: 480,
+            resizable: 1,
+            decorations: 0,
+            transparent: 1,
+            backend: CUI_RENDER_BACKEND_CPU,
+        };
+        assert_eq!(window_options_from_c(base()).blur, None);
+        let options = window_options_from_c_v2(CWindowOptionsV2 {
+            base: base(),
+            blur: CBlurRegion {
+                kind: CUI_BLUR_RECT,
+                x: 12.0,
+                y: 24.0,
+                width: 240.0,
+                height: 120.0,
+            },
+        });
+        assert_eq!(options.title, "Blurred");
+        assert!(options.transparent);
+        assert_eq!(
+            options.blur,
+            Some(creamui_render::BlurRegion::Rect {
+                x: 12.0,
+                y: 24.0,
+                width: 240.0,
+                height: 120.0,
+            })
+        );
+        assert_eq!(
+            blur_region_from_c(CBlurRegion {
+                kind: CUI_BLUR_WINDOW,
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            }),
+            Some(creamui_render::BlurRegion::Window)
+        );
+    }
 }

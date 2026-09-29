@@ -258,43 +258,57 @@ impl Runtime {
                     - layout.padding.bottom)
                     .max(0.0),
             };
-            let child_origin = crate::Point {
-                x: rect.x,
-                y: rect.y,
-            };
-            let children: Vec<RuntimeNodeId> = node.children.as_slice().to_vec();
-
-            let node = self.nodes.get_mut(id).expect("checked above");
-            let on_path = std::mem::take(&mut node.on_layout_path);
-            let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
-            if moved {
-                damage.push(node.layout.rect);
-                damage.push(rect);
-                node.layout.previous_rect = node.layout.rect;
-                node.layout.rect = rect;
-                node.layout.content_rect = content_rect;
-                node.layout.last_layout_epoch = self.layout_epoch;
-                node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
-                if node.hit_slot.is_some() {
-                    self.hit_rects.push(id);
-                }
-                self.paint_queue.push(id);
-                // A clipping node's rect feeds its children's effective_clip.
-                // The node's own effective_clip is unaffected, so
-                // rebuild_composite's own change-detection won't cascade to
-                // them on its own — queue them here instead.
-                if node.clips_children {
-                    for &child in &children {
-                        if let Some(child_node) = self.nodes.get_mut(child) {
-                            child_node.dirty |= DirtyFlags::COMPOSITE;
-                        }
+            let (on_path, moved, clips_children) = {
+                let node = self.nodes.get_mut(id).expect("checked above");
+                let on_path = std::mem::take(&mut node.on_layout_path);
+                let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
+                if moved {
+                    damage.push(node.layout.rect);
+                    damage.push(rect);
+                    node.layout.previous_rect = node.layout.rect;
+                    node.layout.rect = rect;
+                    node.layout.content_rect = content_rect;
+                    node.layout.last_layout_epoch = self.layout_epoch;
+                    node.dirty |= DirtyFlags::PAINT | DirtyFlags::HIT_TEST;
+                    if node.hit_slot.is_some() {
+                        self.hit_rects.push(id);
                     }
-                    self.composite_queue.extend(children.iter().copied());
+                    self.paint_queue.push(id);
+                }
+                (on_path, moved, node.clips_children)
+            };
+
+            if moved && clips_children {
+                let children = self
+                    .nodes
+                    .get(id)
+                    .expect("checked above")
+                    .children
+                    .as_slice();
+                let first_child = self.composite_queue.len();
+                self.composite_queue.extend_from_slice(children);
+                for &child in &self.composite_queue[first_child..] {
+                    if let Some(child_node) = self.nodes.get_mut(child) {
+                        child_node.dirty |= DirtyFlags::COMPOSITE;
+                    }
                 }
             }
 
             if full || on_path || moved {
-                stack.extend(children.into_iter().map(|child| (child, child_origin)));
+                let child_origin = crate::Point {
+                    x: rect.x,
+                    y: rect.y,
+                };
+                stack.extend(
+                    self.nodes
+                        .get(id)
+                        .expect("checked above")
+                        .children
+                        .as_slice()
+                        .iter()
+                        .copied()
+                        .map(|child| (child, child_origin)),
+                );
             }
         }
         damage

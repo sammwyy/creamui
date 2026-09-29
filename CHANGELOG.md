@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Retained layout sync no longer allocates a child list for every visited
+  container while walking changed layout paths.
 - The custom Wayland backend reports the current output refresh interval for
   each window, updating it when display modes or surface outputs change.
 - GPU image textures now carry box-filtered mip levels and use trilinear

@@ -26,6 +26,8 @@ const KIND_GRADIENT_QUAD: u32 = 4;
 const KIND_RADIAL_GRADIENT_QUAD: u32 = 5;
 const KIND_BITS: u32 = 4;
 const CLIP_TEXELS_PER_ROW: u32 = 1024;
+const MIN_INSTANCE_UPLOAD_GAP: usize = 8;
+const MAX_INSTANCE_UPLOAD_RANGES: usize = 8;
 const INITIAL_ATLAS_SIZE: u32 = 1024;
 /// A full atlas is cleared and refilled at the same size, instead of grown,
 /// only once it has lived this long; otherwise a frame whose own text nearly
@@ -768,7 +770,7 @@ pub struct GpuRenderer {
     instances: Vec<Instance>,
     /// What `instance_buffer` holds, to upload only what a frame changed.
     uploaded: Vec<Instance>,
-    last_upload: std::ops::Range<usize>,
+    last_upload: Vec<std::ops::Range<usize>>,
     viewport: [f32; 2],
     batches: Vec<Batch>,
     instance_buffer: wgpu::Buffer,
@@ -809,7 +811,7 @@ impl GpuRenderer {
             last_clip: None,
             instances: Vec::new(),
             uploaded: Vec::new(),
-            last_upload: 0..0,
+            last_upload: Vec::new(),
             viewport: [0.0; 2],
             batches: Vec::new(),
             instance_buffer,
@@ -1089,37 +1091,49 @@ impl GpuRenderer {
         if reallocated {
             self.instance_buffer = instance_buffer(&self.device, needed);
         }
-        let same = |a: &Instance, b: &Instance| bytemuck::bytes_of(a) == bytemuck::bytes_of(b);
-        let (new, old) = (&self.instances, &self.uploaded);
-        let start = if reallocated {
-            0
+        self.last_upload.clear();
+        if reallocated {
+            if !self.instances.is_empty() {
+                self.last_upload.push(0..self.instances.len());
+            }
         } else {
-            new.iter().zip(old).take_while(|(a, b)| same(a, b)).count()
-        };
-        let end = if reallocated || new.len() != old.len() {
-            new.len()
-        } else {
-            new.len()
-                - new[start..]
-                    .iter()
-                    .rev()
-                    .zip(old[start..].iter().rev())
-                    .take_while(|(a, b)| same(a, b))
-                    .count()
-        };
-        if start < end {
-            let bytes = bytemuck::cast_slice(&new[start..end]);
+            let mut coalesced = false;
+            for (index, instance) in self.instances.iter().enumerate() {
+                let changed = self
+                    .uploaded
+                    .get(index)
+                    .is_none_or(|old| bytemuck::bytes_of(instance) != bytemuck::bytes_of(old));
+                if !changed {
+                    continue;
+                }
+                if let Some(range) = self.last_upload.last_mut() {
+                    if coalesced || index - range.end <= MIN_INSTANCE_UPLOAD_GAP {
+                        range.end = index + 1;
+                        continue;
+                    }
+                }
+                self.last_upload.push(index..index + 1);
+                if self.last_upload.len() > MAX_INSTANCE_UPLOAD_RANGES {
+                    let first = self.last_upload[0].start;
+                    self.last_upload.clear();
+                    self.last_upload.push(first..index + 1);
+                    coalesced = true;
+                }
+            }
+        }
+        for range in &self.last_upload {
+            let bytes = bytemuck::cast_slice(&self.instances[range.clone()]);
             #[cfg(feature = "perf-metrics")]
             creamui_core::metrics::record(|m| m.gpu_upload_bytes += bytes.len() as u64);
-            let offset = (start * std::mem::size_of::<Instance>()) as u64;
+            let offset = (range.start * std::mem::size_of::<Instance>()) as u64;
             self.queue
                 .write_buffer(&self.instance_buffer, offset, bytes);
         }
         log::trace!(
-            "creamui-render: uploaded instances {start}..{end} of {}",
-            new.len()
+            "creamui-render: uploaded instance ranges {:?} of {}",
+            self.last_upload,
+            self.instances.len()
         );
-        self.last_upload = start..end;
         std::mem::swap(&mut self.instances, &mut self.uploaded);
     }
 
@@ -1991,11 +2005,35 @@ mod tests {
             r.finish()
         };
         gpu.render(&frame(Color::rgb(9, 9, 9)));
-        assert_eq!(gpu.renderer().last_upload, 0..10);
+        assert_eq!(gpu.renderer().last_upload, [0..10]);
         gpu.render(&frame(Color::rgb(8, 8, 8)));
-        assert_eq!(gpu.renderer().last_upload, 4..5);
+        assert_eq!(gpu.renderer().last_upload, [4..5]);
         gpu.render(&frame(Color::rgb(8, 8, 8)));
         assert!(gpu.renderer().last_upload.is_empty());
+    }
+
+    #[test]
+    fn changed_instance_ends_upload_as_separate_ranges() {
+        let Some(mut gpu) = headless() else { return };
+        let frame = |first: Color, last: Color| {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(64, 64, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+            for index in 0..20 {
+                let color = match index {
+                    0 => first,
+                    19 => last,
+                    _ => Color::rgb(1, 2, 3),
+                };
+                recorder.fill_rect(rect(index as f32, 0.0, 1.0, 1.0), color, 0.0);
+            }
+            recorder.finish()
+        };
+        gpu.render(&frame(Color::rgb(10, 20, 30), Color::rgb(40, 50, 60)));
+        let pixels =
+            gpu.render_to_pixels(&frame(Color::rgb(70, 80, 90), Color::rgb(100, 110, 120)));
+        assert_eq!(gpu.renderer().last_upload, [0..1, 19..20]);
+        assert_eq!(&pixels[0..4], &[70, 80, 90, 255]);
+        assert_eq!(&pixels[19 * 4..20 * 4], &[100, 110, 120, 255]);
     }
 
     #[test]

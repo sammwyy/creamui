@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- GPU instance uploads can cover separate changed ranges, avoiding uploads of
+  unchanged rows between changes near the ends of a scrolling list.
 - Nested rounded clips now intersect in both CPU and GPU rendering, including
   rounded ancestors of scroll layers.
 - The web showcase registers a bundled font before rendering and retains its

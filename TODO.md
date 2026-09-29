@@ -59,9 +59,7 @@ Current limitations and work still to do. Implemented changes belong in
   in each swapchain buffer.
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
-  opaque backdrop; otherwise it repaints the layer viewport. When rows
-  enter or leave, the GPU still uploads the instance range between the
-  changed ends, although unchanged instances outside that range are skipped.
+  opaque backdrop; otherwise it repaints the layer viewport.
 - Evaluate mipmaps or other filtering for heavily downscaled images. GPU
   image textures have one mip level, although upload now downsizes sources
   to match their drawing size; CPU drawing uses bilinear filtering.

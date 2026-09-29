@@ -1782,14 +1782,23 @@ fn virtual_list_paints_only_the_visible_range_of_a_100k_item_list() {
 
     let state = VirtualListState::new(item_count, item_height);
     let controller = ScrollController::new(scroll_offset);
-    let list = RawVirtualList::new(Style::default(), state, controller, viewport_height, |_| {
-        Box::new(RawView::new(Style::default()).background(Color::rgb(200, 60, 60))) as _
-    })
+    let list = RawVirtualList::new(
+        CommonStyle::new().width(200.0).height(viewport_height),
+        state,
+        controller,
+        viewport_height,
+        move |_| {
+            Box::new(
+                RawView::new(CommonStyle::new().height(item_height))
+                    .background(Color::rgb(200, 60, 60)),
+            ) as _
+        },
+    )
     .overscan(overscan)
     .scrollbar(false);
 
     let mut painter = RecordingPainter::default();
-    Renderer::new().render(
+    let scene = Renderer::new().render(
         Box::new(list),
         Size {
             width: 200.0,
@@ -1797,6 +1806,11 @@ fn virtual_list_paints_only_the_visible_range_of_a_100k_item_list() {
         },
         &mut painter,
     );
+
+    let scroll = scene
+        .scroll_hit_test(Point { x: 5.0, y: 5.0 })
+        .expect("the list should receive wheel input");
+    assert!(scene.scroll_requires_layout_at(scroll));
 
     // Overscan rows are mounted but culled from painting outside the clip.
     let painted = painter.filled_rects.len();

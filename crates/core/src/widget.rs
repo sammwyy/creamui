@@ -407,6 +407,17 @@ pub trait Widget {
         Vec::new()
     }
 
+    /// Receives the resolved window-local rectangle after layout. Return
+    /// `true` when the result changes data used to build this widget tree.
+    fn on_layout(&self, _rect: Rect) -> bool {
+        false
+    }
+
+    /// Whether this widget needs [`Widget::on_layout`] after layout.
+    fn reports_layout(&self) -> bool {
+        false
+    }
+
     /// Optional click handler. When present, this widget's laid-out rect
     /// becomes part of hit-testing for pointer clicks.
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
@@ -512,6 +523,10 @@ pub trait Widget {
     /// geometry code.
     fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
         None
+    }
+
+    fn scroll_requires_layout(&self) -> bool {
+        false
     }
 
     /// Optional hook receiving this widget's resolved maximum vertical
@@ -700,6 +715,12 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     fn children(&mut self) -> Vec<BoxedWidget> {
         self.widget.children()
     }
+    fn on_layout(&self, rect: Rect) -> bool {
+        self.widget.on_layout(rect)
+    }
+    fn reports_layout(&self) -> bool {
+        self.widget.reports_layout()
+    }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         self.widget.on_click()
     }
@@ -741,6 +762,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
         self.widget.on_scroll_bounded()
+    }
+    fn scroll_requires_layout(&self) -> bool {
+        self.widget.scroll_requires_layout()
     }
     fn on_content_overflow(&self) -> Option<Rc<dyn Fn(f32)>> {
         self.widget.on_content_overflow()

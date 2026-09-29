@@ -35,10 +35,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Virtualization and resource loading
 
-- Have `RawVirtualList` read its actual viewport height from layout and
-  receive measured row heights automatically. Fixed style heights now feed the
-  visibility calculation; auto-sized lists still use `viewport_height`, and
-  rows use estimated heights or manual `VirtualListState::set_height` updates.
 - Add virtual tables (columns, sticky headers, selection) and virtual trees
   (flattened expanded nodes with stable keys). `RawTable` and `TreeView`
   still materialize every item. `RawVirtualList` has no themed wrapper or

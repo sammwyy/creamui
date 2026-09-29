@@ -43,6 +43,7 @@ struct Instance {
     key: Option<WidgetKey>,
     children: Vec<Instance>,
     node_id: taffy::NodeId,
+    reports_layout: bool,
     /// The largest border/outline overflow across every interaction state,
     /// cached here because clipping ancestors need it on every paint.
     paint_overflow: f32,
@@ -81,6 +82,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
     let new_has_measure = new_measure.is_some();
     let new_measure_fingerprint = widget.measure_fingerprint();
     let new_key = widget.key();
+    let reports_layout = widget.reports_layout();
 
     let Some(mut old) = existing else {
         // No previous node at this position: build a fresh subtree.
@@ -102,6 +104,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             m.taffy_children_writes += 1;
             m.taffy_context_writes += 1;
         });
+        let reports_layout = reports_layout || children.iter().any(|child| child.reports_layout);
         return Instance {
             widget,
             paint_overflow: max_paint_overflow(&new_style),
@@ -111,6 +114,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             key: new_key,
             children,
             node_id,
+            reports_layout,
         };
     };
 
@@ -156,6 +160,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         crate::metrics::record(|m| m.taffy_children_writes += 1);
     }
 
+    let reports_layout = reports_layout || new_children.iter().any(|child| child.reports_layout);
     Instance {
         widget,
         style: new_style,
@@ -165,6 +170,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         children: new_children,
         node_id: old.node_id,
         paint_overflow,
+        reports_layout,
     }
 }
 
@@ -258,7 +264,7 @@ struct PaintOutputs {
     /// width regardless of how much of it a scroll ancestor currently shows.
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
-    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
+    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
 }
@@ -497,11 +503,12 @@ fn paint_instance(
                             visible,
                             Rc::new(move |delta| on_scroll(delta, max_offset)),
                             true,
+                            instance.widget.scroll_requires_layout(),
                         ));
                     }
                 }
             } else if let Some(on_scroll) = instance.widget.on_scroll() {
-                out.scrollables.push((visible, on_scroll, false));
+                out.scrollables.push((visible, on_scroll, false, false));
             }
             if let Some(cursor) = instance.widget.cursor_icon() {
                 out.cursors.push((visible, cursor));
@@ -572,6 +579,34 @@ fn paint_instance(
     }
 }
 
+fn report_layout(tree: &Tree, instance: &Instance, parent_origin: Point) -> bool {
+    if !instance.reports_layout {
+        return false;
+    }
+    let layout = tree
+        .layout(instance.node_id)
+        .expect("layout was computed for every instantiated node");
+    let rect = Rect {
+        x: parent_origin.x + layout.location.x,
+        y: parent_origin.y + layout.location.y,
+        width: layout.size.width,
+        height: layout.size.height,
+    };
+    let changed = if instance.widget.reports_layout() {
+        instance.widget.on_layout(rect)
+    } else {
+        false
+    };
+    let offset = instance.widget.scroll_offset();
+    let child_origin = Point {
+        x: rect.x - offset.x,
+        y: rect.y - offset.y,
+    };
+    instance.children.iter().fold(changed, |changed, child| {
+        report_layout(tree, child, child_origin) || changed
+    })
+}
+
 /// The result of rendering one frame: nothing but interactive hit-regions
 /// (click, focus/keyboard, drag, scroll), since painting has already
 /// happened by the time this is returned.
@@ -590,7 +625,7 @@ pub struct Scene {
     focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
-    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool)>,
+    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
 }
@@ -695,24 +730,32 @@ impl Scene {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (rect, _, _))| rect.contains(point))
+            .find(|(_, (rect, _, _, _))| rect.contains(point))
             .map(|(index, _)| index)
     }
 
     /// The scroll-wheel handler at `index`, if it still exists this render.
     pub fn on_scroll_at(&self, index: usize) -> Option<&Rc<dyn Fn(f32)>> {
-        self.scrollables.get(index).map(|(_, handler, _)| handler)
+        self.scrollables
+            .get(index)
+            .map(|(_, handler, _, _)| handler)
     }
 
     pub fn scroll_is_local_at(&self, index: usize) -> bool {
         self.scrollables
             .get(index)
-            .is_some_and(|(_, _, local)| *local)
+            .is_some_and(|(_, _, local, _)| *local)
+    }
+
+    pub fn scroll_requires_layout_at(&self, index: usize) -> bool {
+        self.scrollables
+            .get(index)
+            .is_some_and(|(_, _, _, requires_layout)| *requires_layout)
     }
 
     /// The visible rect at `index`, if it still exists this render.
     pub fn scroll_rect_at(&self, index: usize) -> Option<Rect> {
-        self.scrollables.get(index).map(|(rect, _, _)| *rect)
+        self.scrollables.get(index).map(|(rect, _, _, _)| *rect)
     }
 
     /// Returns the cursor icon of the topmost widget with a cursor
@@ -744,6 +787,7 @@ pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
     viewport: Size,
+    layout_feedback: bool,
     previous_focus_order: RefCell<Vec<FocusId>>,
 }
 
@@ -753,6 +797,7 @@ impl Renderer {
             tree: TaffyTree::new(),
             root: None,
             viewport: Size::default(),
+            layout_feedback: false,
             previous_focus_order: RefCell::new(Vec::new()),
         }
     }
@@ -823,7 +868,13 @@ impl Renderer {
             )
             .expect("layout computation should not fail for a well-formed tree");
         self.viewport = viewport;
+        self.layout_feedback = report_layout(&self.tree, &instance, Point::default());
         self.root = Some(instance);
+    }
+
+    /// Whether a widget's resolved size changed data used to build the tree.
+    pub fn layout_feedback(&self) -> bool {
+        self.layout_feedback
     }
 
     /// Paints the retained tree without rebuilding widgets or recomputing

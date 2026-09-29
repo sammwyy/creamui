@@ -34,6 +34,7 @@ pub struct RawScrollView {
     pub scrollbar_track_color: Option<Color>,
     pub content_gap: f32,
     pub scrollbar_gap: f32,
+    pub rebuild_on_scroll: bool,
 }
 
 impl RawScrollView {
@@ -61,6 +62,7 @@ impl RawScrollView {
             scrollbar_track_color: None,
             content_gap: 0.0,
             scrollbar_gap: 0.0,
+            rebuild_on_scroll: false,
         }
     }
 
@@ -145,6 +147,12 @@ impl RawScrollView {
         self.scrollbar_gap = gap.max(0.0);
         self
     }
+
+    /// Rebuilds children after wheel input when their set depends on the offset.
+    pub fn rebuild_on_scroll(mut self, rebuild: bool) -> Self {
+        self.rebuild_on_scroll = rebuild;
+        self
+    }
 }
 
 impl Widget for RawScrollView {
@@ -215,6 +223,7 @@ impl Widget for RawScrollView {
             scroll_y: self.scroll_y,
             on_scroll: self.on_scroll.clone(),
             on_scroll_bounded: self.on_scroll_bounded.clone(),
+            rebuild_on_scroll: self.rebuild_on_scroll,
             corner_radius: self.style.paint.corner_radius.unwrap_or(0.0),
             content: Some(Box::new(content)),
         };
@@ -260,6 +269,7 @@ struct ScrollClip {
     controller: Option<ScrollController>,
     on_scroll: Rc<dyn Fn(f32)>,
     on_scroll_bounded: Option<Rc<dyn Fn(f32, f32)>>,
+    rebuild_on_scroll: bool,
     corner_radius: f32,
     content: Option<BoxedWidget>,
 }
@@ -299,6 +309,10 @@ impl Widget for ScrollClip {
 
     fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
         self.on_scroll_bounded.clone()
+    }
+
+    fn scroll_requires_layout(&self) -> bool {
+        self.rebuild_on_scroll
     }
 
     fn on_content_overflow(&self) -> Option<Rc<dyn Fn(f32)>> {

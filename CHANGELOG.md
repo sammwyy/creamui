@@ -4,6 +4,11 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- `RawVirtualList` reads its resolved viewport height and measured row heights
+  after layout. Window rendering rebuilds until those measurements stabilize,
+  so flex-sized lists use their actual visible range in the same frame. Wheel
+  scrolling rebuilds virtualized rows while ordinary scroll views still
+  repaint without rebuilding layout.
 - Text shaping selects another installed font per missing glyph cluster, and
   the CPU/GPU glyph caches rasterize it with that face. Registered font
   changes invalidate the affected layout caches.

@@ -516,22 +516,42 @@ impl Pipeline {
             return false;
         }
         self.with_scope(|| {
+            let mut layout_pending = false;
             if self.needs_layout.replace(false) {
                 let root = self.pending_root.borrow_mut().take();
-                let root = root.unwrap_or_else(|| {
+                let mut root = root.unwrap_or_else(|| {
                     let started = Instant::now();
                     let root = build_ui_with_recovery(&self.build_ui, self.viewport.peek());
                     self.frame.borrow_mut().report.build += started.elapsed();
                     root
                 });
-                let mut frame = self.frame.borrow_mut();
-                let started = Instant::now();
-                frame.renderer.update(root, self.viewport.peek());
-                frame.report.layout += started.elapsed();
-                frame.report.rebuilt = true;
+                for pass in 0..8 {
+                    let changed = {
+                        let mut frame = self.frame.borrow_mut();
+                        let started = Instant::now();
+                        frame.renderer.update(root, self.viewport.peek());
+                        frame.report.layout += started.elapsed();
+                        frame.report.rebuilt = true;
+                        frame.renderer.layout_feedback()
+                    };
+                    if !changed {
+                        break;
+                    }
+                    if pass == 7 {
+                        log::warn!("creamui-render: layout feedback did not converge in 8 passes");
+                        layout_pending = true;
+                        break;
+                    }
+                    let started = Instant::now();
+                    root = build_ui_with_recovery(&self.build_ui, self.viewport.peek());
+                    self.frame.borrow_mut().report.build += started.elapsed();
+                }
             }
             self.needs_paint.set(false);
             self.record();
+            if layout_pending {
+                self.invalidate_layout();
+            }
         });
         true
     }
@@ -1670,11 +1690,14 @@ impl WindowState {
                     Some((
                         scene.on_scroll_at(index)?.clone(),
                         scene.scroll_is_local_at(index),
+                        scene.scroll_requires_layout_at(index),
                     ))
                 });
-                if let Some((handler, local)) = handler {
+                if let Some((handler, local, layout)) = handler {
                     handler(delta_y);
-                    if local {
+                    if layout {
+                        self.pipeline.invalidate_layout();
+                    } else if local {
                         self.pipeline.invalidate_paint();
                     }
                 }
@@ -2449,6 +2472,119 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    struct LayoutFeedbackWidget {
+        resolved_height: Rc<Cell<f32>>,
+    }
+
+    impl creamui_core::Widget for LayoutFeedbackWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().height(75.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn on_layout(&self, rect: creamui_core::Rect) -> bool {
+            if self.resolved_height.get() == rect.height {
+                return false;
+            }
+            self.resolved_height.set(rect.height);
+            true
+        }
+
+        fn reports_layout(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn layout_feedback_rebuilds_before_the_first_frame() {
+        let resolved_height = Rc::new(Cell::new(0.0));
+        let builds = Rc::new(Cell::new(0));
+        let harness = WindowEventHarness::new({
+            let resolved_height = resolved_height.clone();
+            let builds = builds.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Box::new(LayoutFeedbackWidget {
+                    resolved_height: resolved_height.clone(),
+                })
+            }
+        });
+
+        assert_eq!(resolved_height.get(), 75.0);
+        assert_eq!(builds.get(), 2);
+        assert!(!harness
+            .state
+            .pipeline
+            .frame
+            .borrow()
+            .renderer
+            .layout_feedback());
+    }
+
+    struct ScrollLayoutWidget {
+        content: bool,
+    }
+
+    impl creamui_core::Widget for ScrollLayoutWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::layout::Style {
+                size: creamui_core::layout::Size {
+                    width: creamui_core::layout::Dimension::Length(100.0),
+                    height: creamui_core::layout::Dimension::Length(if self.content {
+                        200.0
+                    } else {
+                        100.0
+                    }),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            }
+            .into()
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            if self.content {
+                Vec::new()
+            } else {
+                vec![Box::new(Self { content: true })]
+            }
+        }
+
+        fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
+            (!self.content).then(|| Rc::new(|_, _| {}) as Rc<dyn Fn(f32, f32)>)
+        }
+
+        fn scroll_requires_layout(&self) -> bool {
+            !self.content
+        }
+    }
+
+    #[test]
+    fn layout_dependent_scroll_rebuilds_on_wheel_input() {
+        let builds = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let builds = builds.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Box::new(ScrollLayoutWidget { content: false })
+            }
+        });
+        let baseline = builds.get();
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 5.0, y: 5.0 },
+        });
+        harness.send(WindowEvent::MouseWheel {
+            delta: MouseScrollDelta::LineDelta(0.0, -1.0),
+        });
+        harness.send(WindowEvent::RedrawRequested);
+
+        assert_eq!(builds.get(), baseline + 1);
     }
 
     struct InteractiveWidget {

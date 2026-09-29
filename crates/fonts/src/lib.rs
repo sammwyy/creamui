@@ -277,7 +277,13 @@ fn is_generic_family(family: &str) -> bool {
 const SYSTEM_FONT_CANDIDATES: &[&str] = &["Segoe UI", "Arial"];
 #[cfg(target_os = "macos")]
 const SYSTEM_FONT_CANDIDATES: &[&str] = &["Helvetica Neue", "Helvetica", "Arial"];
-#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+#[cfg(target_os = "android")]
+const SYSTEM_FONT_CANDIDATES: &[&str] = &["Roboto", "Noto Sans"];
+#[cfg(all(
+    not(target_os = "windows"),
+    not(target_os = "macos"),
+    not(target_os = "android")
+))]
 const SYSTEM_FONT_CANDIDATES: &[&str] = &["Liberation Sans", "DejaVu Sans", "Noto Sans", "Arial"];
 
 fn system_font_candidates() -> &'static [&'static str] {
@@ -476,7 +482,16 @@ fn system_font_directories() -> Vec<PathBuf> {
         PathBuf::from("/System/Library/Fonts"),
         PathBuf::from("/Library/Fonts"),
     ]);
-    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    #[cfg(target_os = "android")]
+    directories.extend([
+        PathBuf::from("/system/fonts"),
+        PathBuf::from("/product/fonts"),
+    ]);
+    #[cfg(all(
+        not(target_os = "windows"),
+        not(target_os = "macos"),
+        not(target_os = "android")
+    ))]
     directories.extend([
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),

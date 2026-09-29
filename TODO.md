@@ -44,10 +44,6 @@ Current limitations and work still to do. Implemented changes belong in
 - Connect ABI-v2's `cui_*` runtime tree to a window and present loop. It
   currently mutates an in-memory `Runtime`; ABI-v1's `creamui_run` builds a
   separate widget tree.
-- Verify the web presenter interactively in a browser. The platform and
-  renderer compile for `wasm32-unknown-unknown`, and `wasm-pack` builds the
-  showcase bundle, but headless Firefox timed out before requesting the page
-  in this environment, so no rendered frame has been inspected yet.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland
   protocols if X11, Windows, or macOS support is wanted.
 - Verify composited per-pixel transparency for the CPU presenter on each

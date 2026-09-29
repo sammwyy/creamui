@@ -112,6 +112,9 @@ pub fn launch() {
             }
         },
         move |viewport: Size| -> BoxedWidget {
+            // Browser event loops return from `run`, so the build closure owns
+            // the theme effect for the lifetime of the window.
+            let _theme_sync = &theme_sync;
             let theme = use_theme();
 
             let root_style = Style {

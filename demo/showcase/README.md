@@ -13,6 +13,10 @@ uses CreamUI's normal widget tree and interactions, so theme, navigation,
 inputs, sliders, tabs, scrolling and pickers that do not require host APIs
 work in the browser.
 
+The web bundle includes Liberation Sans under the SIL Open Font License
+(`assets/OFL-LiberationSans.txt`). Browser WASM cannot load system font files,
+so the demo registers this face before building its first widget tree.
+
 The native file dialog and synchronous clipboard integration are intentionally
 unavailable on WASM. A browser file/clipboard bridge needs asynchronous web
 APIs and is outside this small standalone demo.

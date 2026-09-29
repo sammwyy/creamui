@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- The web showcase registers a bundled font before rendering and retains its
+  theme effect after the browser event loop returns. Chromium verification
+  covered canvas rendering, theme changes, navigation, and text input.
 - C callers can request compositor blur at window creation through
   `CWindowOptionsV2` and the versioned run and builder entrypoints. The dynamic
   Rust client exposes the same option while the original C ABI remains intact.

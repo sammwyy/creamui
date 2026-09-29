@@ -13,3 +13,4 @@ showcase = { path = "../../examples/showcase" }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"
+creamui-fonts = { workspace = true }

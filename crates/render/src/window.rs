@@ -1486,6 +1486,7 @@ struct TouchGesture {
     origin: Point,
     last: Point,
     scrollable: bool,
+    pressed: bool,
     scrolling: bool,
 }
 
@@ -1835,20 +1836,24 @@ impl WindowState {
                 if self.touch.is_some() {
                     return;
                 }
+                let scrollable =
+                    !self.touch_starts_text_input(point) && self.touch_scrollable_at(point);
                 self.touch = Some(TouchGesture {
                     id,
                     origin: point,
                     last: point,
-                    scrollable: !self.touch_starts_text_input(point)
-                        && self.touch_scrollable_at(point),
+                    scrollable,
+                    pressed: !scrollable,
                     scrolling: false,
                 });
                 self.handle_window_event(WindowEvent::CursorMoved { position });
-                self.handle_window_event(WindowEvent::MouseInput {
-                    pressed: true,
-                    button: MouseButton::Left,
-                    serial: None,
-                });
+                if !scrollable {
+                    self.handle_window_event(WindowEvent::MouseInput {
+                        pressed: true,
+                        button: MouseButton::Left,
+                        serial: None,
+                    });
+                }
             }
             creamui_platform::TouchPhase::Moved => {
                 let Some(mut touch) = self.touch.take() else {
@@ -1866,7 +1871,9 @@ impl WindowState {
                 touch.last = point;
                 if should_scroll {
                     touch.scrolling = true;
-                    self.cancel_pointer_interaction();
+                    if touch.pressed {
+                        self.cancel_pointer_interaction();
+                    }
                 }
                 if touch.scrolling {
                     self.pointer_pos = point;
@@ -1890,6 +1897,13 @@ impl WindowState {
                     self.set_pointer(Some(point));
                 } else {
                     self.handle_window_event(WindowEvent::CursorMoved { position });
+                    if !touch.pressed {
+                        self.handle_window_event(WindowEvent::MouseInput {
+                            pressed: true,
+                            button: MouseButton::Left,
+                            serial: None,
+                        });
+                    }
                     self.handle_window_event(WindowEvent::MouseInput {
                         pressed: false,
                         button: MouseButton::Left,
@@ -3099,6 +3113,7 @@ mod tests {
 
     struct TouchScrollWidget {
         deltas: Rc<RefCell<Vec<f32>>>,
+        clicks: Rc<Cell<u32>>,
     }
 
     impl creamui_core::Widget for TouchScrollWidget {
@@ -3111,6 +3126,11 @@ mod tests {
         fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
             let deltas = self.deltas.clone();
             Some(Rc::new(move |delta| deltas.borrow_mut().push(delta)))
+        }
+
+        fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+            let clicks = self.clicks.clone();
+            Some(Rc::new(move || clicks.set(clicks.get() + 1)))
         }
     }
 
@@ -3158,11 +3178,14 @@ mod tests {
     #[test]
     fn touch_drag_scrolls_instead_of_clicking() {
         let deltas = Rc::new(RefCell::new(Vec::new()));
+        let clicks = Rc::new(Cell::new(0));
         let mut harness = WindowEventHarness::new({
             let deltas = deltas.clone();
+            let clicks = clicks.clone();
             move |_| {
                 Box::new(TouchScrollWidget {
                     deltas: deltas.clone(),
+                    clicks: clicks.clone(),
                 })
             }
         });
@@ -3172,6 +3195,29 @@ mod tests {
         harness.send(touch(1, creamui_platform::TouchPhase::Ended, 10.0, 40.0));
 
         assert_eq!(deltas.borrow().as_slice(), &[40.0]);
+        assert_eq!(clicks.get(), 0);
+    }
+
+    #[test]
+    fn touch_tap_activates_scrollable_content() {
+        let deltas = Rc::new(RefCell::new(Vec::new()));
+        let clicks = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let deltas = deltas.clone();
+            let clicks = clicks.clone();
+            move |_| {
+                Box::new(TouchScrollWidget {
+                    deltas: deltas.clone(),
+                    clicks: clicks.clone(),
+                })
+            }
+        });
+
+        harness.send(touch(1, creamui_platform::TouchPhase::Started, 10.0, 80.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Ended, 10.0, 80.0));
+
+        assert!(deltas.borrow().is_empty());
+        assert_eq!(clicks.get(), 1);
     }
 
     #[test]

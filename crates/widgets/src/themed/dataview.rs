@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::layout::fill;
-use crate::{ScrollController, TreeController};
+use crate::{ScrollController, TreeController, VirtualListState};
 use creamui_core::layout::{AlignItems, Dimension, JustifyContent};
 use creamui_core::Key;
 
@@ -333,18 +333,26 @@ pub struct Table {
 }
 impl_styled_inner!(Table);
 
+fn apply_table_theme(table: &mut RawTable) {
+    let theme = use_theme();
+    table.header_background = Some(theme.surface_elevated);
+    table.header_text_color = theme.text_secondary;
+    table.cell_text_color = theme.text_primary;
+    table.row_background = Some(theme.surface);
+    table.alt_row_background = Some(theme.surface_elevated);
+    table.selected_row_background = Some(Color::rgba(
+        theme.accent.r,
+        theme.accent.g,
+        theme.accent.b,
+        60,
+    ));
+    table.divider_color = Some(theme.border);
+}
+
 impl Table {
     pub fn new(style: Style, scroll: ScrollController, columns: Vec<TableColumn>) -> Self {
-        let theme = use_theme();
-        let selected_tint = Color::rgba(theme.accent.r, theme.accent.g, theme.accent.b, 60);
-        let inner = RawTable::new(style, scroll, columns)
-            .header_background(theme.surface_elevated)
-            .header_text_color(theme.text_secondary)
-            .cell_text_color(theme.text_primary)
-            .row_background(theme.surface)
-            .alt_row_background(theme.surface_elevated)
-            .selected_row_background(selected_tint)
-            .divider_color(theme.border);
+        let mut inner = RawTable::new(style, scroll, columns);
+        apply_table_theme(&mut inner);
         Table { inner }
     }
 
@@ -382,5 +390,59 @@ impl Widget for Table {
     }
     fn children(&mut self) -> Vec<BoxedWidget> {
         Widget::children(&mut self.inner)
+    }
+}
+
+/// A themed table that creates only rows inside the scrolling viewport.
+pub struct VirtualTable {
+    inner: RawVirtualTable,
+}
+impl_styled_inner!(VirtualTable);
+
+impl VirtualTable {
+    pub fn new(
+        style: Style,
+        scroll: ScrollController,
+        columns: Vec<TableColumn>,
+        state: VirtualListState,
+        viewport_height: f32,
+        row: impl Fn(usize) -> Vec<String> + 'static,
+    ) -> Self {
+        let inner = RawVirtualTable::new(style, scroll, columns, state, viewport_height, row)
+            .customize(apply_table_theme);
+        Self { inner }
+    }
+
+    pub fn overscan(mut self, rows: usize) -> Self {
+        self.inner = self.inner.overscan(rows);
+        self
+    }
+
+    pub fn on_row_click(
+        mut self,
+        selected: Option<usize>,
+        on_click: impl Fn(usize) + 'static,
+    ) -> Self {
+        self.inner = self.inner.on_row_click(selected, on_click);
+        self
+    }
+
+    pub fn customize(mut self, customize: impl FnOnce(&mut RawTable)) -> Self {
+        self.inner = self.inner.customize(customize);
+        self
+    }
+}
+
+impl Widget for VirtualTable {
+    fn style(&self) -> creamui_core::Style {
+        self.inner.style()
+    }
+
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.inner.paint(painter, rect);
+    }
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        self.inner.children()
     }
 }

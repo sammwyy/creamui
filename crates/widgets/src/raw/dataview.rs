@@ -1,5 +1,5 @@
 use super::*;
-use crate::ScrollController;
+use crate::{RawVirtualList, ScrollController, VirtualListState};
 
 fn fill_style() -> Style {
     Style {
@@ -147,6 +147,17 @@ fn row_container_style(height: f32) -> Style {
     }
 }
 
+fn table_body_style() -> Style {
+    Style {
+        flex_grow: 1.0,
+        size: creamui_core::layout::Size {
+            width: creamui_core::layout::Dimension::Percent(1.0),
+            height: creamui_core::layout::Dimension::Percent(1.0),
+        },
+        ..Default::default()
+    }
+}
+
 /// An unstyled, column-aligned data grid over plain string cells — a CSV
 /// viewer's shape: fixed-width columns with a header row, and a scrollable
 /// body of rows underneath it (the header itself never scrolls). Rows are
@@ -155,6 +166,7 @@ fn row_container_style(height: f32) -> Style {
 /// Every row is laid out and painted every frame regardless of whether it's
 /// currently visible — there is no virtualization, so this is meant for
 /// hundreds, not hundreds of thousands, of rows.
+#[derive(Clone)]
 pub struct RawTable {
     pub style: creamui_core::Style,
     pub scroll: ScrollController,
@@ -322,6 +334,22 @@ impl RawTable {
             Box::new(row)
         }
     }
+
+    fn build_divider(&self) -> Option<BoxedWidget> {
+        self.divider_color.map(|color| {
+            Box::new(
+                RawView::new(Style {
+                    size: creamui_core::layout::Size {
+                        width: creamui_core::layout::Dimension::Percent(1.0),
+                        height: creamui_core::layout::Dimension::Length(1.0),
+                    },
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                })
+                .background(color),
+            ) as BoxedWidget
+        })
+    }
 }
 
 impl Widget for RawTable {
@@ -339,18 +367,8 @@ impl Widget for RawTable {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         let mut children: Vec<BoxedWidget> = vec![self.build_header()];
-        if let Some(color) = self.divider_color {
-            children.push(Box::new(
-                RawView::new(Style {
-                    size: creamui_core::layout::Size {
-                        width: creamui_core::layout::Dimension::Percent(1.0),
-                        height: creamui_core::layout::Dimension::Length(1.0),
-                    },
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                })
-                .background(color),
-            ));
+        if let Some(divider) = self.build_divider() {
+            children.push(divider);
         }
         let rows = std::mem::take(&mut self.rows);
         let body_rows: Vec<BoxedWidget> = rows
@@ -359,19 +377,147 @@ impl Widget for RawTable {
             .map(|(index, cells)| self.build_row(index, cells))
             .collect();
         self.rows = rows;
-        let body = RawScrollView::controlled(
-            Style {
-                flex_grow: 1.0,
-                size: creamui_core::layout::Size {
-                    width: creamui_core::layout::Dimension::Percent(1.0),
-                    height: creamui_core::layout::Dimension::Percent(1.0),
-                },
-                ..Default::default()
-            },
-            self.scroll.clone(),
-        )
-        .with_children(body_rows);
+        let body = RawScrollView::controlled(table_body_style(), self.scroll.clone())
+            .with_children(body_rows);
         children.push(Box::new(body));
         children
+    }
+}
+
+/// A table with a fixed header and a body that builds only visible rows.
+/// The caller retains `state` across widget rebuilds and supplies cell text
+/// for each requested row.
+pub struct RawVirtualTable {
+    table: RawTable,
+    state: VirtualListState,
+    viewport_height: f32,
+    overscan: usize,
+    row: Rc<dyn Fn(usize) -> Vec<String>>,
+}
+
+impl RawVirtualTable {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        scroll: ScrollController,
+        columns: Vec<TableColumn>,
+        state: VirtualListState,
+        viewport_height: f32,
+        row: impl Fn(usize) -> Vec<String> + 'static,
+    ) -> Self {
+        Self {
+            table: RawTable::new(style, scroll, columns),
+            state,
+            viewport_height: viewport_height.max(0.0),
+            overscan: 4,
+            row: Rc::new(row),
+        }
+    }
+
+    pub fn overscan(mut self, rows: usize) -> Self {
+        self.overscan = rows;
+        self
+    }
+
+    pub fn on_row_click(
+        mut self,
+        selected: Option<usize>,
+        on_click: impl Fn(usize) + 'static,
+    ) -> Self {
+        self.table = self.table.on_row_click(selected, on_click);
+        self
+    }
+
+    pub fn customize(mut self, customize: impl FnOnce(&mut RawTable)) -> Self {
+        customize(&mut self.table);
+        self
+    }
+}
+
+impl Widget for RawVirtualTable {
+    fn style(&self) -> creamui_core::Style {
+        self.table.style()
+    }
+
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        let mut children = vec![self.table.build_header()];
+        if let Some(divider) = self.table.build_divider() {
+            children.push(divider);
+        }
+        let table = self.table.clone();
+        let row = self.row.clone();
+        let body = RawVirtualList::new(
+            table_body_style(),
+            self.state.clone(),
+            self.table.scroll.clone(),
+            self.viewport_height,
+            move |index| table.build_row(index, &row(index)),
+        )
+        .overscan(self.overscan);
+        children.push(Box::new(body));
+        children
+    }
+}
+
+impl creamui_core::Styled for RawVirtualTable {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.table.style = style;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use creamui_core::{visible_range, HeightIndex};
+
+    #[test]
+    fn virtual_table_keeps_header_and_builds_only_visible_rows() {
+        let state = VirtualListState::new(100_000, 20.0);
+        let scroll = ScrollController::new(500.0);
+        let requested = Rc::new(RefCell::new(Vec::new()));
+        let requested_rows = requested.clone();
+        let mut table = RawVirtualTable::new(
+            Style::default(),
+            scroll,
+            vec![TableColumn::new("Name", 100.0)],
+            state,
+            100.0,
+            move |index| {
+                requested_rows.borrow_mut().push(index);
+                vec![format!("Row {index}")]
+            },
+        )
+        .overscan(2);
+
+        let mut children = table.children();
+        assert_eq!(children.len(), 2);
+        assert!(requested.borrow().is_empty());
+        let mut body = children.pop().unwrap();
+        body.children();
+
+        let expected: Vec<_> =
+            visible_range(&HeightIndex::uniform(100_000, 20.0), 500.0, 100.0, 2).collect();
+        assert_eq!(*requested.borrow(), expected);
+        assert!(requested.borrow().len() < 100_000);
+    }
+
+    #[test]
+    fn virtual_table_rows_keep_selection_callbacks() {
+        let clicked = Rc::new(Cell::new(None));
+        let selected = clicked.clone();
+        let table = RawVirtualTable::new(
+            Style::default(),
+            ScrollController::new(0.0),
+            vec![TableColumn::new("Name", 100.0)],
+            VirtualListState::new(100, 28.0),
+            100.0,
+            |index| vec![format!("Row {index}")],
+        )
+        .on_row_click(Some(3), move |index| selected.set(Some(index)));
+
+        let row = table.table.build_row(3, &["Row 3".into()]);
+        row.on_click().unwrap()();
+        assert_eq!(clicked.get(), Some(3));
     }
 }

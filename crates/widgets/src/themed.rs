@@ -11,7 +11,7 @@
 use crate::raw::{
     RawButton, RawCheckbox, RawListView, RawScrollView, RawSidebar, RawSlider, RawSpinner,
     RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput, RawView,
-    TabIndicatorSide, TableColumn,
+    RawVirtualTable, TabIndicatorSide, TableColumn,
 };
 use creamui_core::layout::{
     AlignItems, Dimension, JustifyContent, LengthPercentage, Rect as LayoutRect, Style,

@@ -53,8 +53,8 @@ pub use raw::{
     DateTime, RawButton, RawCheckbox, RawColorPicker, RawDateTimePicker, RawFilePicker, RawLink,
     RawListView, RawMarquee, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider,
     RawSpinner, RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput,
-    RawTranslate, RawView, RawVirtualList, TabIndicatorSide, TableColumn, TextSelection,
-    VirtualListState,
+    RawTranslate, RawView, RawVirtualList, RawVirtualTable, TabIndicatorSide, TableColumn,
+    TextSelection, VirtualListState,
 };
 pub use themed::{
     nested_sidebar, tab_styles, AlertDialog, Avatar, Badge, Button, ButtonSize, ButtonState,
@@ -63,5 +63,5 @@ pub use themed::{
     Overlay, Popover, Pre, ProgressBar, ProgressRing, Quote, Radio, RadioGroup, ScrollView,
     SegmentedControl, Select, Sidebar, SidebarItem, SidebarNode, SidebarSeparator, Slider, Spinner,
     Switch, Tab, TabColors, TabSizing, Table, Tabs, Text, TextArea, TextInput, TextSize, TimeInput,
-    TreeNode, TreeView, TypingIndicator, VirtualList,
+    TreeNode, TreeView, TypingIndicator, VirtualList, VirtualTable,
 };

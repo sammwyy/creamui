@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Added `RawVirtualTable` and themed `VirtualTable` with fixed headers,
+  selection callbacks, and row data loaded only for the visible range.
 - GPU instance uploads can cover separate changed ranges, avoiding uploads of
   unchanged rows between changes near the ends of a scrolling list.
 - Nested rounded clips now intersect in both CPU and GPU rendering, including

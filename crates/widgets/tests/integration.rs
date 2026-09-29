@@ -1822,6 +1822,55 @@ fn virtual_list_paints_only_the_visible_range_of_a_100k_item_list() {
 }
 
 #[test]
+fn themed_virtual_list_uses_its_resolved_viewport() {
+    use creamui_core::BoxedWidget;
+    use creamui_widgets::{VirtualList, VirtualListState};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let state = VirtualListState::new(100, 10.0);
+        let controller = ScrollController::default();
+        let built = Rc::new(Cell::new(0));
+        let build = || {
+            let built = built.clone();
+            Box::new(
+                VirtualList::new(
+                    Style {
+                        size: creamui_core::layout::Size {
+                            width: Dimension::Percent(1.0),
+                            height: Dimension::Percent(1.0),
+                        },
+                        ..Default::default()
+                    },
+                    state.clone(),
+                    controller.clone(),
+                    1.0,
+                    move |_| {
+                        built.set(built.get() + 1);
+                        Box::new(RawView::new(CommonStyle::new().height(10.0)))
+                    },
+                )
+                .overscan(0),
+            ) as BoxedWidget
+        };
+        let mut renderer = Renderer::new();
+        let viewport = Size {
+            width: 200.0,
+            height: 100.0,
+        };
+
+        renderer.update(build(), viewport);
+        let first_count = built.get();
+        assert!(renderer.layout_feedback());
+        renderer.update(build(), viewport);
+        assert!(built.get() > first_count + 1);
+        assert!(!renderer.layout_feedback());
+    });
+}
+
+#[test]
 fn themed_text_widgets_forward_legacy_node_kind_to_their_raw_widget() {
     creamui_reactive::with_context_scope(|| {
         creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));

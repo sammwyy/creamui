@@ -40,6 +40,7 @@ impl VirtualListState {
         self.heights.borrow().height(index)
     }
 
+    /// Sets a row height until that row is measured again during layout.
     pub fn set_height(&self, index: usize, height: f32) {
         self.heights.borrow_mut().set_height(index, height.max(0.0));
     }
@@ -108,6 +109,9 @@ pub struct RawVirtualList {
     pub viewport_height: f32,
     pub overscan: usize,
     pub scrollbar: bool,
+    pub scrollbar_color: Option<Color>,
+    pub scrollbar_hover_color: Option<Color>,
+    pub scrollbar_pressed_color: Option<Color>,
     pub item: Rc<dyn Fn(usize) -> BoxedWidget>,
 }
 
@@ -126,6 +130,9 @@ impl RawVirtualList {
             viewport_height: viewport_height.max(0.0),
             overscan: 4,
             scrollbar: true,
+            scrollbar_color: None,
+            scrollbar_hover_color: None,
+            scrollbar_pressed_color: None,
             item: Rc::new(item),
         }
     }
@@ -139,6 +146,21 @@ impl RawVirtualList {
 
     pub fn scrollbar(mut self, visible: bool) -> Self {
         self.scrollbar = visible;
+        self
+    }
+
+    pub fn scrollbar_color(mut self, color: Color) -> Self {
+        self.scrollbar_color = Some(color);
+        self
+    }
+
+    pub fn scrollbar_hover_color(mut self, color: Color) -> Self {
+        self.scrollbar_hover_color = Some(color);
+        self
+    }
+
+    pub fn scrollbar_pressed_color(mut self, color: Color) -> Self {
+        self.scrollbar_pressed_color = Some(color);
         self
     }
 
@@ -217,10 +239,20 @@ impl Widget for RawVirtualList {
         };
         let spacer = RawView::new(spacer_style).with_children(rows);
 
-        let scroll_view = RawScrollView::controlled(self.style.clone(), self.controller.clone())
-            .scrollbar(self.scrollbar)
-            .rebuild_on_scroll(true)
-            .child(Box::new(spacer));
+        let mut scroll_view =
+            RawScrollView::controlled(self.style.clone(), self.controller.clone())
+                .scrollbar(self.scrollbar)
+                .rebuild_on_scroll(true);
+        if let Some(color) = self.scrollbar_color {
+            scroll_view = scroll_view.scrollbar_color(color);
+        }
+        if let Some(color) = self.scrollbar_hover_color {
+            scroll_view = scroll_view.scrollbar_hover_color(color);
+        }
+        if let Some(color) = self.scrollbar_pressed_color {
+            scroll_view = scroll_view.scrollbar_pressed_color(color);
+        }
+        let scroll_view = scroll_view.child(Box::new(spacer));
 
         vec![Box::new(scroll_view)]
     }

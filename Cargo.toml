@@ -25,6 +25,7 @@ members = [
     "examples/tabs",
     "examples/sidebar",
     "examples/scroll",
+    "examples/virtual-list",
     "examples/showcase",
     "examples/chat",
     "examples/pickers",

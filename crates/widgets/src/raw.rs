@@ -184,4 +184,5 @@ impl_direct_styled!(
     RawTextArea,
     RawTextInput,
     RawView,
+    RawVirtualList,
 );

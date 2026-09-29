@@ -1,0 +1,11 @@
+[package]
+name = "virtual-list"
+publish = false
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+creamui-core = { workspace = true }
+creamui-render = { workspace = true }
+creamui-theme = { workspace = true }
+creamui-widgets = { workspace = true }

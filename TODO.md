@@ -37,8 +37,7 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Add virtual tables (columns, sticky headers, selection) and virtual trees
   (flattened expanded nodes with stable keys). `RawTable` and `TreeView`
-  still materialize every item. `RawVirtualList` has no themed wrapper or
-  example yet.
+  still materialize every item.
 - Connect `ResourceReady::into_mutation` to the application runtime and
   presenter once runtime-backed windows are enabled.
 

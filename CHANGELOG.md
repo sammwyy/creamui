@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Added a themed `VirtualList` and a 100,000-row example with mixed row
+  heights and a draggable scrollbar.
 - `RawVirtualList` reads its resolved viewport height and measured row heights
   after layout. Window rendering rebuilds until those measurements stabilize,
   so flex-sized lists use their actual visible range in the same frame. Wheel

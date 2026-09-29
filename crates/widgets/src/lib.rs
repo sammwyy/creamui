@@ -63,5 +63,5 @@ pub use themed::{
     Overlay, Popover, Pre, ProgressBar, ProgressRing, Quote, Radio, RadioGroup, ScrollView,
     SegmentedControl, Select, Sidebar, SidebarItem, SidebarNode, SidebarSeparator, Slider, Spinner,
     Switch, Tab, TabColors, TabSizing, Table, Tabs, Text, TextArea, TextInput, TextSize, TimeInput,
-    TreeNode, TreeView, TypingIndicator,
+    TreeNode, TreeView, TypingIndicator, VirtualList,
 };

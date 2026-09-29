@@ -1,5 +1,5 @@
 use super::*;
-use crate::ScrollController;
+use crate::{RawVirtualList, ScrollController, VirtualListState};
 
 fn with_alpha(color: Color, alpha: u8) -> Color {
     Color::rgba(color.r, color.g, color.b, alpha)
@@ -74,5 +74,62 @@ impl Widget for ScrollView {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         Widget::children(&mut self.inner)
+    }
+}
+
+/// A virtualized list with a theme-colored surface and scrollbar.
+pub struct VirtualList {
+    inner: RawVirtualList,
+}
+impl_styled_inner!(VirtualList);
+
+impl VirtualList {
+    pub fn new(
+        style: Style,
+        state: VirtualListState,
+        controller: ScrollController,
+        viewport_height: f32,
+        item: impl Fn(usize) -> BoxedWidget + 'static,
+    ) -> Self {
+        let theme = use_theme();
+        let inner = RawVirtualList::new(style, state, controller, viewport_height, item)
+            .background(theme.surface)
+            .corner_radius(theme.radius_medium)
+            .scrollbar_color(with_alpha(theme.text_secondary, 80))
+            .scrollbar_hover_color(with_alpha(theme.text_secondary, 170))
+            .scrollbar_pressed_color(with_alpha(theme.text_primary, 220));
+        Self { inner }
+    }
+
+    pub fn overscan(mut self, rows: usize) -> Self {
+        self.inner = self.inner.overscan(rows);
+        self
+    }
+
+    pub fn scrollbar(mut self, visible: bool) -> Self {
+        self.inner = self.inner.scrollbar(visible);
+        self
+    }
+}
+
+impl Widget for VirtualList {
+    fn style(&self) -> creamui_core::Style {
+        self.inner.style()
+    }
+
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        self.inner.paint(painter, rect);
+    }
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        self.inner.children()
+    }
+
+    fn on_layout(&self, rect: Rect) -> bool {
+        self.inner.on_layout(rect)
+    }
+
+    fn reports_layout(&self) -> bool {
+        self.inner.reports_layout()
     }
 }

@@ -59,6 +59,3 @@ Current limitations and work still to do. Implemented changes belong in
   opaque backdrop; otherwise it repaints the layer viewport.
 - Add per-glyph or batched glyph eviction if clearing the entire atlas when
   full proves costly in real workloads.
-- Give the custom Wayland runtime a refresh-rate report or pacing through
-  frame callbacks. It currently exposes neither, so CPU animations use the
-  default 60 Hz timer.

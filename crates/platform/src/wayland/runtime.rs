@@ -9,7 +9,7 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use smithay_client_toolkit::{
-    compositor::{CompositorState, Surface, SurfaceData},
+    compositor::{CompositorHandler, CompositorState, Surface, SurfaceData},
     data_device_manager::{
         data_device::{DataDevice, DataDeviceHandler},
         data_offer::{DataOfferHandler, DragOffer},
@@ -17,13 +17,13 @@ use smithay_client_toolkit::{
         DataDeviceManagerState, WritePipe,
     },
     globals::GlobalData,
+    output::{Mode, OutputHandler, OutputState},
     reexports::{
         client::{
-            globals::{registry_queue_init, GlobalListContents},
+            globals::registry_queue_init,
             protocol::{
-                wl_compositor, wl_data_device, wl_data_device_manager::DndAction, wl_data_source,
-                wl_display, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
-                wl_surface,
+                wl_data_device, wl_data_device_manager::DndAction, wl_data_source, wl_display,
+                wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_surface,
             },
             Connection, Dispatch, Proxy, QueueHandle, WEnum,
         },
@@ -36,6 +36,7 @@ use smithay_client_toolkit::{
             xdg::shell::client::xdg_surface,
         },
     },
+    registry::{ProvidesRegistryState, RegistryState},
     seat::pointer::cursor_shape::CursorShapeManager,
     shell::{
         xdg::{
@@ -162,9 +163,12 @@ impl<T: 'static> EventLoop<T> {
             data_device,
             icon_pool,
         );
+        let output_state = OutputState::new(&globals, &queue_handle);
         let mut dispatch = DispatchState {
             runtime: runtime.clone(),
             shm,
+            registry: RegistryState::new(&globals),
+            outputs: output_state,
         };
         let active = ActiveEventLoop {
             runtime: &runtime,
@@ -277,6 +281,7 @@ impl ActiveEventLoop<'_> {
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.blur_requests.clone(),
+            runtime.output_refresh.clone(),
             attributes.size,
             false,
         ));
@@ -335,6 +340,7 @@ impl ActiveEventLoop<'_> {
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.blur_requests.clone(),
+            runtime.output_refresh.clone(),
             attributes.size,
             false,
         ));
@@ -406,6 +412,7 @@ struct Runtime {
     close_requests: Arc<Mutex<Vec<WindowId>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     windows: HashMap<WindowId, NativeWindow>,
+    output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     events: Vec<(WindowId, WindowEvent)>,
     data_device_manager: Option<DataDeviceManagerState>,
     data_device: Option<DataDevice>,
@@ -472,6 +479,7 @@ impl Runtime {
             close_requests: Arc::new(Mutex::new(Vec::new())),
             cursor_requests: Arc::new(Mutex::new(Vec::new())),
             windows: HashMap::new(),
+            output_refresh: Arc::new(Mutex::new(HashMap::new())),
             events: Vec::new(),
             data_device_manager,
             data_device,
@@ -713,6 +721,7 @@ fn create_layer_window(
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
         runtime.blur_requests.clone(),
+        runtime.output_refresh.clone(),
         attributes.size,
         overlay,
     ));
@@ -794,6 +803,8 @@ fn create_layer_popup(
 struct DispatchState {
     runtime: RcRuntime,
     shm: Shm,
+    registry: RegistryState,
+    outputs: OutputState,
 }
 
 impl ShmHandler for DispatchState {
@@ -804,29 +815,116 @@ impl ShmHandler for DispatchState {
 
 smithay_client_toolkit::delegate_shm!(DispatchState);
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for DispatchState {
-    fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
+impl ProvidesRegistryState for DispatchState {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry
+    }
+
+    smithay_client_toolkit::registry_handlers![OutputState];
+}
+
+impl OutputHandler for DispatchState {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.outputs
+    }
+
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.update_refresh(output);
+    }
+
+    fn update_output(
+        &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        self.update_refresh(output);
+    }
+
+    fn output_destroyed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        self.runtime
+            .borrow()
+            .output_refresh
+            .lock()
+            .expect("output refresh lock poisoned")
+            .remove(&output);
+    }
+}
+
+impl DispatchState {
+    fn update_refresh(&mut self, output: wl_output::WlOutput) {
+        let interval = self
+            .outputs
+            .info(&output)
+            .and_then(|info| current_refresh_interval(&info.modes));
+        let runtime = self.runtime.borrow();
+        let mut refresh = runtime
+            .output_refresh
+            .lock()
+            .expect("output refresh lock poisoned");
+        if let Some(interval) = interval {
+            refresh.insert(output, interval);
+        } else {
+            refresh.remove(&output);
+        }
+    }
+}
+
+fn current_refresh_interval(modes: &[Mode]) -> Option<Duration> {
+    modes
+        .iter()
+        .find(|mode| mode.current && mode.refresh_rate > 0)
+        .map(|mode| Duration::from_secs_f64(1000.0 / mode.refresh_rate as f64))
+}
+
+impl CompositorHandler for DispatchState {
+    fn scale_factor_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: i32,
+    ) {
+    }
+
+    fn transform_changed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: wl_output::Transform,
+    ) {
+    }
+
+    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
+
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
     ) {
     }
 }
 
-impl Dispatch<wl_compositor::WlCompositor, GlobalData> for DispatchState {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: wl_compositor::Event,
-        _: &GlobalData,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
+smithay_client_toolkit::delegate_registry!(DispatchState);
+smithay_client_toolkit::delegate_output!(DispatchState);
+smithay_client_toolkit::delegate_compositor!(DispatchState);
 
 impl Dispatch<wl_region::WlRegion, ()> for DispatchState {
     fn event(
@@ -1169,18 +1267,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
     }
 }
 
-impl Dispatch<wl_surface::WlSurface, SurfaceData> for DispatchState {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: wl_surface::Event,
-        _: &SurfaceData,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl DataDeviceHandler for DispatchState {
     fn enter(
         &mut self,
@@ -1409,6 +1495,7 @@ pub struct Window {
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
     blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
+    output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
 }
 
@@ -1422,6 +1509,7 @@ impl Window {
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
         blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
+        output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1441,6 +1529,7 @@ impl Window {
             cursor_requests,
             drag_requests,
             blur_requests,
+            output_refresh,
             pointer_passthrough,
         }
     }
@@ -1489,6 +1578,18 @@ impl PlatformWindow for Window {
 
     fn request_redraw(&self) {
         self.requested_redraw.store(true, Ordering::Release);
+    }
+
+    fn refresh_interval(&self) -> Option<Duration> {
+        let surface_data = self.surface.data::<SurfaceData>()?;
+        let output_refresh = self
+            .output_refresh
+            .lock()
+            .expect("output refresh lock poisoned");
+        surface_data
+            .outputs()
+            .filter_map(|output| output_refresh.get(&output).copied())
+            .min()
     }
 
     fn close(&self) {
@@ -1742,5 +1843,21 @@ mod tests {
                 y: 0.0
             }))
         );
+    }
+
+    #[test]
+    fn refresh_interval_uses_the_current_positive_mode() {
+        let mode = |refresh_rate, current| Mode {
+            dimensions: (1920, 1080),
+            refresh_rate,
+            current,
+            preferred: false,
+        };
+        assert_eq!(
+            current_refresh_interval(&[mode(144_000, false), mode(120_000, true)]),
+            Some(Duration::from_nanos(8_333_333))
+        );
+        assert_eq!(current_refresh_interval(&[mode(0, true)]), None);
+        assert_eq!(current_refresh_interval(&[mode(60_000, false)]), None);
     }
 }

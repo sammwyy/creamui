@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- The custom Wayland backend reports the current output refresh interval for
+  each window, updating it when display modes or surface outputs change.
 - GPU image textures now carry box-filtered mip levels and use trilinear
   sampling when a cached image is drawn smaller later.
 - Headless GPU tests now serialize device use, avoiding a concurrent-driver

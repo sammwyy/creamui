@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Nested rounded clips now intersect in both CPU and GPU rendering, including
+  rounded ancestors of scroll layers.
 - The web showcase registers a bundled font before rendering and retains its
   theme effect after the browser event loop returns. Chromium verification
   covered canvas rendering, theme changes, navigation, and text input.

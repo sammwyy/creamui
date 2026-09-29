@@ -25,8 +25,7 @@ const KIND_IMAGE: u32 = 3;
 const KIND_GRADIENT_QUAD: u32 = 4;
 const KIND_RADIAL_GRADIENT_QUAD: u32 = 5;
 const KIND_BITS: u32 = 4;
-const CLIPS_PER_ROW: u32 = 256;
-const TEXELS_PER_CLIP: u32 = 3;
+const CLIP_TEXELS_PER_ROW: u32 = 1024;
 const INITIAL_ATLAS_SIZE: u32 = 1024;
 /// A full atlas is cleared and refilled at the same size, instead of grown,
 /// only once it has lived this long; otherwise a frame whose own text nearly
@@ -449,7 +448,7 @@ impl GpuShared {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: unfilterable,
                     count: None,
                 },
@@ -762,8 +761,9 @@ pub struct GpuRenderer {
     clip_texture: wgpu::Texture,
     clip_rows: u32,
     clip_texels: Vec<[f32; 4]>,
+    rounded_texels: Vec<[f32; 4]>,
     uploaded_clips: Vec<[f32; 4]>,
-    clip_ids: FxHashMap<[u32; 9], u32>,
+    clip_ids: FxHashMap<Vec<u32>, u32>,
     last_clip: Option<(crate::display_list::Clip, u16, u32)>,
     instances: Vec<Instance>,
     /// What `instance_buffer` holds, to upload only what a frame changed.
@@ -803,6 +803,7 @@ impl GpuRenderer {
             clip_texture,
             clip_rows: 1,
             clip_texels: Vec::new(),
+            rounded_texels: Vec::new(),
             uploaded_clips: Vec::new(),
             clip_ids: FxHashMap::default(),
             last_clip: None,
@@ -827,31 +828,48 @@ impl GpuRenderer {
 
     /// Index of the item's screen clip and layer offset in the clip table.
     fn clip_index(&mut self, item: &DrawItem, spaces: &[LayerSpace]) -> u32 {
-        match self.last_clip {
-            Some((last, layer, index)) if last == item.clip && layer == item.layer => return index,
+        match self.last_clip.as_ref() {
+            Some((last, layer, index)) if last == &item.clip && *layer == item.layer => {
+                return *index
+            }
             _ => {}
         }
         let clip = item.screen_clip(spaces);
         let [dx, dy] = spaces[item.layer as usize].offset;
         let b = clip.bounds;
-        let (rounded, radius) = match clip.rounded {
-            Some(r) => (
-                [r.bounds.x0, r.bounds.y0, r.bounds.x1, r.bounds.y1],
-                r.radius.max(0.001),
-            ),
-            None => ([0.0; 4], 0.0),
-        };
-        let texels = [[b.x0, b.y0, b.x1, b.y1], rounded, [radius, dx, dy, 0.0]];
-        let mut key = [0u32; 9];
-        for (slot, value) in key.iter_mut().zip(texels.iter().flatten()) {
-            *slot = value.to_bits();
+        let mut key = vec![
+            b.x0.to_bits(),
+            b.y0.to_bits(),
+            b.x1.to_bits(),
+            b.y1.to_bits(),
+            dx.to_bits(),
+            dy.to_bits(),
+        ];
+        let mut rounded = Vec::new();
+        for clip in clip.rounded_clips() {
+            let bounds = clip.bounds;
+            let texels = [
+                [bounds.x0, bounds.y0, bounds.x1, bounds.y1],
+                [clip.radius.max(0.001), 0.0, 0.0, 0.0],
+            ];
+            key.extend(texels.iter().flatten().map(|value| value.to_bits()));
+            rounded.extend(texels);
         }
         let next = self.clip_ids.len() as u32;
         let index = *self.clip_ids.entry(key).or_insert_with(|| {
-            self.clip_texels.extend(texels);
+            self.clip_texels.extend([
+                [b.x0, b.y0, b.x1, b.y1],
+                [
+                    dx,
+                    dy,
+                    self.rounded_texels.len() as f32,
+                    (rounded.len() / 2) as f32,
+                ],
+            ]);
+            self.rounded_texels.extend(rounded);
             next
         });
-        self.last_clip = Some((item.clip, item.layer, index));
+        self.last_clip = Some((item.clip.clone(), item.layer, index));
         index
     }
 
@@ -861,6 +879,7 @@ impl GpuRenderer {
         self.instances.clear();
         self.batches.clear();
         self.clip_texels.clear();
+        self.rounded_texels.clear();
         self.clip_ids.clear();
         self.last_clip = None;
         self.frame_images.clear();
@@ -990,8 +1009,15 @@ impl GpuRenderer {
     }
 
     fn upload_clips(&mut self, shared: &GpuShared) {
-        let rows = (self.clip_ids.len() as u32).div_ceil(CLIPS_PER_ROW).max(1);
-        let row_texels = (CLIPS_PER_ROW * TEXELS_PER_CLIP) as usize;
+        let header_texels = self.clip_texels.len();
+        for header in self.clip_texels.chunks_exact_mut(2) {
+            header[1][2] += header_texels as f32;
+        }
+        self.clip_texels.append(&mut self.rounded_texels);
+        let row_texels = CLIP_TEXELS_PER_ROW as usize;
+        let rows = (self.clip_texels.len() as u32)
+            .div_ceil(CLIP_TEXELS_PER_ROW)
+            .max(1);
         self.clip_texels
             .resize(rows as usize * row_texels, [0.0; 4]);
         let grown = rows > self.clip_rows;
@@ -1173,13 +1199,12 @@ fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
     })
 }
 
-/// Clip rects looked up by index from the vertex shader, so each instance
-/// carries an index instead of two rects and a radius.
+/// Clip data looked up by index from the shader.
 fn clip_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("creamui-clips"),
         size: wgpu::Extent3d {
-            width: CLIPS_PER_ROW * TEXELS_PER_CLIP,
+            width: CLIP_TEXELS_PER_ROW,
             height: rows,
             depth_or_array_layers: 1,
         },
@@ -1714,6 +1739,43 @@ mod tests {
         );
         let row = ((8.0 + 12.0 - offset + 2.0) as usize * 96 + 40) * 4;
         assert_eq!(&gpu_pixels[row..row + 4], &[40, 80, 200, 255]);
+    }
+
+    #[test]
+    fn nested_rounded_clips_and_scroll_layers_keep_outer_corners() {
+        let Some(mut gpu) = headless() else { return };
+        for (scroll, outer_radius, inner_radius) in
+            [(false, 20.0, 3.0), (false, 3.0, 20.0), (true, 20.0, 3.0)]
+        {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(64, 64, 1.0, Color::rgb(10, 20, 30), ColorScheme::default());
+            recorder.push_clip_rounded(rect(1.0, 1.0, 60.0, 60.0), outer_radius);
+            if scroll {
+                recorder.push_scroll_layer(
+                    rect(1.0, 1.0, 60.0, 60.0),
+                    inner_radius,
+                    Point { x: 10.0, y: 0.0 },
+                );
+            } else {
+                recorder.push_clip_rounded(rect(1.0, 1.0, 60.0, 60.0), inner_radius);
+            }
+            recorder.fill_rect(
+                rect(if scroll { 10.0 } else { 0.0 }, 0.0, 64.0, 64.0),
+                Color::rgb(255, 0, 0),
+                0.0,
+            );
+            recorder.pop_clip();
+            recorder.pop_clip();
+            let list = recorder.finish();
+            let gpu_pixels = gpu.render_to_pixels(&list);
+            let mut cpu = Rasterizer::new(64, 64);
+            cpu.render(&list, &Damage::Full);
+            for (x, y, expected) in [(3, 3, [10, 20, 30, 255]), (30, 30, [255, 0, 0, 255])] {
+                let offset = (y * 64 + x) * 4;
+                assert_eq!(&gpu_pixels[offset..offset + 4], &expected);
+                assert_eq!(&cpu.pixmap().data()[offset..offset + 4], &expected);
+            }
+        }
     }
 
     #[test]

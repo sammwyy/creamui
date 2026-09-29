@@ -205,7 +205,11 @@ impl Rasterizer {
             Primitive::Line(line) => line.width / 2.0,
             _ => 0.0,
         }
-        .max(clip.rounded.map_or(0.0, |rounded| rounded.radius));
+        .max(
+            clip.rounded_clips()
+                .map(|rounded| rounded.radius)
+                .fold(0.0, f32::max),
+        );
         let padded = bounds
             .round_out()
             .intersect(area.inflate(curve.ceil() + 2.0))
@@ -227,13 +231,22 @@ impl Rasterizer {
         );
 
         let transform = Transform::from_translate(-(px0 as f32), -(py0 as f32));
-        let mask = clip.rounded.map(|rounded| {
-            let mut mask = Mask::new(w as u32, h as u32).expect("non-zero mask size");
-            if let Some(path) = rounded_rect_path(rounded.bounds, rounded.radius) {
-                mask.fill_path(&path, FillRule::Winding, true, transform);
+        let mut mask: Option<Mask> = None;
+        for rounded in clip.rounded_clips() {
+            if rounded.inner().contains(area) {
+                continue;
             }
-            mask
-        });
+            let Some(path) = rounded_rect_path(rounded.bounds, rounded.radius) else {
+                continue;
+            };
+            if let Some(existing) = &mut mask {
+                existing.intersect_path(&path, FillRule::Winding, true, transform);
+            } else {
+                let mut first = Mask::new(w as u32, h as u32).expect("non-zero mask size");
+                first.fill_path(&path, FillRule::Winding, true, transform);
+                mask = Some(first);
+            }
+        }
         {
             let mut target = PixmapMut::from_bytes(&mut scratch, w as u32, h as u32)
                 .expect("scratch buffer matches its dimensions");
@@ -529,12 +542,9 @@ fn draw_translucent_gradient(
     mask: Option<&Mask>,
 ) {
     let bounds = quad.bounds.translate([transform.tx, transform.ty]);
-    let shape = Clip {
+    let shape = RoundedClip {
         bounds,
-        rounded: Some(RoundedClip {
-            bounds,
-            radius: quad.radius,
-        }),
+        radius: quad.radius,
     };
     let width = target.width() as usize;
     let visible = bounds.round_out().intersect(Bounds::new(
@@ -568,7 +578,7 @@ fn draw_translucent_gradient(
     for y in y0..y1 {
         for x in x0..x1 {
             let index = y * width + x;
-            let mut coverage = rounded_coverage(&shape, x as i32, y as i32) as f32 / 255.0;
+            let mut coverage = rounded_coverage(shape, x as i32, y as i32) as f32 / 255.0;
             if let Some(mask) = mask {
                 coverage *= mask.data()[index] as f32 / 255.0;
             }
@@ -612,10 +622,7 @@ fn draw_line(target: &mut PixmapMut, line: &Line, transform: Transform, mask: Op
     target.stroke_path(&path, &solid(line.color), &stroke, transform, mask);
 }
 
-fn rounded_coverage(clip: &Clip, px: i32, py: i32) -> u32 {
-    let Some(rounded) = clip.rounded else {
-        return 255;
-    };
+fn rounded_coverage(rounded: RoundedClip, px: i32, py: i32) -> u32 {
     let b = rounded.bounds;
     let (cx, cy) = ((b.x0 + b.x1) / 2.0, (b.y0 + b.y1) / 2.0);
     let (hx, hy) = (b.width() / 2.0, b.height() / 2.0);
@@ -653,9 +660,8 @@ fn draw_text(pixmap: &mut Pixmap, run: &TextRun, clip: Clip) {
             (gy + gh) as f32,
         );
         let rounded = clip
-            .rounded
-            .filter(|r| !r.inner().contains(glyph_bounds))
-            .map(|_| clip);
+            .rounded_clips()
+            .any(|rounded| !rounded.inner().contains(glyph_bounds));
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.cpu_pixels_rasterized += (gw * gh) as u64);
         for row in 0..gh {
@@ -674,8 +680,10 @@ fn draw_text(pixmap: &mut Pixmap, run: &TextRun, clip: Clip) {
                     continue;
                 }
                 let mut alpha = coverage as u32 * color.a as u32;
-                if let Some(clip) = &rounded {
-                    alpha = alpha * rounded_coverage(clip, px, py) / 255;
+                if rounded {
+                    for boundary in clip.rounded_clips() {
+                        alpha = alpha * rounded_coverage(boundary, px, py) / 255;
+                    }
                 }
                 let alpha = (alpha + 127) / 255;
                 if alpha == 0 {
@@ -960,6 +968,21 @@ mod tests {
         r.render(&list, &Damage::Full);
         assert_eq!(rgba(&r, 0, 0), [10, 20, 30, 255]);
         assert_eq!(rgba(&r, 10, 10)[3], 255);
+    }
+
+    #[test]
+    fn nested_rounded_clips_keep_outer_corners() {
+        let list = record(|p| {
+            p.push_clip_rounded(rect(1.0, 1.0, 28.0, 28.0), 10.0);
+            p.push_clip_rounded(rect(1.0, 1.0, 28.0, 28.0), 3.0);
+            p.fill_rect(rect(0.0, 0.0, 30.0, 30.0), Color::rgb(255, 0, 0), 0.0);
+            p.pop_clip();
+            p.pop_clip();
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert_eq!(rgba(&raster, 3, 3), [10, 20, 30, 255]);
+        assert_eq!(rgba(&raster, 15, 15), [255, 0, 0, 255]);
     }
 
     #[test]

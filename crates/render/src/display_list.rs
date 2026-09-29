@@ -141,19 +141,55 @@ impl RoundedClip {
     }
 }
 
-/// A pixel-aligned rect clip, optionally further restricted by the
-/// innermost rounded clip in effect.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoundedClipNode {
+    pub clip: RoundedClip,
+    pub parent: Option<Rc<RoundedClipNode>>,
+}
+
+/// A pixel-aligned rect clip, optionally further restricted by rounded clips.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Clip {
     pub bounds: Bounds,
-    pub rounded: Option<RoundedClip>,
+    pub rounded: Option<Rc<RoundedClipNode>>,
 }
 
 impl Clip {
+    pub fn push_rounded(&mut self, rounded: RoundedClip) {
+        self.rounded = Some(Rc::new(RoundedClipNode {
+            clip: rounded,
+            parent: self.rounded.take(),
+        }));
+    }
+
+    pub fn rounded_clips(&self) -> impl Iterator<Item = RoundedClip> + '_ {
+        std::iter::successors(self.rounded.as_deref(), |node| node.parent.as_deref())
+            .map(|node| node.clip)
+    }
+
     /// Whether `bounds` is drawn identically with or without this clip.
     pub fn contains(&self, bounds: Bounds) -> bool {
-        self.bounds.contains(bounds) && self.rounded.is_none_or(|r| r.inner().contains(bounds))
+        self.bounds.contains(bounds)
+            && self
+                .rounded_clips()
+                .all(|rounded| rounded.inner().contains(bounds))
     }
+}
+
+fn translate_rounded_clips(
+    node: Option<&Rc<RoundedClipNode>>,
+    offset: [f32; 2],
+    parent: Option<Rc<RoundedClipNode>>,
+) -> Option<Rc<RoundedClipNode>> {
+    let Some(node) = node else { return parent };
+    let parent = translate_rounded_clips(node.parent.as_ref(), offset, parent);
+    Some(Rc::new(RoundedClipNode {
+        clip: RoundedClip {
+            bounds: node.clip.bounds.translate(offset),
+            radius: node.clip.radius,
+        },
+        parent,
+    }))
 }
 
 /// A rounded rectangle with an optional inner border. `bounds` is the
@@ -329,7 +365,7 @@ impl DrawItem {
     /// The clip in screen space, including the item's layer viewports.
     pub fn screen_clip(&self, spaces: &[LayerSpace]) -> Clip {
         if self.layer == 0 {
-            return self.clip;
+            return self.clip.clone();
         }
         let space = &spaces[self.layer as usize];
         Clip {
@@ -338,14 +374,11 @@ impl DrawItem {
                 .bounds
                 .translate(space.offset)
                 .intersect(space.clip.bounds),
-            rounded: self
-                .clip
-                .rounded
-                .map(|rounded| RoundedClip {
-                    bounds: rounded.bounds.translate(space.offset),
-                    radius: rounded.radius,
-                })
-                .or(space.clip.rounded),
+            rounded: translate_rounded_clips(
+                self.clip.rounded.as_ref(),
+                space.offset,
+                space.clip.rounded.clone(),
+            ),
         }
     }
 
@@ -371,19 +404,20 @@ impl DrawItem {
 
 /// A scrolled region. Its items are recorded in the layer's own content
 /// space, so scrolling changes only `offset`, never the items.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScrollLayer {
     /// The enclosing layer; `0` is the frame itself.
     pub parent: u16,
     /// Visible region, in the parent's content space.
     pub viewport: Bounds,
     pub radius: f32,
+    pub parent_clip: Clip,
     /// Added to content coordinates to reach the parent's content space.
     pub offset: [f32; 2],
 }
 
 /// Where a layer's content lands on screen in one frame.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayerSpace {
     pub offset: [f32; 2],
     pub clip: Clip,
@@ -424,24 +458,30 @@ impl DisplayList {
             },
         });
         for layer in &self.layers {
-            let parent = spaces[layer.parent as usize];
+            let parent = spaces[layer.parent as usize].clone();
             let viewport = layer.viewport.translate(parent.offset);
+            let mut clip = Clip {
+                bounds: viewport
+                    .intersect(parent.clip.bounds)
+                    .intersect(layer.parent_clip.bounds.translate(parent.offset)),
+                rounded: translate_rounded_clips(
+                    layer.parent_clip.rounded.as_ref(),
+                    parent.offset,
+                    parent.clip.rounded.clone(),
+                ),
+            };
+            if layer.radius > 0.0 {
+                clip.push_rounded(RoundedClip {
+                    bounds: viewport,
+                    radius: layer.radius,
+                });
+            }
             spaces.push(LayerSpace {
                 offset: [
                     parent.offset[0] + layer.offset[0],
                     parent.offset[1] + layer.offset[1],
                 ],
-                clip: Clip {
-                    bounds: viewport.intersect(parent.clip.bounds),
-                    rounded: if layer.radius > 0.0 {
-                        Some(RoundedClip {
-                            bounds: viewport,
-                            radius: layer.radius,
-                        })
-                    } else {
-                        parent.clip.rounded
-                    },
-                },
+                clip,
             });
         }
         spaces
@@ -574,6 +614,7 @@ fn scrolled_layer(previous: &DisplayList, next: &DisplayList) -> Option<(u16, i3
             || old.parent != new.parent
             || old.viewport != new.viewport
             || old.radius != new.radius
+            || old.parent_clip != new.parent_clip
         {
             return None;
         }
@@ -765,8 +806,9 @@ pub fn diff(previous: Option<&DisplayList>, next: &DisplayList) -> FrameDiff {
         }
         let radius = new_spaces[layer as usize]
             .clip
-            .rounded
-            .map_or(0.0, |rounded| rounded.radius)
+            .rounded_clips()
+            .map(|rounded| rounded.radius)
+            .fold(0.0, f32::max)
             .ceil();
         if radius > 0.0 {
             let a = blit.area;
@@ -963,6 +1005,10 @@ mod tests {
                 parent: 0,
                 viewport: Bounds::new(0.0, 0.0, 200.0, 100.0),
                 radius: 0.0,
+                parent_clip: Clip {
+                    bounds: Bounds::new(0.0, 0.0, 200.0, 100.0),
+                    rounded: None,
+                },
                 offset: [0.0, -offset],
             });
             for row in rows {

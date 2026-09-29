@@ -16,8 +16,7 @@ const KIND_GRADIENT_QUAD: f32 = 4.0;
 const KIND_RADIAL_GRADIENT_QUAD: f32 = 5.0;
 
 const KIND_BITS: u32 = 4u;
-const CLIPS_PER_ROW: u32 = 256u;
-const TEXELS_PER_CLIP: u32 = 3u;
+const CLIP_TEXELS_PER_ROW: u32 = 1024u;
 
 struct Instance {
     @location(0) bounds: vec4<f32>,
@@ -36,25 +35,26 @@ struct Varyings {
     @location(3) @interpolate(flat) border_color: vec4<f32>,
     @location(4) @interpolate(flat) data: vec4<f32>,
     @location(5) @interpolate(flat) clip: vec4<f32>,
-    @location(6) @interpolate(flat) rounded_clip: vec4<f32>,
+    @location(6) @interpolate(flat) clip_index: u32,
     @location(7) @interpolate(flat) params: vec4<f32>,
+    @location(8) @interpolate(flat) rounded_clip: vec4<f32>,
 };
 
 fn premultiply(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(color.rgb * color.a, color.a);
 }
 
+fn clip_coord(index: u32) -> vec2<i32> {
+    return vec2<i32>(i32(index % CLIP_TEXELS_PER_ROW), i32(index / CLIP_TEXELS_PER_ROW));
+}
+
 @vertex
 fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     let kind = f32(instance.tag & ((1u << KIND_BITS) - 1u));
     let clip_index = instance.tag >> KIND_BITS;
-    let clip_texel = vec2<i32>(
-        i32((clip_index % CLIPS_PER_ROW) * TEXELS_PER_CLIP),
-        i32(clip_index / CLIPS_PER_ROW),
-    );
-
-    let clip_extra = textureLoad(clips, clip_texel + vec2<i32>(2, 0), 0);
-    var offset = clip_extra.yz;
+    let clip_texel = clip_index * 2u;
+    let clip_extra = textureLoad(clips, clip_coord(clip_texel + 1u), 0);
+    var offset = clip_extra.xy;
     if kind == KIND_GLYPH {
         offset = round(offset);
     }
@@ -79,9 +79,18 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD || kind == KIND_RADIAL_GRADIENT_QUAD {
         out.data += vec4<f32>(offset, offset);
     }
-    out.clip = textureLoad(clips, clip_texel, 0);
-    out.rounded_clip = textureLoad(clips, clip_texel + vec2<i32>(1, 0), 0);
-    out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, clip_extra.x);
+    out.clip = textureLoad(clips, clip_coord(clip_texel), 0);
+    out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, 0.0);
+    out.rounded_clip = vec4<f32>(0.0);
+    out.clip_index = 0u;
+    if clip_extra.w > 0.0 {
+        let first = u32(clip_extra.z);
+        out.rounded_clip = textureLoad(clips, clip_coord(first), 0);
+        out.params.w = textureLoad(clips, clip_coord(first + 1u), 0).x;
+        if clip_extra.w > 1.0 {
+            out.clip_index = clip_index + 1u;
+        }
+    }
     return out;
 }
 
@@ -108,6 +117,15 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
     var coverage = 1.0;
     if in.params.w > 0.0 {
         coverage = clamp(0.5 - rounded_rect_distance(p, in.rounded_clip, in.params.w), 0.0, 1.0);
+    }
+    if in.clip_index > 0u {
+        let extra = textureLoad(clips, clip_coord((in.clip_index - 1u) * 2u + 1u), 0);
+        for (var i = 1u; i < u32(extra.w); i += 1u) {
+            let index = u32(extra.z) + i * 2u;
+            let bounds = textureLoad(clips, clip_coord(index), 0);
+            let radius = textureLoad(clips, clip_coord(index + 1u), 0).x;
+            coverage *= clamp(0.5 - rounded_rect_distance(p, bounds, radius), 0.0, 1.0);
+        }
     }
 
     let kind = in.params.x;

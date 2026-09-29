@@ -62,8 +62,6 @@ Current limitations and work still to do. Implemented changes belong in
   opaque backdrop; otherwise it repaints the layer viewport. When rows
   enter or leave, the GPU still uploads the instance range between the
   changed ends, although unchanged instances outside that range are skipped.
-- Honor every rounded clip in a nested clip stack. Only the innermost
-  rounded clip is retained; outer ones become rectangular bounds.
 - Evaluate mipmaps or other filtering for heavily downscaled images. GPU
   image textures have one mip level, although upload now downsizes sources
   to match their drawing size; CPU drawing uses bilinear filtering.

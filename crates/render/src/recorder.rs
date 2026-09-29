@@ -33,7 +33,7 @@ fn snap(value: f32) -> f32 {
     (value * 256.0).round() / 256.0
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ClipState {
     /// Recorded with items, in the current layer's content space.
     clip: Clip,
@@ -140,7 +140,10 @@ impl SceneRecorder {
     }
 
     fn state(&self) -> ClipState {
-        *self.clips.last().expect("begin pushes the viewport clip")
+        self.clips
+            .last()
+            .expect("begin pushes the viewport clip")
+            .clone()
     }
 
     fn visible(&self, bounds: Bounds) -> bool {
@@ -525,23 +528,23 @@ impl Painter for SceneRecorder {
     fn push_clip_rounded(&mut self, rect: Rect, corner_radius: f32) {
         let parent = self.state();
         let bounds = self.bounds(rect).round();
-        let rounded = if corner_radius > 0.0 {
-            Some(RoundedClip {
+        let clipped = parent.clip.bounds.intersect(bounds);
+        let mut clip = parent.clip.clone();
+        clip.bounds = clipped;
+        if corner_radius > 0.0 {
+            let rounded = RoundedClip {
                 bounds,
                 radius: (corner_radius * self.scale)
                     .min(bounds.width() / 2.0)
                     .min(bounds.height() / 2.0)
                     .max(0.0),
-            })
-        } else {
-            parent.clip.rounded
-        };
-        let clipped = parent.clip.bounds.intersect(bounds);
+            };
+            if !rounded.inner().contains(clipped) {
+                clip.push_rounded(rounded);
+            }
+        }
         self.clips.push(ClipState {
-            clip: Clip {
-                bounds: clipped,
-                rounded: rounded.filter(|r| !r.inner().contains(clipped)),
-            },
+            clip,
             visible: parent
                 .visible
                 .intersect(bounds.translate(parent.translation)),
@@ -566,6 +569,7 @@ impl Painter for SceneRecorder {
                 .min(viewport.width() / 2.0)
                 .min(viewport.height() / 2.0)
                 .max(0.0),
+            parent_clip: parent.clip.clone(),
             offset,
         });
         self.clips.push(ClipState {
@@ -655,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_clips_intersect_and_keep_the_innermost_rounding() {
+    fn nested_clips_intersect_and_preserve_rounding() {
         let list = record(1.0, |p| {
             p.push_clip_rounded(rect(0.0, 0.0, 100.0, 100.0), 10.0);
             p.push_clip(rect(50.0, -20.0, 100.0, 60.0));
@@ -664,9 +668,9 @@ mod tests {
             p.pop_clip();
             p.fill_rect(rect(0.0, 0.0, 5.0, 5.0), Color::rgb(1, 2, 3), 0.0);
         });
-        let clip = list.items[0].clip;
+        let clip = &list.items[0].clip;
         assert_eq!(clip.bounds, Bounds::new(50.0, 0.0, 100.0, 40.0));
-        assert_eq!(clip.rounded.unwrap().radius, 10.0);
+        assert_eq!(clip.rounded_clips().next().unwrap().radius, 10.0);
         assert_eq!(
             list.items[1].clip.bounds,
             Bounds::new(0.0, 0.0, 200.0, 100.0)

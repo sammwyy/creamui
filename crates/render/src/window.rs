@@ -21,7 +21,7 @@ use crate::raster::Rasterizer;
 use crate::recorder::SceneRecorder;
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
-use creamui_core::runtime::SharedRuntime;
+use creamui_core::runtime::{Mutation, SharedRuntime};
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
@@ -1019,6 +1019,7 @@ pub struct WindowHandle {
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
+    runtime: Option<SharedRuntime>,
 }
 
 impl WindowHandle {
@@ -1144,6 +1145,16 @@ impl WindowHandle {
     /// another window or exiting from a window callback.
     pub fn app(&self) -> AppHandle {
         self.app.clone()
+    }
+
+    /// Applies a mutation to the retained runtime owned by this window and
+    /// schedules its next frame. Returns `false` for legacy widget windows.
+    pub fn apply_runtime_mutation(&self, mutation: Mutation) -> bool {
+        let Some(runtime) = &self.runtime else {
+            return false;
+        };
+        runtime.transaction(|tx| tx.apply(mutation));
+        true
     }
 
     /// Minimizes or restores the window.
@@ -2233,6 +2244,11 @@ impl AppHandler {
             t0.elapsed()
         );
 
+        let runtime = match &pipeline.source {
+            UiSource::Runtime(runtime) => Some(runtime.clone()),
+            UiSource::Legacy(_) => None,
+        };
+
         (spec.on_window_ready)(WindowHandle {
             window: pipeline.window.clone(),
             theme: pipeline.theme.clone(),
@@ -2240,6 +2256,7 @@ impl AppHandler {
             focus_lost_handler: spec.focus_lost_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
+            runtime,
         });
 
         let now = Instant::now();

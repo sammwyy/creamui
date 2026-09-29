@@ -26,11 +26,6 @@ Current limitations and work still to do. Implemented changes belong in
   and damage/layout/hit-region overlays to devtools. F3 and
   `CUI_FRAME_LOG=1` already report per-frame timings and metrics.
 
-## Virtualization and resource loading
-
-- Connect `ResourceReady::into_mutation` to the application runtime and
-  presenter once runtime-backed windows are enabled.
-
 ## ABI and platforms
 
 - Connect ABI-v2's `cui_*` runtime tree to a window and present loop. It

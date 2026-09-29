@@ -62,7 +62,10 @@ fn main() {
     let times = times.borrow();
     println!("windows: {count}");
     for (i, t) in times.iter().enumerate() {
-        println!("  window {i:>2} ready at {:>8.2} ms", t.as_secs_f64() * 1000.0);
+        println!(
+            "  window {i:>2} ready at {:>8.2} ms",
+            t.as_secs_f64() * 1000.0
+        );
     }
     let total = times.last().copied().unwrap_or_default();
     let per_window = total.as_secs_f64() * 1000.0 / count as f64;

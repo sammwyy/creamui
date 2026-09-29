@@ -9,6 +9,8 @@ All notable changes to CreamUI will be documented in this file.
   theme changes. Decoded image fit and crop are verified through the CPU
   presenter; clipped translucent images are checked against the GPU renderer.
   A `MountCx` example presents a native CPU window through the retained path.
+- Runtime window handles can apply `ResourceReady::into_mutation` results on
+  the UI thread, scheduling the retained presenter after decoded images arrive.
 - Retained layout sync no longer allocates a child list for every visited
   container while walking changed layout paths.
 - The custom Wayland backend reports the current output refresh interval for

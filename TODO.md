@@ -57,9 +57,6 @@ Current limitations and work still to do. Implemented changes belong in
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
   opaque backdrop; otherwise it repaints the layer viewport.
-- Evaluate mipmaps or other filtering for heavily downscaled images. GPU
-  image textures have one mip level, although upload now downsizes sources
-  to match their drawing size; CPU drawing uses bilinear filtering.
 - Add per-glyph or batched glyph eviction if clearing the entire atlas when
   full proves costly in real workloads.
 - Give the custom Wayland runtime a refresh-rate report or pacing through

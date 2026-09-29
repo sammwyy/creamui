@@ -111,6 +111,8 @@ fn segment_distance(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 @fragment
 fn fs(in: Varyings) -> @location(0) vec4<f32> {
     let p = in.position.xy;
+    let uv_dx = dpdx(in.uv);
+    let uv_dy = dpdy(in.uv);
     if p.x < in.clip.x || p.y < in.clip.y || p.x > in.clip.z || p.y > in.clip.w {
         discard;
     }
@@ -165,7 +167,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
         coverage *= textureLoad(atlas, vec2<i32>(texel), 0).r;
         color = in.color;
     } else {
-        let sampled = textureSampleLevel(image, image_sampler, in.uv, 0.0);
+        let sampled = textureSampleGrad(image, image_sampler, in.uv, uv_dx, uv_dy);
         if in.color.a > 0.0 {
             color = in.color * sampled.a;
         } else {

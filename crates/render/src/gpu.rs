@@ -495,6 +495,7 @@ impl GpuShared {
             label: Some("creamui-image-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         let atlas = GlyphAtlas::new(&device, &atlas_layout, &sampler, INITIAL_ATLAS_SIZE, 0);
@@ -663,10 +664,11 @@ impl GpuShared {
         drop(pixels);
         let discarded = image.discard_pixels();
         log::debug!(
-            "creamui-render: uploaded image {} ({}x{}) at {width}x{height}{}",
+            "creamui-render: uploaded image {} ({}x{}) at {width}x{height} with {} mip levels{}",
             image.id(),
             image.width(),
             image.height(),
+            u32::BITS - width.max(height).leading_zeros(),
             if discarded {
                 ", CPU pixels discarded"
             } else {
@@ -706,8 +708,19 @@ fn upload_image(
     height: u32,
     pixels: &[u8],
 ) -> wgpu::Texture {
+    let mip_count = u32::BITS - width.max(height).leading_zeros();
+    let mut mip_pixels = Vec::with_capacity(pixels.len() * 4 / 3);
+    mip_pixels.extend_from_slice(pixels);
+    let (mut mip_width, mut mip_height) = (width, height);
+    let mut previous = None;
+    while mip_width > 1 || mip_height > 1 {
+        let (next_width, next_height, next) =
+            halve(mip_width, mip_height, previous.as_deref().unwrap_or(pixels));
+        mip_pixels.extend_from_slice(&next);
+        (mip_width, mip_height, previous) = (next_width, next_height, Some(next));
+    }
     #[cfg(feature = "perf-metrics")]
-    creamui_core::metrics::record(|m| m.gpu_upload_bytes += pixels.len() as u64);
+    creamui_core::metrics::record(|m| m.gpu_upload_bytes += mip_pixels.len() as u64);
     device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
@@ -717,7 +730,7 @@ fn upload_image(
                 height,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
@@ -725,7 +738,7 @@ fn upload_image(
             view_formats: &[],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
-        pixels,
+        &mip_pixels,
     )
 }
 
@@ -1995,6 +2008,35 @@ mod tests {
         gpu.render(&image_scene(&image, 16.0));
         assert_eq!(gpu.renderer().shared.borrow().images[&image.id()].level, 1);
         assert_eq!(reloads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn cached_image_mipmaps_filter_later_downscaling() {
+        let Some(mut gpu) = headless() else { return };
+        let mut pixels = Vec::with_capacity(64 * 64 * 4);
+        for _y in 0..64 {
+            for x in 0..64 {
+                let channel = if x % 16 == 7 || x % 16 == 8 { 255 } else { 0 };
+                pixels.extend([channel, channel, channel, 255]);
+            }
+        }
+        let image = RgbaImage::new(64, 64, pixels).unwrap();
+        gpu.render(&image_scene(&image, 64.0));
+        assert_eq!(gpu.renderer().shared.borrow().images[&image.id()].level, 0);
+
+        let output = gpu.render_to_pixels(&image_scene(&image, 4.0));
+        assert_eq!(gpu.renderer().shared.borrow().images[&image.id()].level, 0);
+        for y in 0..4 {
+            for x in 0..4 {
+                let pixel = &output[(y * 64 + x) * 4..(y * 64 + x + 1) * 4];
+                assert!(pixel[0].abs_diff(32) <= 2, "pixel at ({x}, {y}): {pixel:?}");
+                assert_eq!(pixel[3], 255);
+            }
+        }
+
+        let odd = RgbaImage::new(5, 3, vec![200; 5 * 3 * 4]).unwrap();
+        let output = gpu.render_to_pixels(&image_scene(&odd, 5.0));
+        assert_eq!(&output[0..4], &[200, 200, 200, 255]);
     }
 
     #[test]

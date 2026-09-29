@@ -362,6 +362,12 @@ impl<T: 'static> EventLoop<T> {
 }
 
 impl<T: 'static> EventLoopBuilder<T> {
+    #[cfg(all(feature = "android", target_os = "android"))]
+    pub fn with_android_app(&mut self, app: crate::AndroidApp) {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        self.inner.with_android_app(app);
+    }
+
     #[cfg(target_os = "linux")]
     pub fn with_any_thread(&mut self, any_thread: bool) {
         use winit::platform::x11::EventLoopBuilderExtX11;

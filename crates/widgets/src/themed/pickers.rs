@@ -865,7 +865,7 @@ impl FilePicker {
             self.theme.text_disabled,
             self.theme.border,
             move || {
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 {
                     let mut dialog = rfd::FileDialog::new().set_title(&title);
                     for (name, extensions) in &filters {
@@ -875,11 +875,9 @@ impl FilePicker {
                         callback(path);
                     }
                 }
-                #[cfg(target_arch = "wasm32")]
+                #[cfg(any(target_arch = "wasm32", target_os = "android"))]
                 {
-                    // Browsers cannot expose a native path synchronously.
-                    // The control remains visible so the showcase documents
-                    // it, but selecting local files needs an async web host.
+                    // File selection needs an asynchronous host integration.
                     let _ = (&callback, &title, &filters);
                 }
             },

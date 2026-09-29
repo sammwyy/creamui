@@ -27,8 +27,11 @@ mod prelude;
 use panels::*;
 use prelude::*;
 
-/// Starts the native showcase, or the browser canvas when built for WASM.
-pub fn launch() {
+type ReadyCallback = Box<dyn FnOnce(WindowHandle)>;
+type ViewBuilder = Box<dyn Fn(Size) -> BoxedWidget>;
+
+/// Builds the showcase callbacks shared by the desktop, browser, and Android hosts.
+fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let image_png = ImageData::from_bytes(include_bytes!("../assets/images/iridescent.png"))
         .expect("bundled PNG should decode");
     let image_jpeg = ImageData::from_bytes(include_bytes!("../assets/images/still-life.jpg"))
@@ -90,7 +93,7 @@ pub fn launch() {
     // `Effect` unsubscribes it.
     let theme_sync: Rc<RefCell<Option<Effect>>> = Rc::new(RefCell::new(None));
 
-    run(
+    (
         WindowOptions {
             title: "CreamUI — Showcase".into(),
             width: 1080,
@@ -99,7 +102,7 @@ pub fn launch() {
             ..Default::default()
         },
         Theme::dark().surface,
-        {
+        Box::new({
             let theme_mode = theme_mode.clone();
             let accent_index = accent_index.clone();
             let theme_sync = theme_sync.clone();
@@ -110,8 +113,8 @@ pub fn launch() {
                     handle.set_theme(build_theme(theme_mode.get(), ACCENTS[accent_index.get()].1));
                 }));
             }
-        },
-        move |viewport: Size| -> BoxedWidget {
+        }),
+        Box::new(move |viewport: Size| -> BoxedWidget {
             // Browser event loops return from `run`, so the build closure owns
             // the theme effect for the lifetime of the window.
             let _theme_sync = &theme_sync;
@@ -279,6 +282,19 @@ pub fn launch() {
                     {dialog}
                 </RawView>
             })
-        },
-    );
+        }),
+    )
+}
+
+/// Starts the native showcase, or the browser canvas when built for WASM.
+pub fn launch() {
+    let (options, clear_color, on_window_ready, build_ui) = build_showcase();
+    run(options, clear_color, on_window_ready, build_ui);
+}
+
+/// Starts the showcase in an Android NativeActivity.
+#[cfg(target_os = "android")]
+pub fn launch_android(app: android_activity::AndroidApp) {
+    let (options, clear_color, on_window_ready, build_ui) = build_showcase();
+    creamui_render::run_android(app, options, clear_color, on_window_ready, build_ui);
 }

@@ -4,6 +4,11 @@ publish = false
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["platform-winit"]
+platform-winit = ["creamui-render/platform-winit"]
+platform-android = ["creamui-render/platform-android"]
+
 [dependencies]
 creamui-core = { workspace = true }
 creamui-devtools = { workspace = true, features = ["perf-metrics"] }
@@ -11,6 +16,9 @@ creamui-image = { path = "../../crates/image", features = ["jpeg", "webp"] }
 creamui-jsx = { workspace = true }
 creamui-macros = { workspace = true }
 creamui-reactive = { workspace = true }
-creamui-render = { workspace = true }
+creamui-render = { version = "0.1.2", path = "../../crates/render", default-features = false }
 creamui-theme = { workspace = true }
 creamui-widgets = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }

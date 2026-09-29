@@ -102,6 +102,25 @@ takes mouse/keyboard input like a native window. See
 native file dialogs and clipboard access, and `demo/build.sh --dev` for a
 faster, unoptimized build while iterating.
 
+## Android MVP
+
+Install the Rust target, Android SDK/NDK, and `cargo-apk`, then build the
+NativeActivity demo:
+
+```sh
+rustup target add aarch64-linux-android
+cargo install cargo-apk
+cargo apk build -p creamui-android-demo --target aarch64-linux-android
+```
+
+`ANDROID_HOME` and `ANDROID_NDK_HOME` must point at the installed SDK and NDK.
+The demo is a GPU-only static frame. It does not yet support input, clipboard
+or native file pickers, CPU presentation, multi-window behavior, system
+integration, or Android lifecycle recreation after suspension.
+
+See [platform builds and Android signing](docs/platform-builds.md) for debug and
+release APK commands, secure keystore handling, and Windows desktop builds.
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
@@ -110,6 +129,7 @@ faster, unoptimized build while iterating.
 - [Theming](docs/theming.md)
 - [Images](docs/images.md)
 - [Dynamic and C ABI usage](docs/ffi.md)
+- [Platform builds and Android signing](docs/platform-builds.md)
 - [Release guide](docs/releasing.md)
 
 ## Workspace crates

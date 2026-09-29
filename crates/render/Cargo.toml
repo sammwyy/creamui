@@ -13,7 +13,8 @@ categories = ["gui"]
 
 [features]
 default = ["platform-winit"]
-platform-winit = ["creamui-platform/winit-adapter"]
+platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop"]
+platform-android = ["creamui-platform/android"]
 platform-wayland = ["creamui-platform/wayland"]
 platform-blur-kwin = ["creamui-platform/blur-kwin"]
 platform-blur-blair = ["creamui-platform/blur-blair"]
@@ -37,7 +38,7 @@ creamui-theme-loader = { workspace = true, optional = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-tray = { workspace = true, optional = true }
-creamui-platform = { workspace = true }
+creamui-platform = { version = "0.1.1", path = "../platform", default-features = false }
 tiny-skia = { workspace = true }
 swash = "0.2"
 rustc-hash = "2"
@@ -49,6 +50,8 @@ tracing = { version = "0.1", optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true }
 pollster = { workspace = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 softbuffer = { workspace = true }
 raw-window-handle = { workspace = true }
 

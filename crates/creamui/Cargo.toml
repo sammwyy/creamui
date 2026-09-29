@@ -12,7 +12,7 @@ keywords = ["gui", "ui", "desktop", "native"]
 categories = ["gui"]
 
 [features]
-default = []
+default = ["platform-winit"]
 image = ["dep:creamui-image"]
 image-jpeg = ["image", "creamui-image/jpeg"]
 image-webp = ["image", "creamui-image/webp"]
@@ -22,11 +22,13 @@ dynamic = ["abi", "jsx", "dep:creamui-dynamic"]
 ffi = ["abi", "dep:creamui_ffi"]
 devtools = ["dep:creamui-devtools"]
 tray = ["creamui-render/tray"]
+platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop", "creamui-render/platform-winit"]
 platform-wayland = ["creamui-platform/wayland", "creamui-render/platform-wayland"]
 platform-blur-kwin = ["creamui-render/platform-blur-kwin"]
 platform-blur-blair = ["creamui-render/platform-blur-blair"]
 platform-x11 = ["creamui-platform/x11", "creamui-render/platform-x11"]
 platform-windows = ["creamui-platform/windows", "creamui-render/platform-windows"]
+platform-android = ["creamui-platform/android", "creamui-render/platform-android"]
 perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics", "creamui-devtools?/perf-metrics"]
 system-theme = ["creamui-render/system-theme", "dep:creamui-theme-loader"]
 logger = ["creamui-render/logger"]
@@ -35,8 +37,8 @@ full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray",
 [dependencies]
 creamui-core = { workspace = true }
 creamui-reactive = { workspace = true }
-creamui-platform = { workspace = true }
-creamui-render = { workspace = true }
+creamui-platform = { version = "0.1.1", path = "../platform", default-features = false }
+creamui-render = { version = "0.1.2", path = "../render", default-features = false }
 creamui-devtools = { workspace = true, optional = true }
 creamui-theme = { workspace = true }
 creamui-theme-loader = { workspace = true, optional = true }

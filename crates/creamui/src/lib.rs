@@ -25,6 +25,8 @@ pub use creamui_render::{
     run, AppBuilder, AppHandle, BlurRegion, CloseBehavior, PanicDetails, RenderBackend,
     WindowHandle, WindowOptions,
 };
+#[cfg(all(feature = "platform-android", target_os = "android"))]
+pub use creamui_render::{run_android, AndroidApp};
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use creamui_render::{TrayBuilder, TrayIcon};
 pub use creamui_theme::{

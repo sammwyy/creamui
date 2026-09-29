@@ -11,7 +11,7 @@
 //! only the changed regions to its presenter.
 
 use crate::backend::RenderBackend;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use crate::cpu::SoftwareSurface;
 use crate::devtools::{devtools_for_new_window, FrameReport, WindowDevtools};
 use crate::display_list::{self, DisplayList};
@@ -26,6 +26,8 @@ use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
 };
+#[cfg(all(feature = "platform-android", target_os = "android"))]
+use creamui_platform::AndroidApp;
 use creamui_platform::{
     ActiveEventLoop, ApplicationHandler, BlurRegion, ControlFlow, CursorIcon as PlatformCursorIcon,
     DragIcon, EventLoop, EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition,
@@ -361,14 +363,14 @@ fn init_logging() {
 enum Presenter {
     #[cfg(not(target_arch = "wasm32"))]
     Gpu(GpuSurface),
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     Software(SoftwareSurface),
     #[cfg(target_arch = "wasm32")]
     Web(WebState),
 }
 
 impl Presenter {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
     fn new(
         window: &Arc<dyn PlatformWindow>,
         backend: RenderBackend,
@@ -387,6 +389,20 @@ impl Presenter {
         SoftwareSurface::new(window.clone()).map(Presenter::Software)
     }
 
+    #[cfg(target_os = "android")]
+    fn new(
+        window: &Arc<dyn PlatformWindow>,
+        backend: RenderBackend,
+        transparent: bool,
+        gpu_instance: Option<&wgpu::Instance>,
+    ) -> Result<Self, String> {
+        if backend == RenderBackend::Cpu {
+            return Err("CPU presentation is not supported on Android".to_owned());
+        }
+        let instance = gpu_instance.ok_or("GPU instance is unavailable")?;
+        GpuSurface::new(window.clone(), instance, transparent).map(Presenter::Gpu)
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn new(window: &Arc<dyn PlatformWindow>) -> Self {
         Presenter::Web(WebState::new(window.clone()))
@@ -396,13 +412,20 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => "gpu",
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
             Presenter::Software(_) => "cpu",
             #[cfg(target_arch = "wasm32")]
             Presenter::Web(_) => "web",
         }
     }
 
+    #[cfg(target_os = "android")]
+    fn adapter(&self) -> Option<Rc<str>> {
+        let Presenter::Gpu(surface) = self;
+        Some(surface.adapter_name().into())
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn adapter(&self) -> Option<Rc<str>> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -664,7 +687,7 @@ impl Pipeline {
             let presented = match presenter {
                 #[cfg(not(target_arch = "wasm32"))]
                 Presenter::Gpu(surface) => surface.present(&list),
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 Presenter::Software(surface) => {
                     let raster = frame
                         .raster
@@ -1376,6 +1399,21 @@ impl AppBuilder {
             self.exit_when_last_window_closes,
             #[cfg(all(feature = "tray", target_os = "linux"))]
             self.trays,
+            #[cfg(all(feature = "platform-android", target_os = "android"))]
+            None,
+        );
+    }
+
+    #[cfg(all(feature = "platform-android", target_os = "android"))]
+    pub fn run_android(self, app: AndroidApp) {
+        run_windows(
+            self.specs,
+            self.on_panic,
+            self.on_started,
+            self.exit_when_last_window_closes,
+            #[cfg(all(feature = "tray", target_os = "linux"))]
+            self.trays,
+            Some(app),
         );
     }
 }
@@ -2483,12 +2521,28 @@ pub fn run(
         .run();
 }
 
+#[cfg(all(feature = "platform-android", target_os = "android"))]
+pub fn run_android(
+    app: AndroidApp,
+    options: WindowOptions,
+    clear_color: Color,
+    on_window_ready: impl FnOnce(WindowHandle) + 'static,
+    build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+) {
+    AppBuilder::new()
+        .window(options, clear_color, on_window_ready, build_ui)
+        .run_android(app);
+}
+
 fn run_windows(
     specs: Vec<PendingWindow>,
     on_panic: Option<PanicHandler>,
     on_started: Option<Box<dyn FnOnce(AppHandle)>>,
     exit_when_last_window_closes: bool,
     #[cfg(all(feature = "tray", target_os = "linux"))] trays: Vec<TrayBuilder>,
+    #[cfg(all(feature = "platform-android", target_os = "android"))] android_app: Option<
+        AndroidApp,
+    >,
 ) {
     #[cfg(all(feature = "tray", target_os = "linux"))]
     let has_tray = !trays.is_empty();
@@ -2553,7 +2607,16 @@ fn run_windows(
         "creamui-render: before EventLoop::new: {:?}",
         t_run.elapsed()
     );
-    let event_loop = EventLoop::<AppEvent>::with_user_event()
+    let event_loop_builder = EventLoop::<AppEvent>::with_user_event();
+    #[cfg(all(feature = "platform-android", target_os = "android"))]
+    let event_loop_builder = {
+        let mut event_loop_builder = event_loop_builder;
+        event_loop_builder.with_android_app(
+            android_app.expect("creamui-render: Android startup requires AndroidApp"),
+        );
+        event_loop_builder
+    };
+    let event_loop = event_loop_builder
         .build()
         .expect("failed to create event loop");
     log::debug!("creamui-render: event loop created: {:?}", t_run.elapsed());

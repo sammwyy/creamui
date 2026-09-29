@@ -1,0 +1,25 @@
+[package]
+name = "creamui-android-demo"
+publish = false
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "main"
+crate-type = ["cdylib"]
+
+[dependencies]
+showcase = { path = "../../examples/showcase", default-features = false, features = ["platform-android"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+
+[package.metadata.android]
+package = "dev.creamui.demo"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "CreamUI Showcase"

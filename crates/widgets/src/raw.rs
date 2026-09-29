@@ -11,7 +11,7 @@ use creamui_theme::Color;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 thread_local! {
     // On X11/Wayland the clipboard owner must remain alive after the write;
     // creating and dropping `arboard::Clipboard` inside a key callback makes
@@ -27,7 +27,7 @@ fn activate_on_key(click: Rc<dyn Fn()>) -> Rc<dyn Fn(KeyInput)> {
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn clipboard_write(text: String) {
     SYSTEM_CLIPBOARD.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -40,7 +40,7 @@ fn clipboard_write(text: String) {
     });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn clipboard_read() -> Option<String> {
     SYSTEM_CLIPBOARD.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -52,14 +52,12 @@ fn clipboard_read() -> Option<String> {
     })
 }
 
-// The browser clipboard API is asynchronous and requires a user gesture.
-// Keep text editing functional on WebAssembly while deliberately making the
-// synchronous Ctrl+C/Ctrl+V hooks no-ops; an embedding can provide a web
-// clipboard bridge later without changing the widget API.
-#[cfg(target_arch = "wasm32")]
+// Browser and Android clipboard APIs are asynchronous and require a user
+// gesture, unlike the synchronous editing hooks used here.
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 fn clipboard_write(_: String) {}
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 fn clipboard_read() -> Option<String> {
     None
 }

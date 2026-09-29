@@ -17,6 +17,6 @@ creamui-theme = { workspace = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 arboard = { workspace = true }
 rfd = { workspace = true }

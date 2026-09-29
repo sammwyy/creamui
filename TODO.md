@@ -27,8 +27,6 @@ Current limitations and work still to do. Implemented changes belong in
   of a wide container on a changed path; changes to hit-list membership or
   order rebuild the full hit list. There is no explicit z-index for absolute
   nodes.
-- Evaluate whether logical nodes without layout can avoid Taffy nodes.
-  `RuntimeTransaction::create_node` currently creates one for every node.
 - After runtime integration, add a tree inspector, invalidation reasons,
   and damage/layout/hit-region overlays to devtools. F3 and
   `CUI_FRAME_LOG=1` already report per-frame timings and metrics.

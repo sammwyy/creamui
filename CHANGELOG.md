@@ -4,6 +4,10 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Reviewed runtime node allocation: branches and keyed lists attach their
+  content directly to a parent, while every current node kind participates
+  in layout. There are no layout-free nodes whose Taffy allocation can be
+  removed yet.
 - Runtime pointer hits use a spatial index that preserves paint order and
   updates moved hit regions without rebuilding the full hit list.
 - Added a themed `VirtualList` and a 100,000-row example with mixed row

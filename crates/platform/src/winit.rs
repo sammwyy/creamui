@@ -164,6 +164,27 @@ impl PlatformWindow for Window {
     fn inner_size(&self) -> PhysicalSize {
         self.inner_size()
     }
+    #[cfg(all(target_os = "android", feature = "android"))]
+    fn safe_area(&self) -> crate::SafeArea {
+        use winit::platform::android::WindowExtAndroid;
+        let rect = self.inner.content_rect();
+        let size = self.inner_size();
+        let scale = self.scale_factor();
+        crate::SafeArea::from_content_rect(
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom,
+            size.width,
+            size.height,
+            scale,
+        )
+        .max(crate::android_insets::window_insets(scale))
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn safe_area(&self) -> crate::SafeArea {
+        crate::web_insets::safe_area()
+    }
     fn is_ready(&self) -> bool {
         true
     }

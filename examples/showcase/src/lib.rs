@@ -121,10 +121,20 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             let _theme_sync = &theme_sync;
             let theme = use_theme();
             let screen = use_screen_class();
+            let safe = use_safe_area().clamp(viewport.width, viewport.height);
             let collapsed_navigation = screen != ScreenClass::Expanded;
             let compact = screen == ScreenClass::Compact;
             let outer_padding = if compact { 12. } else { 20. };
             let panel_padding = if compact { 18. } else { 28. };
+            // The left rail owns the left band. The top bar owns the top band
+            // only while it is on screen; the persistent rail has to clear
+            // the status bar itself.
+            let rail_insets = SafeArea {
+                top: safe.top,
+                bottom: safe.bottom,
+                left: safe.left,
+                right: 0.0,
+            };
 
             let root_style = Style {
                 size: creamui_core::layout::Size {
@@ -139,18 +149,27 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                 }
             };
 
-            let content_outer_style = padding(
-                Style {
-                    flex_grow: 1.0,
-                    size: creamui_core::layout::Size {
-                        width: Dimension::Auto,
-                        height: Dimension::Percent(1.0),
-                    },
-                    align_items: Some(AlignItems::Center),
-                    ..column(0.0)
+            let content_pad_top = outer_padding + if collapsed_navigation { 0.0 } else { safe.top };
+            let content_pad_bottom = outer_padding + safe.bottom;
+            let content_pad_left =
+                outer_padding + if collapsed_navigation { safe.left } else { 0.0 };
+            let content_pad_right = outer_padding + safe.right;
+            let content_outer_style = Style {
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                size: creamui_core::layout::Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Percent(1.0),
                 },
-                outer_padding,
-            );
+                align_items: Some(AlignItems::Center),
+                padding: creamui_core::layout::Rect {
+                    left: creamui_core::layout::LengthPercentage::Length(content_pad_left),
+                    right: creamui_core::layout::LengthPercentage::Length(content_pad_right),
+                    top: creamui_core::layout::LengthPercentage::Length(content_pad_top),
+                    bottom: creamui_core::layout::LengthPercentage::Length(content_pad_bottom),
+                },
+                ..column(0.0)
+            };
             let content_style = padding(
                 Style {
                     flex_grow: 0.0,
@@ -285,15 +304,16 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             let titlebar: BoxedWidget = if collapsed_navigation {
                 let open_sidebar = sidebar_open.clone();
                 let title_style = Style {
+                    flex_shrink: 0.0,
                     size: creamui_core::layout::Size {
                         width: Dimension::Percent(1.0),
-                        height: Dimension::Length(56.),
+                        height: Dimension::Length(56. + safe.top),
                     },
                     align_items: Some(AlignItems::Center),
                     padding: creamui_core::layout::Rect {
-                        left: creamui_core::layout::LengthPercentage::Length(12.),
-                        right: creamui_core::layout::LengthPercentage::Length(12.),
-                        top: creamui_core::layout::LengthPercentage::Length(8.),
+                        left: creamui_core::layout::LengthPercentage::Length(12. + safe.left),
+                        right: creamui_core::layout::LengthPercentage::Length(12. + safe.right),
+                        top: creamui_core::layout::LengthPercentage::Length(8. + safe.top),
                         bottom: creamui_core::layout::LengthPercentage::Length(8.),
                     },
                     ..row(10.)
@@ -301,6 +321,10 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                 let title_label = NAV_LABELS[active_section.get()].to_owned();
                 let title_text_style = Style {
                     flex_grow: 1.0,
+                    min_size: creamui_core::layout::Size {
+                        width: Dimension::Length(0.0),
+                        height: Dimension::Auto,
+                    },
                     ..Default::default()
                 };
                 Box::new(jsx! {
@@ -318,12 +342,20 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                 Box::new(RawView::new(Style::default()))
             } else {
                 jsx! {
-                    <Nav active={active_section.clone()} content_scroll={content_scroll.clone()} nav_scroll={nav_scroll.clone()} sidebar_open={sidebar_open.clone()} width={232.} />
+                    <Nav active={active_section.clone()} content_scroll={content_scroll.clone()} nav_scroll={nav_scroll.clone()} sidebar_open={sidebar_open.clone()} width={232.} insets={rail_insets} />
                 }
             };
             let sidebar_drawer: BoxedWidget = if collapsed_navigation && sidebar_open.get() {
                 let dismiss = sidebar_open.clone();
-                let drawer_width = if compact { 288. } else { 320. };
+                let preferred: f32 = if compact { 288. } else { 320. };
+                let available = (viewport.width - safe.left - safe.right).max(0.0);
+                // Leave a strip of the dimmed page visible so the drawer can
+                // be dismissed without covering the whole window.
+                let drawer_width = if available <= 48.0 {
+                    available
+                } else {
+                    preferred.min(available - 36.0)
+                };
                 let backdrop_style = Style {
                     position: Position::Absolute,
                     inset: creamui_core::layout::Rect {
@@ -353,7 +385,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     ..column(0.)
                 };
                 let drawer_nav = jsx! {
-                    <Nav active={active_section.clone()} content_scroll={content_scroll.clone()} nav_scroll={nav_scroll.clone()} sidebar_open={sidebar_open.clone()} width={drawer_width} />
+                    <Nav active={active_section.clone()} content_scroll={content_scroll.clone()} nav_scroll={nav_scroll.clone()} sidebar_open={sidebar_open.clone()} width={drawer_width} insets={rail_insets} />
                 };
                 Box::new(
                     Overlay::new(backdrop_style, move || dismiss.set(false))

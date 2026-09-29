@@ -4,6 +4,14 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- `use_safe_area()` reports the logical-pixel bands covered by the status bar,
+  navigation bar, display cutout, and on-screen keyboard. Android reads
+  `WindowInsets` together with the native content rectangle; the web backend
+  reads `env(safe-area-inset-*)`. Desktop client areas report zeros.
+- Absolutely positioned layers paint their absolutely positioned descendants,
+  so a modal backdrop can hold another floating layer. The showcase drawer
+  uses that, leaves a dismiss strip on narrow windows, and insets its top bar
+  and navigation by the safe area.
 - Runtime-backed windows now paint retained nodes through `Renderer`, respond
   to pointer, keyboard, drag, and scroll input, and redraw after mutations or
   theme changes. Decoded image fit and crop are verified through the CPU

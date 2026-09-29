@@ -68,6 +68,13 @@ navigation patterns, spacing, or layout direction. Prefer these width classes
 over device labels: a narrow desktop window and a phone should receive the
 same compact layout.
 
+`use_safe_area()` reports the logical-pixel bands already occupied by system
+UI: the status bar, navigation bar, display cutout, and on-screen keyboard.
+Taps in those bands are delivered to the system, so inset toolbars and other
+controls by `top`, `right`, `bottom`, and `left`. Desktop client areas report
+zeros. Android reads window insets. A browser page reports
+`env(safe-area-inset-*)` when its viewport uses `viewport-fit=cover`.
+
 ## Choose a layout
 
 `creamui::widgets::layout` has a semantic flex API for layout containers:

@@ -1,8 +1,12 @@
 //! Common window-platform types for CreamUI.
 
+#[cfg(target_os = "android")]
+mod android_insets;
 mod types;
 #[cfg(all(feature = "wayland", target_os = "linux"))]
 pub mod wayland;
+#[cfg(target_arch = "wasm32")]
+mod web_insets;
 #[cfg(not(all(feature = "wayland", target_os = "linux")))]
 mod winit;
 
@@ -52,6 +56,15 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn monitor_size(&self) -> Option<PhysicalSize>;
     fn scale_factor(&self) -> f64;
     fn inner_size(&self) -> PhysicalSize;
+    /// Logical-pixel bands covered by system UI that overlaps this window.
+    ///
+    /// Desktop client areas return [`SafeArea::ZERO`]. Android combines
+    /// window insets (system bars, display cutout, and the IME) with the
+    /// native content rectangle. The web backend reads
+    /// `env(safe-area-inset-*)`.
+    fn safe_area(&self) -> SafeArea {
+        SafeArea::ZERO
+    }
     fn is_ready(&self) -> bool;
     fn set_visible(&self, visible: bool);
     fn set_minimized(&self, minimized: bool);

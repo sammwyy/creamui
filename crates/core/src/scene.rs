@@ -576,6 +576,25 @@ fn paint_instance(
             child_mode,
         );
     }
+    // Flow mode defers every absolute node, so an absolute layer's own
+    // absolute descendants are skipped by the walk above. A second walk
+    // paints them after the layer and its in-flow content, which is also
+    // what keeps their hit targets above the layer's backdrop.
+    if mode == PaintMode::Absolute && absolute {
+        for child in &instance.children {
+            paint_instance(
+                tree,
+                child,
+                painter,
+                child_origin,
+                child_clip,
+                viewport,
+                focus,
+                out,
+                PaintMode::Absolute,
+            );
+        }
+    }
     if scrolls {
         painter.pop_scroll_layer();
     } else if clips {
@@ -1424,6 +1443,45 @@ mod tests {
                     }),
                     colored(7.0),
                 ],
+            }),
+            VIEWPORT,
+            &mut painter,
+        );
+        let widths: Vec<f32> = painter.filled.iter().map(|r| r.width).collect();
+        assert_eq!(widths, vec![7.0, 5.0]);
+    }
+
+    struct AbsoluteLayer {
+        children: Vec<BoxedWidget>,
+    }
+    impl crate::widget::Widget for AbsoluteLayer {
+        fn style(&self) -> crate::Style {
+            taffy::style::Style {
+                position: taffy::style::Position::Absolute,
+                ..Default::default()
+            }
+            .into()
+        }
+        fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+        fn children(&mut self) -> Vec<BoxedWidget> {
+            std::mem::take(&mut self.children)
+        }
+    }
+
+    #[test]
+    fn absolute_descendants_paint_once_above_their_absolute_parent() {
+        let mut painter = ClipRecorder::default();
+        let colored = |size: f32| -> BoxedWidget { Box::new(Filled { size }) };
+        render_frame(
+            Box::new(Root {
+                children: vec![Box::new(AbsoluteLayer {
+                    children: vec![
+                        colored(7.0),
+                        Box::new(AbsoluteLayer {
+                            children: vec![colored(5.0)],
+                        }),
+                    ],
+                })],
             }),
             VIEWPORT,
             &mut painter,

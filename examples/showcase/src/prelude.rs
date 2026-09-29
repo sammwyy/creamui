@@ -10,7 +10,9 @@ pub use creamui_core::{BoxedWidget, Size, TextAlign};
 pub use creamui_image::{ImageData, ImageFit};
 pub use creamui_macros::{component, jsx};
 pub use creamui_reactive::{create_effect, Effect, Signal};
-pub use creamui_render::{run, use_screen_class, ScreenClass, WindowHandle, WindowOptions};
+pub use creamui_render::{
+    run, use_safe_area, use_screen_class, SafeArea, ScreenClass, WindowHandle, WindowOptions,
+};
 pub use creamui_theme::{use_theme, Color, SelectionStyle, Theme};
 pub use creamui_widgets::layout::{
     column, fixed, padding, row, Align, Justify, StyleExt, Track, Wrap,

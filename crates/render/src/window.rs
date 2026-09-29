@@ -76,6 +76,31 @@ pub fn use_viewport() -> Size {
     creamui_reactive::use_context::<ViewportProvider>().get()
 }
 
+pub use creamui_platform::SafeArea;
+
+#[derive(Clone)]
+struct SafeAreaProvider {
+    safe_area: Signal<SafeArea>,
+}
+
+/// Logical-pixel bands of this window covered by system UI.
+///
+/// Only callable while a window is building its widget tree. The status
+/// bar, navigation bar, display cutout, and on-screen keyboard occupy these
+/// bands, and taps there are delivered to the system rather than the
+/// application. Inset toolbars and other controls by `top`, `right`,
+/// `bottom`, and `left`. The tree rebuilds when the bands change.
+///
+/// Desktop client areas are [`SafeArea::ZERO`]. Android reads window insets
+/// plus the native content rectangle. A browser page reads
+/// `env(safe-area-inset-*)`, which stays zero unless the page sets
+/// `viewport-fit=cover`.
+pub fn use_safe_area() -> SafeArea {
+    creamui_reactive::use_context::<SafeAreaProvider>()
+        .safe_area
+        .get()
+}
+
 /// Width classes for adaptive layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenClass {
@@ -380,6 +405,7 @@ fn build_ui_with_recovery(build: &Rc<dyn Fn(Size) -> BoxedWidget>, size: Size) -
 fn with_window_scope<R>(
     theme: &ThemeProvider,
     viewport: &Signal<Size>,
+    safe_area: &Signal<SafeArea>,
     window_drag: &WindowDragHandle,
     f: impl FnOnce() -> R,
 ) -> R {
@@ -387,6 +413,9 @@ fn with_window_scope<R>(
         creamui_reactive::provide_context(theme.clone());
         creamui_reactive::provide_context(ViewportProvider {
             viewport: viewport.clone(),
+        });
+        creamui_reactive::provide_context(SafeAreaProvider {
+            safe_area: safe_area.clone(),
         });
         creamui_reactive::provide_context(window_drag.clone());
         f()
@@ -528,6 +557,7 @@ struct FrameState {
 struct Pipeline {
     frame: RefCell<FrameState>,
     viewport: Signal<Size>,
+    safe_area: Signal<SafeArea>,
     scale_factor: Signal<f64>,
     window: SharedWindow,
     source: UiSource,
@@ -550,7 +580,13 @@ enum UiSource {
 
 impl Pipeline {
     fn with_scope<R>(&self, f: impl FnOnce() -> R) -> R {
-        with_window_scope(&self.theme, &self.viewport, &self.window_drag, f)
+        with_window_scope(
+            &self.theme,
+            &self.viewport,
+            &self.safe_area,
+            &self.window_drag,
+            f,
+        )
     }
 
     fn request_redraw(&self) {
@@ -1753,6 +1789,16 @@ impl WindowState {
         }
     }
 
+    /// Samples system-UI bands before the frame is built. Android does not
+    /// deliver content-rect or inset changes as window events, so the sample
+    /// happens on the redraw that would show them.
+    fn refresh_safe_area(&self) {
+        let Some(window) = self.pipeline.window.borrow().as_ref().cloned() else {
+            return;
+        };
+        set_if_changed(&self.pipeline.safe_area, window.safe_area());
+    }
+
     fn restart_caret(&mut self) {
         self.pipeline.caret_visible.set(true);
         self.next_blink = Instant::now() + CARET_BLINK_INTERVAL;
@@ -2324,6 +2370,7 @@ impl WindowState {
             // Drag handlers may write plain `Cell`s rather than signals.
             self.pipeline.invalidate_layout();
         }
+        self.refresh_safe_area();
         self.flush_pending_viewport();
         self.pipeline.update();
         let ready = self
@@ -2993,6 +3040,7 @@ fn build_window_spec(
             width: options.width as f32,
             height: options.height as f32,
         }),
+        safe_area: Signal::new(SafeArea::ZERO),
         scale_factor: Signal::new(1.0),
         window,
         source: source.clone(),
@@ -4186,6 +4234,34 @@ mod tests {
         assert_eq!(hook_sizes.borrow().last().unwrap().width, 160.0);
         let frame = harness.state.pipeline.frame.borrow();
         assert_eq!(frame.presented.as_ref().unwrap().width, 160);
+    }
+
+    #[test]
+    fn safe_area_hook_tracks_system_insets() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let harness = WindowEventHarness::new({
+            let seen = seen.clone();
+            move |_| {
+                seen.borrow_mut().push(use_safe_area());
+                Box::new(BlankWidget)
+            }
+        });
+        assert_eq!(seen.borrow().last().copied(), Some(SafeArea::ZERO));
+        harness.state.pipeline.safe_area.set(SafeArea {
+            top: 24.0,
+            right: 0.0,
+            bottom: 16.0,
+            left: 8.0,
+        });
+        assert_eq!(
+            seen.borrow().last().copied(),
+            Some(SafeArea {
+                top: 24.0,
+                right: 0.0,
+                bottom: 16.0,
+                left: 8.0,
+            })
+        );
     }
 
     #[test]

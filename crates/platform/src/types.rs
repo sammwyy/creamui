@@ -50,6 +50,116 @@ pub struct PhysicalPosition {
     pub y: f64,
 }
 
+/// Logical-pixel bands of the window covered by system UI.
+///
+/// The status bar, navigation bar, display cutout, and on-screen keyboard
+/// sit in these bands. Taps there are delivered to the system, so
+/// interactive content has to be laid out inside the rectangle they leave
+/// free. [`SafeArea::ZERO`] means the window's client area is already clear
+/// of that chrome, which is the case for ordinary desktop windows.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SafeArea {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl SafeArea {
+    pub const ZERO: Self = Self {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+
+    pub fn is_empty(self) -> bool {
+        self == Self::ZERO
+    }
+
+    /// Component-wise maximum. Used when two platform reports describe the
+    /// same occupied bands in different ways.
+    pub fn max(self, other: Self) -> Self {
+        Self {
+            top: self.top.max(other.top),
+            right: self.right.max(other.right),
+            bottom: self.bottom.max(other.bottom),
+            left: self.left.max(other.left),
+        }
+    }
+
+    /// Shrinks each edge so the bands still fit inside a viewport of
+    /// `width` by `height`. A band that would consume the whole axis is
+    /// kept on the start edge and the opposite edge becomes zero.
+    pub fn clamp(self, width: f32, height: f32) -> Self {
+        let top = self.top.max(0.0).min(height.max(0.0));
+        let bottom = self.bottom.max(0.0).min((height - top).max(0.0));
+        let left = self.left.max(0.0).min(width.max(0.0));
+        let right = self.right.max(0.0).min((width - left).max(0.0));
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+
+    /// Converts physical-pixel insets into logical pixels. Negative edges
+    /// are treated as empty.
+    pub fn from_physical_px(top: i32, right: i32, bottom: i32, left: i32, scale: f64) -> Self {
+        let scale = if scale.is_finite() && scale > f64::EPSILON {
+            scale
+        } else {
+            1.0
+        };
+        let logical = |px: i32| ((px.max(0) as f64) / scale) as f32;
+        Self {
+            top: logical(top),
+            right: logical(right),
+            bottom: logical(bottom),
+            left: logical(left),
+        }
+    }
+
+    /// Insets of an exclusive content rectangle inside a surface.
+    ///
+    /// `left`/`top`/`right`/`bottom` are edges in the same pixel space as
+    /// the surface, matching the native content rectangle. An empty rect,
+    /// or one that does not overlap the surface, produces [`SafeArea::ZERO`]
+    /// so a report that has not arrived yet does not pad the whole window.
+    pub fn from_content_rect(
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+        surface_width: u32,
+        surface_height: u32,
+        scale: f64,
+    ) -> Self {
+        if right <= left || bottom <= top {
+            return Self::ZERO;
+        }
+        let surface_width = surface_width as i32;
+        let surface_height = surface_height as i32;
+        if surface_width <= 0
+            || surface_height <= 0
+            || left >= surface_width
+            || top >= surface_height
+            || right <= 0
+            || bottom <= 0
+        {
+            return Self::ZERO;
+        }
+        Self::from_physical_px(
+            top,
+            surface_width - right,
+            surface_height - bottom,
+            left,
+            scale,
+        )
+    }
+}
+
 /// Region behind a window's surface the compositor should blur, via
 /// [`crate::PlatformWindow::set_blur_region`]. Coordinates are logical
 /// window-local pixels.
@@ -270,4 +380,63 @@ pub enum WindowEvent {
 pub enum ControlFlow {
     Wait,
     WaitUntil(Instant),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SafeArea;
+
+    #[test]
+    fn content_rect_insets_are_the_bands_outside_the_rect() {
+        let area = SafeArea::from_content_rect(0, 80, 1080, 2200, 1080, 2400, 2.0);
+        assert_eq!(
+            area,
+            SafeArea {
+                top: 40.0,
+                right: 0.0,
+                bottom: 100.0,
+                left: 0.0,
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_or_full_content_rect_has_no_insets() {
+        assert!(SafeArea::from_content_rect(0, 0, 0, 0, 1080, 2400, 2.0).is_empty());
+        assert!(SafeArea::from_content_rect(0, 0, 1080, 2400, 1080, 2400, 2.0).is_empty());
+        assert!(SafeArea::from_content_rect(0, 3000, 10, 3010, 1080, 2400, 1.0).is_empty());
+    }
+
+    #[test]
+    fn physical_insets_convert_to_logical_pixels() {
+        assert_eq!(
+            SafeArea::from_physical_px(48, 0, 24, 12, 2.0),
+            SafeArea {
+                top: 24.0,
+                right: 0.0,
+                bottom: 12.0,
+                left: 6.0,
+            }
+        );
+        assert!(SafeArea::from_physical_px(-4, 0, 0, 0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn clamp_keeps_insets_inside_the_viewport() {
+        let area = SafeArea {
+            top: 100.0,
+            right: 80.0,
+            bottom: 40.0,
+            left: 30.0,
+        };
+        assert_eq!(
+            area.clamp(90.0, 50.0),
+            SafeArea {
+                top: 50.0,
+                right: 60.0,
+                bottom: 0.0,
+                left: 30.0,
+            }
+        );
+    }
 }

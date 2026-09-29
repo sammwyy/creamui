@@ -10,6 +10,7 @@ pub fn Nav(
     nav_scroll: ScrollController,
     sidebar_open: Signal<bool>,
     width: f32,
+    insets: SafeArea,
 ) -> BoxedWidget {
     let theme = use_theme();
     // Wider than before, and padded almost only on the left: the card gap
@@ -22,10 +23,10 @@ pub fn Nav(
         },
         flex_shrink: 0.,
         padding: creamui_core::layout::Rect {
-            left: creamui_core::layout::LengthPercentage::Length(16.),
-            right: creamui_core::layout::LengthPercentage::Length(6.),
-            top: creamui_core::layout::LengthPercentage::Length(16.),
-            bottom: creamui_core::layout::LengthPercentage::Length(16.),
+            left: creamui_core::layout::LengthPercentage::Length(16. + insets.left),
+            right: creamui_core::layout::LengthPercentage::Length(6. + insets.right),
+            top: creamui_core::layout::LengthPercentage::Length(16. + insets.top),
+            bottom: creamui_core::layout::LengthPercentage::Length(16. + insets.bottom),
         },
         ..column(5.)
     };

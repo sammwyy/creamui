@@ -37,8 +37,22 @@ blair-blur-protocol = { path = "../../../blair/crates/blur-protocol", features =
 xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "Node",
+    "Window",
+] }
 web-time = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+log = "0.4"
+ndk-context = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

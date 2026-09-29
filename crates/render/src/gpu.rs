@@ -1563,10 +1563,34 @@ mod tests {
     use crate::recorder::SceneRecorder;
     use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
     use creamui_theme::ColorScheme;
+    use std::ops::{Deref, DerefMut};
+    use std::sync::{Mutex, MutexGuard};
 
-    fn headless() -> Option<HeadlessGpu> {
+    static GPU_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TestGpu {
+        gpu: HeadlessGpu,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl Deref for TestGpu {
+        type Target = HeadlessGpu;
+
+        fn deref(&self) -> &Self::Target {
+            &self.gpu
+        }
+    }
+
+    impl DerefMut for TestGpu {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.gpu
+        }
+    }
+
+    fn headless() -> Option<TestGpu> {
+        let guard = GPU_TEST_LOCK.lock().unwrap();
         match HeadlessGpu::new() {
-            Ok(gpu) => Some(gpu),
+            Ok(gpu) => Some(TestGpu { gpu, _guard: guard }),
             Err(err) => {
                 eprintln!("skipping GPU test: {err}");
                 None
@@ -1873,7 +1897,7 @@ mod tests {
         let rect = shared.atlas.get_or_insert(&queue, &glyph, 1).unwrap();
         assert_eq!(glyph.atlas_slot.get(), Some((shared.atlas.id, 0)));
 
-        let other_device = headless().unwrap();
+        let other_device = HeadlessGpu::new().unwrap();
         let mut other = other_device.renderer().shared.borrow_mut();
         let other_queue = other.queue.clone();
         other.atlas.get_or_insert(&other_queue, &glyph, 1).unwrap();

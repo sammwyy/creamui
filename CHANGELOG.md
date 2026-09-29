@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Headless GPU tests now serialize device use, avoiding a concurrent-driver
+  crash while the rest of the render test suite runs in parallel.
 - Added `VirtualTreeView` with flattened expanded rows, stable node keys,
   keyboard selection, and viewport-sized widget materialization.
 - Added `RawVirtualTable` and themed `VirtualTable` with fixed headers,

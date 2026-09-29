@@ -457,6 +457,10 @@ impl Widget for RawTextArea {
     fn focusable(&self) -> bool {
         true
     }
+
+    fn accepts_text_input(&self) -> bool {
+        true
+    }
     fn cursor_icon(&self) -> Option<CursorIcon> {
         Some(CursorIcon::Text)
     }
@@ -1010,6 +1014,10 @@ impl Widget for RawTextInput {
     }
 
     fn focusable(&self) -> bool {
+        true
+    }
+
+    fn accepts_text_input(&self) -> bool {
         true
     }
 

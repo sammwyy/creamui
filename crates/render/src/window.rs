@@ -54,6 +54,7 @@ const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// Frame period assumed when the platform cannot report the display's.
 const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const REFRESH_QUERY_INTERVAL: Duration = Duration::from_secs(1);
+const TOUCH_SCROLL_SLOP: f32 = 8.0;
 
 /// What happens when the user asks the window manager to close a window.
 ///
@@ -395,12 +396,13 @@ impl Presenter {
         backend: RenderBackend,
         transparent: bool,
         gpu_instance: Option<&wgpu::Instance>,
+        gpu_context: &mut Option<crate::gpu::GpuContext>,
     ) -> Result<Self, String> {
         if backend == RenderBackend::Cpu {
             return Err("CPU presentation is not supported on Android".to_owned());
         }
         let instance = gpu_instance.ok_or("GPU instance is unavailable")?;
-        GpuSurface::new(window.clone(), instance, transparent).map(Presenter::Gpu)
+        GpuSurface::new(window.clone(), instance, transparent, gpu_context).map(Presenter::Gpu)
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -439,6 +441,7 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => true,
+            #[cfg(not(target_os = "android"))]
             _ => false,
         }
     }
@@ -447,6 +450,7 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => false,
+            #[cfg(not(target_os = "android"))]
             _ => true,
         }
     }
@@ -1462,6 +1466,8 @@ struct WindowState {
     pending_drag: Option<(Point, Rect, Rc<dyn Fn(Point, Rect)>)>,
     runtime_dragged: bool,
     runtime_press_origin: Option<Point>,
+    touch: Option<TouchGesture>,
+    ime_allowed: bool,
     _effect: Effect,
     _runtime_subscription: Option<Rc<dyn Fn()>>,
     t_run: Instant,
@@ -1473,6 +1479,14 @@ struct DragClick {
     on_click: Option<Rc<dyn Fn()>>,
     on_click_at: Option<Rc<dyn Fn(Point)>>,
     moved: bool,
+}
+
+struct TouchGesture {
+    id: u64,
+    origin: Point,
+    last: Point,
+    scrollable: bool,
+    scrolling: bool,
 }
 
 impl WindowState {
@@ -1549,17 +1563,21 @@ impl WindowState {
         let point = self.pointer_pos;
         self.runtime_dragged = false;
         self.runtime_press_origin = Some(point);
-        let drag_start = runtime.with_mut(|runtime| {
+        let (drag_start, text_input) = runtime.with_mut(|runtime| {
             let target = runtime.hit_test(point);
             runtime.set_pressed(target);
             let focus =
                 target.filter(|&id| runtime.get(id).is_some_and(|node| node.events.focusable));
             runtime.set_focused(focus);
-            target.and_then(|id| {
+            let drag_start = target.and_then(|id| {
                 let node = runtime.get(id)?;
                 Some((node.layout.rect, node.events.on_drag_start.clone()))
-            })
+            });
+            let text_input =
+                focus.is_some_and(|id| runtime.get(id).is_some_and(|node| node.events.text_input));
+            (drag_start, text_input)
         });
+        self.set_ime_allowed(text_input);
         if let Some((rect, Some(handler))) = drag_start {
             handler(
                 Point {
@@ -1696,13 +1714,209 @@ impl WindowState {
         self.pipeline.frame.borrow_mut().recorder.press_origin = origin;
     }
 
+    fn set_ime_allowed(&mut self, allowed: bool) {
+        if self.ime_allowed == allowed {
+            return;
+        }
+        self.ime_allowed = allowed;
+        if let Some(window) = self.pipeline.window.borrow().as_ref() {
+            window.set_ime_allowed(allowed);
+        }
+    }
+
+    fn refresh_ime_for_legacy_focus(&mut self) {
+        let allowed = self.pipeline.focused.get().is_some_and(|focus| {
+            self.scene(|scene| Some(scene.focus_accepts_text_input(focus)))
+                .unwrap_or(false)
+        });
+        self.set_ime_allowed(allowed);
+    }
+
+    fn cancel_pointer_interaction(&mut self) {
+        if let Some(runtime) = self.runtime() {
+            let drag_end = runtime.with_mut(|runtime| {
+                let drag_end = runtime
+                    .pointer()
+                    .pressed
+                    .and_then(|id| runtime.get(id)?.events.on_drag_end.clone());
+                runtime.set_pressed(None);
+                runtime.release_pointer_capture();
+                drag_end
+            });
+            if let Some(handler) = drag_end {
+                handler();
+            }
+            self.runtime_dragged = false;
+            self.runtime_press_origin = None;
+        } else {
+            self.dragging = None;
+            self.pending_drag = None;
+            self.drag_click = None;
+            self.set_press_origin(None);
+            if let Some(handler) = self.drag_end.take() {
+                handler();
+            }
+        }
+        self.pipeline.invalidate_paint();
+    }
+
+    fn scroll_at(&mut self, pointer: Point, delta_y: f32) {
+        if let Some(runtime) = self.runtime() {
+            let handler = runtime.with(|runtime| {
+                let target = runtime.scroll_target(pointer)?;
+                runtime.get(target)?.events.on_scroll.clone()
+            });
+            if let Some(handler) = handler {
+                handler(delta_y);
+            }
+            return;
+        }
+        let handler = self.scene(|scene| {
+            let index = scene.scroll_hit_test(pointer)?;
+            Some((
+                scene.on_scroll_at(index)?.clone(),
+                scene.scroll_is_local_at(index),
+                scene.scroll_requires_layout_at(index),
+            ))
+        });
+        if let Some((handler, local, layout)) = handler {
+            handler(delta_y);
+            if layout {
+                self.pipeline.invalidate_layout();
+            } else if local {
+                self.pipeline.invalidate_paint();
+            }
+        }
+    }
+
+    fn touch_scrollable_at(&self, point: Point) -> bool {
+        if let Some(runtime) = self.runtime() {
+            return runtime.with(|runtime| runtime.scroll_target(point).is_some());
+        }
+        self.scene(|scene| Some(scene.scroll_hit_test(point).is_some()))
+            .unwrap_or(false)
+    }
+
+    fn touch_starts_text_input(&self, point: Point) -> bool {
+        if let Some(runtime) = self.runtime() {
+            return runtime.with(|runtime| {
+                runtime
+                    .hit_test(point)
+                    .is_some_and(|id| runtime.get(id).is_some_and(|node| node.events.text_input))
+            });
+        }
+        self.scene(|scene| {
+            Some(
+                scene
+                    .focus_hit_test(point)
+                    .is_some_and(|focus| scene.focus_accepts_text_input(focus)),
+            )
+        })
+        .unwrap_or(false)
+    }
+
+    fn touch_point(&self, position: creamui_platform::PhysicalPosition) -> Point {
+        let scale = self.pipeline.scale_factor.peek();
+        Point {
+            x: (position.x / scale) as f32,
+            y: (position.y / scale) as f32,
+        }
+    }
+
+    fn handle_touch(
+        &mut self,
+        id: u64,
+        phase: creamui_platform::TouchPhase,
+        position: creamui_platform::PhysicalPosition,
+    ) {
+        let point = self.touch_point(position);
+        match phase {
+            creamui_platform::TouchPhase::Started => {
+                if self.touch.is_some() {
+                    return;
+                }
+                self.touch = Some(TouchGesture {
+                    id,
+                    origin: point,
+                    last: point,
+                    scrollable: !self.touch_starts_text_input(point)
+                        && self.touch_scrollable_at(point),
+                    scrolling: false,
+                });
+                self.handle_window_event(WindowEvent::CursorMoved { position });
+                self.handle_window_event(WindowEvent::MouseInput {
+                    pressed: true,
+                    button: MouseButton::Left,
+                    serial: None,
+                });
+            }
+            creamui_platform::TouchPhase::Moved => {
+                let Some(mut touch) = self.touch.take() else {
+                    return;
+                };
+                if touch.id != id {
+                    self.touch = Some(touch);
+                    return;
+                }
+                let delta_y = touch.last.y - point.y;
+                let should_scroll = touch.scrollable
+                    && !touch.scrolling
+                    && (point.x - touch.origin.x).hypot(point.y - touch.origin.y)
+                        >= TOUCH_SCROLL_SLOP;
+                touch.last = point;
+                if should_scroll {
+                    touch.scrolling = true;
+                    self.cancel_pointer_interaction();
+                }
+                if touch.scrolling {
+                    self.pointer_pos = point;
+                    self.set_pointer(Some(point));
+                    self.scroll_at(touch.origin, delta_y);
+                } else {
+                    self.handle_window_event(WindowEvent::CursorMoved { position });
+                }
+                self.touch = Some(touch);
+            }
+            creamui_platform::TouchPhase::Ended => {
+                let Some(touch) = self.touch.take() else {
+                    return;
+                };
+                if touch.id != id {
+                    self.touch = Some(touch);
+                    return;
+                }
+                if touch.scrolling {
+                    self.pointer_pos = point;
+                    self.set_pointer(Some(point));
+                } else {
+                    self.handle_window_event(WindowEvent::CursorMoved { position });
+                    self.handle_window_event(WindowEvent::MouseInput {
+                        pressed: false,
+                        button: MouseButton::Left,
+                        serial: None,
+                    });
+                }
+            }
+            creamui_platform::TouchPhase::Cancelled => {
+                if self.touch.as_ref().is_some_and(|touch| touch.id == id) {
+                    self.touch = None;
+                    self.cancel_pointer_interaction();
+                }
+            }
+        }
+    }
+
     fn handle_key_input(&mut self, key: KeyInput) {
         if let Some(runtime) = self.runtime() {
             if key.key == Key::Tab {
-                runtime.with_mut(|runtime| {
+                let text_input = runtime.with_mut(|runtime| {
                     let next = runtime.next_focus(runtime.pointer().focused, key.modifiers.shift);
                     runtime.set_focused(next);
+                    next.is_some_and(|id| {
+                        runtime.get(id).is_some_and(|node| node.events.text_input)
+                    })
                 });
+                self.set_ime_allowed(text_input);
                 self.restart_caret();
                 return;
             }
@@ -1720,6 +1934,7 @@ impl WindowState {
             let current = self.pipeline.focused.get();
             let next = self.scene(|scene| scene.next_focus(current, key.modifiers.shift));
             self.pipeline.focused.set(next);
+            self.refresh_ime_for_legacy_focus();
             self.restart_caret();
             self.pipeline.invalidate_paint();
             return;
@@ -1876,6 +2091,7 @@ impl WindowState {
                 if new_focus != self.pipeline.focused.replace(new_focus) {
                     self.restart_caret();
                 }
+                self.refresh_ime_for_legacy_focus();
                 if let Some((rect, handler)) = drag_anchor {
                     handler(
                         Point {
@@ -1962,6 +2178,7 @@ impl WindowState {
                     });
                 }
                 self.set_press_origin(None);
+                self.set_ime_allowed(false);
                 self.dragging = None;
                 self.pending_drag = None;
                 self.pipeline.invalidate_paint();
@@ -1982,36 +2199,25 @@ impl WindowState {
                     MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
                     MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
                 };
-                let pointer = self.pointer_pos;
-                if let Some(runtime) = self.runtime() {
-                    let handler = runtime.with(|runtime| {
-                        let target = runtime.scroll_target(pointer)?;
-                        runtime.get(target)?.events.on_scroll.clone()
-                    });
-                    if let Some(handler) = handler {
-                        handler(delta_y);
-                    }
-                    return;
-                }
-                let handler = self.scene(|scene| {
-                    let index = scene.scroll_hit_test(pointer)?;
-                    Some((
-                        scene.on_scroll_at(index)?.clone(),
-                        scene.scroll_is_local_at(index),
-                        scene.scroll_requires_layout_at(index),
-                    ))
-                });
-                if let Some((handler, local, layout)) = handler {
-                    handler(delta_y);
-                    if layout {
-                        self.pipeline.invalidate_layout();
-                    } else if local {
-                        self.pipeline.invalidate_paint();
-                    }
-                }
+                self.scroll_at(self.pointer_pos, delta_y);
             }
+            WindowEvent::Touch {
+                id,
+                phase,
+                position,
+            } => self.handle_touch(id, phase, position),
             WindowEvent::KeyboardInput(event) if !event.synthetic => {
                 if !event.pressed {
+                    return;
+                }
+                if event.key == PlatformKey::Back && self.ime_allowed {
+                    if let Some(runtime) = self.runtime() {
+                        runtime.with_mut(|runtime| runtime.set_focused(None));
+                    } else {
+                        self.pipeline.focused.set(None);
+                    }
+                    self.set_ime_allowed(false);
+                    self.pipeline.invalidate_paint();
                     return;
                 }
                 if event.key == PlatformKey::F3 {
@@ -2323,6 +2529,8 @@ impl AppHandler {
             pending_drag: None,
             runtime_dragged: false,
             runtime_press_origin: None,
+            touch: None,
+            ime_allowed: false,
             _effect: spec._effect,
             _runtime_subscription: spec._runtime_subscription,
             t_run: t0,
@@ -2834,6 +3042,8 @@ mod tests {
                 pending_drag: None,
                 runtime_dragged: false,
                 runtime_press_origin: None,
+                touch: None,
+                ime_allowed: false,
                 _effect: spec._effect,
                 _runtime_subscription: spec._runtime_subscription,
                 t_run: now,
@@ -2850,6 +3060,118 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    struct TouchTextWidget {
+        starts: Rc<Cell<u32>>,
+        drags: Rc<Cell<u32>>,
+    }
+
+    impl creamui_core::Widget for TouchTextWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn focusable(&self) -> bool {
+            true
+        }
+
+        fn accepts_text_input(&self) -> bool {
+            true
+        }
+
+        fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+            Some(Rc::new(|_| {}))
+        }
+
+        fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+            let starts = self.starts.clone();
+            Some(Rc::new(move |_, _| starts.set(starts.get() + 1)))
+        }
+
+        fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+            let drags = self.drags.clone();
+            Some(Rc::new(move |_, _| drags.set(drags.get() + 1)))
+        }
+    }
+
+    struct TouchScrollWidget {
+        deltas: Rc<RefCell<Vec<f32>>>,
+    }
+
+    impl creamui_core::Widget for TouchScrollWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: creamui_core::Rect) {}
+
+        fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
+            let deltas = self.deltas.clone();
+            Some(Rc::new(move |delta| deltas.borrow_mut().push(delta)))
+        }
+    }
+
+    fn touch(id: u64, phase: creamui_platform::TouchPhase, x: f64, y: f64) -> WindowEvent {
+        WindowEvent::Touch {
+            id,
+            phase,
+            position: creamui_platform::PhysicalPosition { x, y },
+        }
+    }
+
+    #[test]
+    fn touch_drag_selects_text_and_back_dismisses_the_ime() {
+        let starts = Rc::new(Cell::new(0));
+        let drags = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let starts = starts.clone();
+            let drags = drags.clone();
+            move |_| {
+                Box::new(TouchTextWidget {
+                    starts: starts.clone(),
+                    drags: drags.clone(),
+                })
+            }
+        });
+
+        harness.send(touch(1, creamui_platform::TouchPhase::Started, 10.0, 10.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Moved, 40.0, 10.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Ended, 40.0, 10.0));
+
+        assert_eq!(starts.get(), 1);
+        assert_eq!(drags.get(), 1);
+        assert!(harness.state.ime_allowed);
+
+        harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+            key: PlatformKey::Back,
+            pressed: true,
+            synthetic: false,
+        }));
+
+        assert!(!harness.state.ime_allowed);
+        assert_eq!(harness.state.pipeline.focused.get(), None);
+    }
+
+    #[test]
+    fn touch_drag_scrolls_instead_of_clicking() {
+        let deltas = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let deltas = deltas.clone();
+            move |_| {
+                Box::new(TouchScrollWidget {
+                    deltas: deltas.clone(),
+                })
+            }
+        });
+
+        harness.send(touch(1, creamui_platform::TouchPhase::Started, 10.0, 80.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Moved, 10.0, 40.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Ended, 10.0, 40.0));
+
+        assert_eq!(deltas.borrow().as_slice(), &[40.0]);
     }
 
     #[test]

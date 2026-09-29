@@ -6,6 +6,7 @@ use std::time::Duration;
 use winit::application::ApplicationHandler as WinitApplicationHandler;
 use winit::event::{
     ElementState, MouseButton as WinitMouseButton, MouseScrollDelta as WinitScrollDelta,
+    TouchPhase as WinitTouchPhase,
 };
 use winit::event_loop::{
     ActiveEventLoop as WinitActiveEventLoop, ControlFlow as WinitControlFlow,
@@ -22,7 +23,8 @@ use winit::window::{
 use crate::{
     BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
     MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
-    PopupOptions, ResizeDirection, WindowAttributes, WindowEvent, WindowId, WindowLevel,
+    PopupOptions, ResizeDirection, TouchPhase, WindowAttributes, WindowEvent, WindowId,
+    WindowLevel,
 };
 
 type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
@@ -99,6 +101,9 @@ impl Window {
     }
     pub fn focus(&self) {
         self.inner.focus_window();
+    }
+    pub fn set_ime_allowed(&self, allowed: bool) {
+        self.inner.set_ime_allowed(allowed);
     }
     pub fn drag_window(&self) -> Result<(), String> {
         self.inner.drag_window().map_err(|error| error.to_string())
@@ -185,6 +190,9 @@ impl PlatformWindow for Window {
     }
     fn focus(&self) {
         self.focus();
+    }
+    fn set_ime_allowed(&self, allowed: bool) {
+        self.set_ime_allowed(allowed);
     }
     #[cfg(target_arch = "wasm32")]
     fn canvas(&self) -> Option<web_sys::HtmlCanvasElement> {
@@ -479,6 +487,19 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
                 }
             },
         },
+        winit::event::WindowEvent::Touch(touch) => WindowEvent::Touch {
+            id: touch.id,
+            phase: match touch.phase {
+                WinitTouchPhase::Started => TouchPhase::Started,
+                WinitTouchPhase::Moved => TouchPhase::Moved,
+                WinitTouchPhase::Ended => TouchPhase::Ended,
+                WinitTouchPhase::Cancelled => TouchPhase::Cancelled,
+            },
+            position: PhysicalPosition {
+                x: touch.location.x,
+                y: touch.location.y,
+            },
+        },
         winit::event::WindowEvent::KeyboardInput {
             event,
             is_synthetic,
@@ -505,6 +526,7 @@ fn from_winit_key(key: &WinitKey) -> Key {
         WinitKey::Named(NamedKey::Enter) => Key::Enter,
         WinitKey::Named(NamedKey::Tab) => Key::Tab,
         WinitKey::Named(NamedKey::Escape) => Key::Escape,
+        WinitKey::Named(NamedKey::BrowserBack | NamedKey::GoBack) => Key::Back,
         WinitKey::Named(NamedKey::ArrowLeft) => Key::Left,
         WinitKey::Named(NamedKey::ArrowRight) => Key::Right,
         WinitKey::Named(NamedKey::ArrowUp) => Key::Up,

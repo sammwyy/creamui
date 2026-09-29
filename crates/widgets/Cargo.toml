@@ -20,3 +20,7 @@ creamui-reactive = { workspace = true }
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 arboard = { workspace = true }
 rfd = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+ndk-context = "0.1"

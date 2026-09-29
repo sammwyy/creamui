@@ -205,6 +205,7 @@ pub struct EventState {
     pub on_scroll: Option<Rc<dyn Fn(f32)>>,
     pub cursor: Option<crate::CursorIcon>,
     pub focusable: bool,
+    pub text_input: bool,
 }
 
 impl EventState {

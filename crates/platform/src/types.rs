@@ -122,6 +122,14 @@ pub enum MouseScrollDelta {
     PixelDelta(PhysicalPosition),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
     pub ctrl: bool,
@@ -139,6 +147,7 @@ pub enum Key {
     Enter,
     Tab,
     Escape,
+    Back,
     Left,
     Right,
     Up,
@@ -235,6 +244,11 @@ pub enum WindowEvent {
     Focused(bool),
     MouseWheel {
         delta: MouseScrollDelta,
+    },
+    Touch {
+        id: u64,
+        phase: TouchPhase,
+        position: PhysicalPosition,
     },
     KeyboardInput(KeyEvent),
     ModifiersChanged(Modifiers),

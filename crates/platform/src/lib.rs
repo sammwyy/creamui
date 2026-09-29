@@ -61,6 +61,10 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn drag_resize_window(&self, direction: ResizeDirection) -> Result<(), String>;
     fn set_cursor(&self, icon: CursorIcon);
     fn focus(&self);
+    /// Enables or disables the platform text input method for this window.
+    fn set_ime_allowed(&self, allowed: bool) {
+        let _ = allowed;
+    }
     /// Requests compositor-side background blur behind `region`, or clears
     /// it with `None`. Default: unsupported, for backends/compositors with
     /// no such protocol (the window stays plain-transparent instead).

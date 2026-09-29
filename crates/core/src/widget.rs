@@ -569,6 +569,11 @@ pub trait Widget {
         None
     }
 
+    /// Whether focusing this widget should enable the platform text input method.
+    fn accepts_text_input(&self) -> bool {
+        false
+    }
+
     /// Optional drag handler for press-and-drag interactions (e.g. a
     /// slider). Called on the initial press and on every subsequent pointer
     /// move while the button stays held, with the pointer's position in
@@ -836,6 +841,10 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         self.widget.on_key()
+    }
+
+    fn accepts_text_input(&self) -> bool {
+        self.widget.accepts_text_input()
     }
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         self.widget.on_drag()

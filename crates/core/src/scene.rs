@@ -257,7 +257,7 @@ struct PaintOutputs {
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
+    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>, bool)>,
     /// `(visible_rect, full_rect, handler)` — hit-testing uses the
     /// clip-visible portion, but the handler is called with the widget's
     /// full (unclipped) rect so e.g. a slider can divide by its own real
@@ -462,8 +462,12 @@ fn paint_instance(
                 );
             }
             focus.counter += 1;
-            out.focusables
-                .push((FocusId(instance.node_id), visible, on_key));
+            out.focusables.push((
+                FocusId(instance.node_id),
+                visible,
+                on_key,
+                instance.widget.accepts_text_input(),
+            ));
         }
     }
 
@@ -622,7 +626,7 @@ pub struct Scene {
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>)>,
+    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>, bool)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
@@ -633,14 +637,14 @@ pub struct Scene {
 impl Scene {
     /// Identity at a position in this scene's tab order.
     pub fn focus_id_at(&self, index: usize) -> Option<FocusId> {
-        self.focusables.get(index).map(|(id, _, _)| *id)
+        self.focusables.get(index).map(|(id, _, _, _)| *id)
     }
 
     /// Current tab position of a retained focusable widget.
     pub fn focus_index(&self, id: FocusId) -> Option<usize> {
         self.focusables
             .iter()
-            .position(|(candidate, _, _)| *candidate == id)
+            .position(|(candidate, _, _, _)| *candidate == id)
     }
 
     /// Cycle through visible keyboard controls in layout order.
@@ -682,13 +686,20 @@ impl Scene {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, (_, rect, _))| rect.is_some_and(|rect| rect.contains(point)))
+            .find(|(_, (_, rect, _, _))| rect.is_some_and(|rect| rect.contains(point)))
             .map(|(index, _)| index)
     }
 
     /// The keyboard handler at `index`, if it still exists this render.
     pub fn on_key_at(&self, index: usize) -> Option<&Rc<dyn Fn(KeyInput)>> {
-        self.focusables.get(index).map(|(_, _, handler)| handler)
+        self.focusables.get(index).map(|(_, _, handler, _)| handler)
+    }
+
+    /// Whether the focusable at `index` accepts text from the platform IME.
+    pub fn focus_accepts_text_input(&self, index: usize) -> bool {
+        self.focusables
+            .get(index)
+            .is_some_and(|(_, _, _, accepts_text_input)| *accepts_text_input)
     }
 
     /// Returns the index (into this scene's draggables) of the topmost
@@ -953,7 +964,7 @@ impl Renderer {
         }
         painter.pop_clip();
         *self.previous_focus_order.borrow_mut() =
-            out.focusables.iter().map(|(id, _, _)| *id).collect();
+            out.focusables.iter().map(|(id, _, _, _)| *id).collect();
         Some(Scene {
             hits: out.hits,
             hits_at: out.hits_at,

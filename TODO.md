@@ -33,8 +33,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Virtualization and resource loading
 
-- Add virtual trees with flattened expanded nodes and stable keys. `TreeView`
-  still materializes every visible item.
 - Connect `ResourceReady::into_mutation` to the application runtime and
   presenter once runtime-backed windows are enabled.
 

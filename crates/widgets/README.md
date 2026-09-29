@@ -7,6 +7,8 @@ Use themed widgets such as `Button`, `TextInput`, `ScrollView`, and `ColorPicker
 `VirtualList` builds only visible rows. See `examples/virtual-list` for a large, mixed-height list.
 `VirtualTable` uses the same `VirtualListState` and loads cell text only for
 visible rows while keeping the header fixed above the scrolling body.
+`VirtualTreeView` flattens expanded nodes and mounts only rows near the
+viewport, retaining node IDs as row keys.
 
 ```rust
 use creamui_widgets::Button;

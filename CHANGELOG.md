@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Added `VirtualTreeView` with flattened expanded rows, stable node keys,
+  keyboard selection, and viewport-sized widget materialization.
 - Added `RawVirtualTable` and themed `VirtualTable` with fixed headers,
   selection callbacks, and row data loaded only for the visible range.
 - GPU instance uploads can cover separate changed ranges, avoiding uploads of

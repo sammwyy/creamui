@@ -1,6 +1,6 @@
 use super::*;
 use crate::ScrollController;
-use creamui_core::{visible_range, HeightIndex};
+use creamui_core::{visible_range, HeightIndex, WidgetKey};
 use std::cell::{Cell, RefCell};
 
 /// Persistent per-item height bookkeeping for [`RawVirtualList`], owned by
@@ -113,6 +113,7 @@ pub struct RawVirtualList {
     pub scrollbar_hover_color: Option<Color>,
     pub scrollbar_pressed_color: Option<Color>,
     pub item: Rc<dyn Fn(usize) -> BoxedWidget>,
+    pub item_key: Option<Rc<dyn Fn(usize) -> WidgetKey>>,
 }
 
 impl RawVirtualList {
@@ -134,6 +135,7 @@ impl RawVirtualList {
             scrollbar_hover_color: None,
             scrollbar_pressed_color: None,
             item: Rc::new(item),
+            item_key: None,
         }
     }
 
@@ -141,6 +143,11 @@ impl RawVirtualList {
     /// scroll or a focus jump doesn't flash an unmounted row. Default: `4`.
     pub fn overscan(mut self, overscan: usize) -> Self {
         self.overscan = overscan;
+        self
+    }
+
+    pub fn keyed_by(mut self, key: impl Fn(usize) -> WidgetKey + 'static) -> Self {
+        self.item_key = Some(Rc::new(key));
         self
     }
 
@@ -224,6 +231,7 @@ impl Widget for RawVirtualList {
                     style: row_style.into(),
                     state: self.state.clone(),
                     index,
+                    key: self.item_key.as_ref().map(|key| key(index)),
                     child: Some((self.item)(index)),
                 }) as BoxedWidget
             })
@@ -262,6 +270,7 @@ struct MeasuredRow {
     style: creamui_core::Style,
     state: VirtualListState,
     index: usize,
+    key: Option<WidgetKey>,
     child: Option<BoxedWidget>,
 }
 
@@ -274,6 +283,10 @@ impl Widget for MeasuredRow {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         self.child.take().into_iter().collect()
+    }
+
+    fn key(&self) -> Option<WidgetKey> {
+        self.key.clone()
     }
 
     fn on_layout(&self, rect: Rect) -> bool {

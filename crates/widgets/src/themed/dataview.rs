@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::layout::fill;
-use crate::{ScrollController, TreeController, VirtualListState};
+use crate::{RawVirtualList, ScrollController, TreeController, VirtualListState};
 use creamui_core::layout::{AlignItems, Dimension, JustifyContent};
 use creamui_core::Key;
 
@@ -81,12 +81,13 @@ fn flatten(
 /// controller reads it depends on happen on the caller's own `build_ui`
 /// call stack and actually subscribe to future changes; see
 /// [`TreeController`]'s doc comment.
+#[derive(Clone)]
 pub struct TreeView {
     theme: Theme,
     style: Style,
     scroll: ScrollController,
     controller: TreeController,
-    rows: Vec<FlatRow>,
+    rows: Rc<Vec<FlatRow>>,
     row_height: f32,
     indent: f32,
 }
@@ -107,7 +108,7 @@ impl TreeView {
             style,
             scroll,
             controller,
-            rows,
+            rows: Rc::new(rows),
             row_height: 30.0,
             indent: 18.0,
         }
@@ -213,7 +214,7 @@ impl Widget for TreeView {
             RawScrollView::controlled(fill(Style::default()), self.scroll.clone())
                 .background(self.theme.surface_elevated)
                 .corner_radius(self.theme.input_radius);
-        for row in &self.rows {
+        for row in self.rows.iter() {
             scroll_view = scroll_view.child(self.build_row(row));
         }
         vec![Box::new(scroll_view)]
@@ -225,39 +226,32 @@ impl Widget for TreeView {
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         let controller = self.controller.clone();
-        let ids: Vec<u64> = self.rows.iter().map(|row| row.id).collect();
-        let expandable: Vec<(u64, bool, bool)> = self
-            .rows
-            .iter()
-            .map(|row| (row.id, row.has_children, row.expanded))
-            .collect();
+        let rows = self.rows.clone();
         Some(Rc::new(move |input| {
-            if ids.is_empty() {
+            if rows.is_empty() {
                 return;
             }
             let current_index = controller
                 .peek_selected()
-                .and_then(|id| ids.iter().position(|row_id| *row_id == id));
+                .and_then(|id| rows.iter().position(|row| row.id == id));
             match input.key {
                 Key::Down => {
-                    let next = current_index.map_or(0, |i| (i + 1).min(ids.len() - 1));
-                    controller.select(ids[next]);
+                    let next = current_index.map_or(0, |i| (i + 1).min(rows.len() - 1));
+                    controller.select(rows[next].id);
                 }
                 Key::Up => {
                     let next = current_index.map_or(0, |i| i.saturating_sub(1));
-                    controller.select(ids[next]);
+                    controller.select(rows[next].id);
                 }
                 Key::Right | Key::Left => {
                     let Some(id) = controller.peek_selected() else {
                         return;
                     };
-                    let Some((_, has_children, expanded)) =
-                        expandable.iter().find(|(row_id, _, _)| *row_id == id)
-                    else {
+                    let Some(row) = rows.iter().find(|row| row.id == id) else {
                         return;
                     };
                     let want_expanded = input.key == Key::Right;
-                    if *has_children && *expanded != want_expanded {
+                    if row.has_children && row.expanded != want_expanded {
                         controller.set_expanded(id, want_expanded);
                     }
                 }
@@ -278,6 +272,92 @@ impl Widget for TreeView {
             2.0,
             self.theme.input_radius + 2.0,
         );
+    }
+}
+
+/// A tree that flattens expanded nodes but mounts only rows near the viewport.
+/// Each mounted row keeps its node ID as its widget key. Keep `state` across
+/// rebuilds and initialize it with the configured row height.
+pub struct VirtualTreeView {
+    tree: TreeView,
+    state: VirtualListState,
+    viewport_height: f32,
+    overscan: usize,
+}
+
+impl VirtualTreeView {
+    pub fn new(
+        style: Style,
+        scroll: ScrollController,
+        controller: TreeController,
+        nodes: &[TreeNode],
+        state: VirtualListState,
+        viewport_height: f32,
+    ) -> Self {
+        let tree = TreeView::new(style, scroll, controller, nodes);
+        if state.len() != tree.rows.len() {
+            state.set_item_count(tree.rows.len(), tree.row_height);
+        }
+        Self {
+            tree,
+            state,
+            viewport_height: viewport_height.max(0.0),
+            overscan: 4,
+        }
+    }
+
+    pub fn row_height(mut self, height: f32) -> Self {
+        self.tree.row_height = height.max(1.0);
+        self
+    }
+
+    pub fn indent(mut self, indent: f32) -> Self {
+        self.tree.indent = indent.max(0.0);
+        self
+    }
+
+    pub fn overscan(mut self, rows: usize) -> Self {
+        self.overscan = rows;
+        self
+    }
+}
+
+impl Widget for VirtualTreeView {
+    fn style(&self) -> creamui_core::Style {
+        self.tree.style()
+    }
+
+    fn paint(&self, _painter: &mut dyn Painter, _rect: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        let theme = self.tree.theme;
+        let rows = self.tree.rows.clone();
+        let tree = self.tree.clone();
+        let list = RawVirtualList::new(
+            fill(Style::default()),
+            self.state.clone(),
+            self.tree.scroll.clone(),
+            self.viewport_height,
+            move |index| tree.build_row(&tree.rows[index]),
+        )
+        .keyed_by(move |index| rows[index].id.into())
+        .overscan(self.overscan)
+        .background(theme.surface_elevated)
+        .corner_radius(theme.input_radius);
+        vec![Box::new(list)]
+    }
+
+    fn focusable(&self) -> bool {
+        self.tree.focusable()
+    }
+
+    fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+        self.tree.on_key()
+    }
+
+    fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
+        self.tree
+            .paint_focused_overlay(painter, rect, caret_visible);
     }
 }
 
@@ -444,5 +524,97 @@ impl Widget for VirtualTable {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         self.inner.children()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use creamui_core::{visible_range, HeightIndex, WidgetKey};
+
+    fn mounted_keys(mut widget: BoxedWidget, keys: &mut Vec<WidgetKey>) {
+        if let Some(key) = widget.key() {
+            keys.push(key);
+        }
+        for child in widget.children() {
+            mounted_keys(child, keys);
+        }
+    }
+
+    #[test]
+    fn virtual_tree_mounts_visible_rows_with_stable_node_keys() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let controller = TreeController::new();
+            controller.set_expanded(1, true);
+            let scroll = ScrollController::new(0.0);
+            let state = VirtualListState::new(0, 30.0);
+            let nodes = [
+                TreeNode::new(1, "Parent").child(TreeNode::new(4, "Child")),
+                TreeNode::new(2, "Second"),
+                TreeNode::new(3, "Third"),
+            ];
+            let mut tree = VirtualTreeView::new(
+                Style::default(),
+                scroll.clone(),
+                controller.clone(),
+                &nodes,
+                state.clone(),
+                60.0,
+            )
+            .overscan(0);
+            assert_eq!(state.len(), 4);
+            let mut keys = Vec::new();
+            mounted_keys(tree.children().pop().unwrap(), &mut keys);
+            assert_eq!(keys, vec![1u64.into(), 4u64.into(), 2u64.into()]);
+
+            let reordered = [
+                TreeNode::new(2, "Second"),
+                TreeNode::new(1, "Parent").child(TreeNode::new(4, "Child")),
+                TreeNode::new(3, "Third"),
+            ];
+            let mut tree = VirtualTreeView::new(
+                Style::default(),
+                scroll,
+                controller,
+                &reordered,
+                state,
+                60.0,
+            )
+            .overscan(0);
+            let mut keys = Vec::new();
+            mounted_keys(tree.children().pop().unwrap(), &mut keys);
+            assert_eq!(keys, vec![2u64.into(), 1u64.into(), 4u64.into()]);
+        });
+    }
+
+    #[test]
+    fn virtual_tree_mounts_a_small_slice_of_a_large_tree() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let nodes: Vec<_> = (0..10_000)
+                .map(|id| TreeNode::new(id, format!("Node {id}")))
+                .collect();
+            let state = VirtualListState::new(0, 30.0);
+            let mut tree = VirtualTreeView::new(
+                Style::default(),
+                ScrollController::new(150_000.0),
+                TreeController::new(),
+                &nodes,
+                state.clone(),
+                90.0,
+            )
+            .overscan(2);
+            assert_eq!(state.len(), nodes.len());
+
+            let mut keys = Vec::new();
+            mounted_keys(tree.children().pop().unwrap(), &mut keys);
+            let expected: Vec<_> =
+                visible_range(&HeightIndex::uniform(nodes.len(), 30.0), 150_000.0, 90.0, 2)
+                    .map(|index| (index as u64).into())
+                    .collect();
+            assert_eq!(keys, expected);
+            assert!(keys.len() < 20);
+        });
     }
 }

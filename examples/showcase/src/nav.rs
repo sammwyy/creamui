@@ -8,6 +8,8 @@ pub fn Nav(
     active: Signal<usize>,
     content_scroll: ScrollController,
     nav_scroll: ScrollController,
+    sidebar_open: Signal<bool>,
+    width: f32,
 ) -> BoxedWidget {
     let theme = use_theme();
     // Wider than before, and padded almost only on the left: the card gap
@@ -15,7 +17,7 @@ pub fn Nav(
     // it a matching right pad on top of that would just waste width.
     let nav_style = Style {
         size: creamui_core::layout::Size {
-            width: Dimension::Length(232.),
+            width: Dimension::Length(width),
             height: Dimension::Percent(1.),
         },
         flex_shrink: 0.,
@@ -70,6 +72,7 @@ pub fn Nav(
         }
         let select = active.clone();
         let reset_scroll = content_scroll.clone();
+        let close_sidebar = sidebar_open.clone();
         items.push(jsx! {
             <NavigationItem
                 symbol={symbols[i]}
@@ -78,6 +81,7 @@ pub fn Nav(
                 on_click={Box::new(move || {
                     select.set(i);
                     reset_scroll.set(0.0);
+                    close_sidebar.set(false);
                 }) as Box<dyn Fn()>}
             />
         });

@@ -46,6 +46,28 @@ jsx! {
 }
 ```
 
+## Adapt to the viewport
+
+`use_viewport()` reads the current logical window size from any component
+building under `run`; it does not need to be threaded through component props.
+`use_screen_class()` derives `Compact` (under 640 px), `Medium` (under 960 px),
+or `Expanded` from that width.
+
+```rust
+use creamui::{use_screen_class, use_viewport, ScreenClass};
+
+let viewport = use_viewport();
+let compact = use_screen_class() == ScreenClass::Compact;
+
+let padding = if compact { 16.0 } else { 28.0 };
+let width = viewport.width;
+```
+
+The window rebuilds after a resize, so the hook is suitable for swapping
+navigation patterns, spacing, or layout direction. Prefer these width classes
+over device labels: a narrow desktop window and a phone should receive the
+same compact layout.
+
 ## Choose a layout
 
 `creamui::widgets::layout` has a semantic flex API for layout containers:

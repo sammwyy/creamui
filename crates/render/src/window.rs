@@ -56,6 +56,54 @@ const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const REFRESH_QUERY_INTERVAL: Duration = Duration::from_secs(1);
 const TOUCH_SCROLL_SLOP: f32 = 8.0;
 
+#[derive(Clone)]
+struct ViewportProvider {
+    viewport: Signal<Size>,
+}
+
+impl ViewportProvider {
+    fn get(&self) -> Size {
+        self.viewport.get()
+    }
+}
+
+/// Reads the current window's logical viewport in pixels.
+///
+/// Only callable while a window is building its widget tree. The tree is
+/// rebuilt whenever the viewport changes, so views can derive responsive
+/// layout directly from this value.
+pub fn use_viewport() -> Size {
+    creamui_reactive::use_context::<ViewportProvider>().get()
+}
+
+/// Width classes for adaptive layouts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenClass {
+    Compact,
+    Medium,
+    Expanded,
+}
+
+impl ScreenClass {
+    pub const COMPACT_MAX_WIDTH: f32 = 640.0;
+    pub const MEDIUM_MAX_WIDTH: f32 = 960.0;
+
+    pub fn from_viewport(viewport: Size) -> Self {
+        if viewport.width < Self::COMPACT_MAX_WIDTH {
+            Self::Compact
+        } else if viewport.width < Self::MEDIUM_MAX_WIDTH {
+            Self::Medium
+        } else {
+            Self::Expanded
+        }
+    }
+}
+
+/// Classifies the current viewport using CreamUI's adaptive width classes.
+pub fn use_screen_class() -> ScreenClass {
+    ScreenClass::from_viewport(use_viewport())
+}
+
 /// What happens when the user asks the window manager to close a window.
 ///
 /// [`CloseBehavior::Close`] is the normal desktop-window behavior. Use
@@ -329,13 +377,17 @@ fn build_ui_with_recovery(build: &Rc<dyn Fn(Size) -> BoxedWidget>, size: Size) -
     }
 }
 
-fn with_theme_scope<R>(
+fn with_window_scope<R>(
     theme: &ThemeProvider,
+    viewport: &Signal<Size>,
     window_drag: &WindowDragHandle,
     f: impl FnOnce() -> R,
 ) -> R {
     creamui_reactive::with_context_scope(|| {
         creamui_reactive::provide_context(theme.clone());
+        creamui_reactive::provide_context(ViewportProvider {
+            viewport: viewport.clone(),
+        });
         creamui_reactive::provide_context(window_drag.clone());
         f()
     })
@@ -498,7 +550,7 @@ enum UiSource {
 
 impl Pipeline {
     fn with_scope<R>(&self, f: impl FnOnce() -> R) -> R {
-        with_theme_scope(&self.theme, &self.window_drag, f)
+        with_window_scope(&self.theme, &self.viewport, &self.window_drag, f)
     }
 
     fn request_redraw(&self) {
@@ -519,7 +571,7 @@ impl Pipeline {
         let root = self.with_scope(|| {
             #[cfg(feature = "perf-metrics")]
             let _span = tracing::info_span!("ui_build").entered();
-            build_ui_with_recovery(build_ui, self.viewport.peek())
+            build_ui_with_recovery(build_ui, self.viewport.get())
         });
         *self.pending_root.borrow_mut() = Some(root);
         if let Ok(mut frame) = self.frame.try_borrow_mut() {
@@ -1697,7 +1749,6 @@ impl WindowState {
         if let Some(viewport) = self.pending_viewport.take() {
             if self.pipeline.viewport.peek() != viewport {
                 self.pipeline.viewport.set(viewport);
-                self.pipeline.build();
             }
         }
     }
@@ -2463,7 +2514,6 @@ impl AppHandler {
             };
             if pipeline.viewport.peek() != viewport {
                 pipeline.viewport.set(viewport);
-                pipeline.build();
             }
         }
         *pipeline.window.borrow_mut() = Some(window.clone());
@@ -4113,10 +4163,13 @@ mod tests {
     #[test]
     fn resizing_updates_layout_on_the_next_frame() {
         let sizes = Rc::new(RefCell::new(Vec::new()));
+        let hook_sizes = Rc::new(RefCell::new(Vec::new()));
         let mut harness = WindowEventHarness::new({
             let sizes = sizes.clone();
+            let hook_sizes = hook_sizes.clone();
             move |size| {
                 sizes.borrow_mut().push(size);
+                hook_sizes.borrow_mut().push(use_viewport());
                 Box::new(BlankWidget)
             }
         });
@@ -4130,8 +4183,27 @@ mod tests {
         harness.send(WindowEvent::RedrawRequested);
         assert_eq!(sizes.borrow().len(), builds + 1, "one rebuild per frame");
         assert_eq!(sizes.borrow().last().unwrap().width, 160.0);
+        assert_eq!(hook_sizes.borrow().last().unwrap().width, 160.0);
         let frame = harness.state.pipeline.frame.borrow();
         assert_eq!(frame.presented.as_ref().unwrap().width, 160);
+    }
+
+    #[test]
+    fn screen_class_uses_adaptive_width_boundaries() {
+        let size = |width| Size {
+            width,
+            height: 600.0,
+        };
+        assert_eq!(
+            ScreenClass::from_viewport(size(639.0)),
+            ScreenClass::Compact
+        );
+        assert_eq!(ScreenClass::from_viewport(size(640.0)), ScreenClass::Medium);
+        assert_eq!(ScreenClass::from_viewport(size(959.0)), ScreenClass::Medium);
+        assert_eq!(
+            ScreenClass::from_viewport(size(960.0)),
+            ScreenClass::Expanded
+        );
     }
 
     #[test]

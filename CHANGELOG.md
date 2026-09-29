@@ -4,6 +4,11 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Runtime-backed windows now paint retained nodes through `Renderer`, respond
+  to pointer, keyboard, drag, and scroll input, and redraw after mutations or
+  theme changes. Decoded image fit and crop are verified through the CPU
+  presenter; clipped translucent images are checked against the GPU renderer.
+  A `MountCx` example presents a native CPU window through the retained path.
 - Retained layout sync no longer allocates a child list for every visited
   container while walking changed layout paths.
 - The custom Wayland backend reports the current output refresh interval for

@@ -786,6 +786,8 @@ impl Scene {
 pub struct Renderer {
     tree: Tree,
     root: Option<Instance>,
+    runtime: Option<crate::runtime::SharedRuntime>,
+    runtime_colors: Option<creamui_theme::ColorScheme>,
     viewport: Size,
     layout_feedback: bool,
     previous_focus_order: RefCell<Vec<FocusId>>,
@@ -796,10 +798,41 @@ impl Renderer {
         Renderer {
             tree: TaffyTree::new(),
             root: None,
+            runtime: None,
+            runtime_colors: None,
             viewport: Size::default(),
             layout_feedback: false,
             previous_focus_order: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn with_runtime(runtime: crate::runtime::SharedRuntime) -> Self {
+        let mut renderer = Self::new();
+        renderer.runtime = Some(runtime);
+        renderer
+    }
+
+    pub fn render_runtime(
+        &mut self,
+        viewport: Size,
+        painter: &mut dyn Painter,
+    ) -> Option<Vec<Rect>> {
+        let runtime = self.runtime.as_ref()?;
+        let colors = painter.color_scheme();
+        let colors_changed = self.runtime_colors.replace(colors) != Some(colors);
+        let damage = runtime.with_mut_quiet(|runtime| {
+            if colors_changed {
+                runtime.invalidate_all_paint();
+            }
+            let mut damage = runtime.compute_layout(viewport);
+            damage.extend(runtime.rebuild_paint(&colors));
+            runtime.rebuild_composite();
+            runtime.rebuild_hit_test();
+            runtime.paint_to(painter);
+            damage
+        });
+        self.viewport = viewport;
+        Some(damage)
     }
 
     /// Reconciles `root` against the previously rendered tree (if any),

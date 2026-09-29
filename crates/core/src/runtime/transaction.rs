@@ -211,6 +211,7 @@ impl<'a> RuntimeTransaction<'a> {
                 });
                 if repositioned {
                     self.touch(node, DirtyFlags::HIT_TEST);
+                    self.runtime.paint_order_dirty = true;
                 }
                 if changed {
                     if let Some(taffy_node) =

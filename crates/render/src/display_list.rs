@@ -275,6 +275,7 @@ pub struct ImagePrimitive {
     pub bounds: Bounds,
     pub image: RgbaImage,
     pub tint: Option<Color>,
+    pub opacity: f32,
 }
 
 impl PartialEq for ImagePrimitive {
@@ -282,6 +283,7 @@ impl PartialEq for ImagePrimitive {
         self.bounds == other.bounds
             && self.image.id() == other.image.id()
             && self.tint == other.tint
+            && self.opacity == other.opacity
     }
 }
 

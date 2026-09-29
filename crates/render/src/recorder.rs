@@ -509,15 +509,104 @@ impl Painter for SceneRecorder {
         );
     }
 
-    fn draw_image(&mut self, rect: Rect, image: &RgbaImage, tint: Option<Color>) {
+    fn fill_text_selected_weight_font(
+        &mut self,
+        rect: Rect,
+        text: &str,
+        color: Color,
+        selected_color: Color,
+        selected: Range<usize>,
+        font_size: f32,
+        align: TextAlign,
+        family: Option<&str>,
+        bold: bool,
+        italic: bool,
+    ) {
+        self.text_run(
+            rect,
+            text,
+            color,
+            Some((selected, selected_color)),
+            font_size,
+            align,
+            family,
+            bold,
+            italic,
+        );
+    }
+
+    fn draw_text_decorations(
+        &mut self,
+        rect: Rect,
+        text: &str,
+        color: Color,
+        font_size: f32,
+        align: TextAlign,
+        family: Option<&str>,
+        bold: bool,
+        underline: bool,
+        strikethrough: bool,
+    ) {
+        if text.is_empty() || color.a == 0 {
+            return;
+        }
         let bounds = self.bounds(rect);
-        if bounds.is_empty() || tint.is_some_and(|tint| tint.a == 0) {
+        let layout = self.text.borrow_mut().layout(
+            family,
+            bold,
+            text,
+            font_size * self.scale,
+            bounds.width().max(0.0),
+            align,
+        );
+        if layout.glyphs.is_empty() {
+            return;
+        }
+        let x = rect.x + layout.ink[0] as f32 / self.scale;
+        let width = (layout.ink[2] - layout.ink[0]) as f32 / self.scale;
+        let center_y = rect.y + rect.height / 2.0;
+        let thickness = (font_size * 0.06).max(1.0);
+        for y in [
+            underline.then_some(center_y + font_size * 0.32),
+            strikethrough.then_some(center_y - font_size * 0.02),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.fill_rect(
+                Rect {
+                    x,
+                    y: y - thickness / 2.0,
+                    width,
+                    height: thickness,
+                },
+                color,
+                0.0,
+            );
+        }
+    }
+
+    fn draw_image(&mut self, rect: Rect, image: &RgbaImage, tint: Option<Color>) {
+        self.draw_image_opacity(rect, image, tint, 1.0);
+    }
+
+    fn draw_image_opacity(
+        &mut self,
+        rect: Rect,
+        image: &RgbaImage,
+        tint: Option<Color>,
+        opacity: f32,
+    ) {
+        let bounds = self.bounds(rect);
+        let opacity = opacity.clamp(0.0, 1.0);
+        if bounds.is_empty() || opacity == 0.0 || tint.is_some_and(|tint| tint.a == 0) {
             return;
         }
         self.push(Primitive::Image(ImagePrimitive {
             bounds,
             image: image.clone(),
             tint,
+            opacity,
         }));
     }
 

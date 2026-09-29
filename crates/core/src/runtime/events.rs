@@ -50,6 +50,24 @@ fn remove_ordered(slots: &mut Vec<u32>, slot: u32) {
     }
 }
 
+fn visible_hit_rect(node: &super::node::RuntimeNode) -> crate::Rect {
+    let rect = crate::Rect {
+        x: node.layout.rect.x + node.layout.effective_transform.x,
+        y: node.layout.rect.y + node.layout.effective_transform.y,
+        ..node.layout.rect
+    };
+    node.layout
+        .effective_clip
+        .map(|clip| {
+            rect.intersect(clip).unwrap_or(crate::Rect {
+                width: 0.0,
+                height: 0.0,
+                ..rect
+            })
+        })
+        .unwrap_or(rect)
+}
+
 #[derive(Default)]
 pub(super) struct HitIndex {
     cells: HashMap<(i32, i32), Vec<u32>>,
@@ -98,18 +116,15 @@ impl HitIndex {
             .cells
             .get(&(hit_cell(point.x), hit_cell(point.y)))
             .and_then(|slots| {
-                slots
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|&slot| entries[slot as usize].rect.contains(point))
+                slots.iter().rev().copied().find(|&slot| {
+                    let rect = entries[slot as usize].rect;
+                    rect.width > 0.0 && rect.height > 0.0 && rect.contains(point)
+                })
             });
-        let spanning = self
-            .spanning
-            .iter()
-            .rev()
-            .copied()
-            .find(|&slot| entries[slot as usize].rect.contains(point));
+        let spanning = self.spanning.iter().rev().copied().find(|&slot| {
+            let rect = entries[slot as usize].rect;
+            rect.width > 0.0 && rect.height > 0.0 && rect.contains(point)
+        });
         local.max(spanning).map(|slot| entries[slot as usize].node)
     }
 }
@@ -151,9 +166,10 @@ impl Runtime {
                 if let Some(node) = self.nodes.get(id) {
                     if let Some(slot) = node.hit_slot {
                         let entry = &mut self.hit_entries[slot as usize];
-                        if entry.rect != node.layout.rect {
+                        let rect = visible_hit_rect(node);
+                        if entry.rect != rect {
                             self.hit_index.remove(slot, entry.rect);
-                            entry.rect = node.layout.rect;
+                            entry.rect = rect;
                             self.hit_index.insert(slot, entry.rect);
                         }
                     }
@@ -188,7 +204,7 @@ impl Runtime {
             if !inside_absolute && !is_absolute_root && node.events.is_interactive() {
                 self.hit_entries.push(HitEntry {
                     node: id,
-                    rect: node.layout.rect,
+                    rect: visible_hit_rect(node),
                 });
             }
             if node.events.focusable {
@@ -213,7 +229,7 @@ impl Runtime {
                 if node.events.is_interactive() {
                     self.hit_entries.push(HitEntry {
                         node: id,
-                        rect: node.layout.rect,
+                        rect: visible_hit_rect(node),
                     });
                 }
                 stack.extend(node.children.as_slice().iter().rev());
@@ -256,7 +272,10 @@ impl Runtime {
 
     fn mark_interaction_dirty(&mut self, node: RuntimeNodeId) {
         if let Some(n) = self.nodes.get_mut(node) {
-            n.dirty |= DirtyFlags::PAINT;
+            if !n.dirty.contains(DirtyFlags::PAINT) {
+                n.dirty |= DirtyFlags::PAINT;
+                self.paint_queue.push(node);
+            }
         }
     }
 
@@ -356,6 +375,65 @@ mod tests {
         node
     }
 
+    #[test]
+    fn transformed_and_clipped_hits_update_without_rebuilding_membership() {
+        let mut runtime = Runtime::new();
+        let (root, child) = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            let child = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, child, None);
+            tx.apply(Mutation::SetEventHandlers {
+                node: child,
+                handlers: EventState {
+                    on_click: Some(Rc::new(|| {})),
+                    ..Default::default()
+                },
+            });
+            tx.apply(Mutation::SetTransform {
+                node: root,
+                transform: super::super::Transform2D { x: 10.0, y: 0.0 },
+            });
+            tx.apply(Mutation::SetClipsChildren {
+                node: root,
+                clips_children: true,
+            });
+            (root, child)
+        };
+        runtime.set_root(Some(root));
+        runtime.nodes.get_mut(root).unwrap().layout.rect = crate::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 30.0,
+            height: 30.0,
+        };
+        runtime.nodes.get_mut(child).unwrap().layout.rect = crate::Rect {
+            x: 20.0,
+            y: 0.0,
+            width: 30.0,
+            height: 30.0,
+        };
+        runtime.rebuild_composite();
+        runtime.rebuild_hit_test();
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 35.0, y: 10.0 }),
+            Some(child)
+        );
+        assert_eq!(runtime.hit_test(crate::Point { x: 45.0, y: 10.0 }), None);
+
+        runtime.transaction().apply(Mutation::SetTransform {
+            node: root,
+            transform: super::super::Transform2D { x: 20.0, y: 0.0 },
+        });
+        runtime.rebuild_composite();
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.hit_test(crate::Point { x: 35.0, y: 10.0 }), None);
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 45.0, y: 10.0 }),
+            Some(child)
+        );
+    }
+
     fn absolute_leaf_at(
         runtime: &mut Runtime,
         parent: RuntimeNodeId,
@@ -445,7 +523,11 @@ mod tests {
                         .hit_entries
                         .iter()
                         .rev()
-                        .find(|entry| entry.rect.contains(point))
+                        .find(|entry| {
+                            entry.rect.width > 0.0
+                                && entry.rect.height > 0.0
+                                && entry.rect.contains(point)
+                        })
                         .map(|entry| entry.node);
                     assert_eq!(runtime.hit_test(point), expected, "at {point:?}");
                 }

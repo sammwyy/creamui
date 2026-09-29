@@ -996,6 +996,7 @@ impl GpuRenderer {
                     self.instances.push(Instance {
                         bounds: [b.x0, b.y0, b.x1, b.y1],
                         color: prim.tint.map_or([0; 4], rgba),
+                        shape: [prim.opacity, 0.0, 0.0],
                         tag: KIND_IMAGE | clip,
                         ..Zeroable::zeroed()
                     });
@@ -1677,6 +1678,32 @@ mod tests {
         assert_eq!(&gpu_pixels[..4], &[20, 20, 24, 255]);
         let center = (16 * 96 + 24) * 4;
         assert_eq!(&gpu_pixels[center..center + 4], &[200, 40, 40, 255]);
+    }
+
+    #[test]
+    fn clipped_translucent_images_match_cpu() {
+        let Some(mut gpu) = headless() else { return };
+        let image = RgbaImage::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(32, 32, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        recorder.push_clip(rect(4.0, 4.0, 24.0, 24.0));
+        recorder.draw_image_opacity(rect(-8.0, 4.0, 48.0, 24.0), &image, None, 0.5);
+        recorder.pop_clip();
+        let list = recorder.finish();
+        let gpu_pixels = gpu.render_to_pixels(&list);
+        let mut cpu = Rasterizer::new(32, 32);
+        cpu.render(&list, &Damage::Full);
+        for (x, y) in [(0, 16), (8, 16), (24, 16), (31, 16)] {
+            let offset = ((y * 32 + x) * 4) as usize;
+            for channel in 0..4 {
+                let gpu = gpu_pixels[offset + channel];
+                let cpu = cpu.pixmap().data()[offset + channel];
+                assert!(
+                    gpu.abs_diff(cpu) <= 4,
+                    "pixel ({x}, {y}) channel {channel}: {gpu} vs {cpu}"
+                );
+            }
+        }
     }
 
     #[test]

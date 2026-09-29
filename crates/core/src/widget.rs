@@ -286,6 +286,40 @@ pub trait Painter {
     ) {
     }
 
+    fn draw_image_opacity(
+        &mut self,
+        rect: Rect,
+        image: &crate::RgbaImage,
+        tint: Option<creamui_theme::Color>,
+        opacity: f32,
+    ) {
+        let opacity = opacity.clamp(0.0, 1.0);
+        if opacity == 0.0 {
+            return;
+        }
+        if opacity == 1.0 {
+            self.draw_image(rect, image, tint);
+        } else if let Some(tint) = tint {
+            self.draw_image(
+                rect,
+                image,
+                Some(creamui_theme::Color::rgba(
+                    tint.r,
+                    tint.g,
+                    tint.b,
+                    (tint.a as f32 * opacity).round() as u8,
+                )),
+            );
+        } else {
+            let faded = image.clone().map_pixels(|pixel| {
+                for channel in pixel {
+                    *channel = (*channel as f32 * opacity).round() as u8;
+                }
+            });
+            self.draw_image(rect, &faded, None);
+        }
+    }
+
     /// Draws a text run whose glyph layout stays intact while a byte range
     /// receives a different foreground color. Backends that do not support
     /// per-glyph coloring may use the stable normal-color fallback.
@@ -327,6 +361,67 @@ pub trait Painter {
             font_size,
             align,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fill_text_selected_weight_font(
+        &mut self,
+        rect: Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        selected_color: creamui_theme::Color,
+        selected: Range<usize>,
+        font_size: f32,
+        align: TextAlign,
+        family: Option<&str>,
+        _bold: bool,
+        _italic: bool,
+    ) {
+        self.fill_text_selected_font(
+            rect,
+            text,
+            color,
+            selected_color,
+            selected,
+            font_size,
+            align,
+            family,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_decorations(
+        &mut self,
+        rect: Rect,
+        _text: &str,
+        color: creamui_theme::Color,
+        font_size: f32,
+        _align: TextAlign,
+        _family: Option<&str>,
+        _bold: bool,
+        underline: bool,
+        strikethrough: bool,
+    ) {
+        let center_y = rect.y + rect.height / 2.0;
+        let thickness = (font_size * 0.06).max(1.0);
+        for y in [
+            underline.then_some(center_y + font_size * 0.32),
+            strikethrough.then_some(center_y - font_size * 0.02),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.fill_rect(
+                Rect {
+                    x: rect.x,
+                    y: y - thickness / 2.0,
+                    width: rect.width,
+                    height: thickness,
+                },
+                color,
+                0.0,
+            );
+        }
     }
 
     /// Restricts all subsequent drawing (until the matching [`Painter::pop_clip`])

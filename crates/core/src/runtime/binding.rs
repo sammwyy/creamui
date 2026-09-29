@@ -1,6 +1,6 @@
 use creamui_reactive::Owner;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use super::transaction::RuntimeTransaction;
 use super::Runtime;
@@ -9,25 +9,60 @@ use super::Runtime;
 /// stack that built it — from inside a `Signal` write, potentially nested
 /// arbitrarily deep in application code.
 #[derive(Clone)]
-pub struct SharedRuntime(Rc<RefCell<Runtime>>);
+pub struct SharedRuntime {
+    runtime: Rc<RefCell<Runtime>>,
+    listeners: Rc<RefCell<Vec<Weak<dyn Fn()>>>>,
+}
 
 impl SharedRuntime {
     pub fn new(runtime: Runtime) -> Self {
-        SharedRuntime(Rc::new(RefCell::new(runtime)))
+        SharedRuntime {
+            runtime: Rc::new(RefCell::new(runtime)),
+            listeners: Rc::new(RefCell::new(Vec::new())),
+        }
     }
 
     pub fn with<R>(&self, f: impl FnOnce(&Runtime) -> R) -> R {
-        f(&self.0.borrow())
+        f(&self.runtime.borrow())
     }
 
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
-        f(&mut self.0.borrow_mut())
+        let result = f(&mut self.runtime.borrow_mut());
+        self.notify();
+        result
+    }
+
+    pub(crate) fn with_mut_quiet<R>(&self, f: impl FnOnce(&mut Runtime) -> R) -> R {
+        f(&mut self.runtime.borrow_mut())
     }
 
     pub fn transaction<R>(&self, f: impl FnOnce(&mut RuntimeTransaction) -> R) -> R {
-        let mut runtime = self.0.borrow_mut();
-        let mut tx = runtime.transaction();
-        f(&mut tx)
+        let (result, changed) = {
+            let mut runtime = self.runtime.borrow_mut();
+            let mut tx = runtime.transaction();
+            let result = f(&mut tx);
+            (result, !tx.touched().is_empty())
+        };
+        if changed {
+            self.notify();
+        }
+        result
+    }
+
+    pub fn subscribe(&self, listener: &Rc<dyn Fn()>) {
+        self.listeners.borrow_mut().push(Rc::downgrade(listener));
+    }
+
+    fn notify(&self) {
+        let listeners = {
+            let mut weak = self.listeners.borrow_mut();
+            let listeners: Vec<_> = weak.iter().filter_map(Weak::upgrade).collect();
+            weak.retain(|listener| listener.strong_count() > 0);
+            listeners
+        };
+        for listener in listeners {
+            listener();
+        }
     }
 }
 

@@ -21,6 +21,7 @@ use crate::raster::Rasterizer;
 use crate::recorder::SceneRecorder;
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
+use creamui_core::runtime::SharedRuntime;
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
@@ -450,7 +451,7 @@ struct Pipeline {
     viewport: Signal<Size>,
     scale_factor: Signal<f64>,
     window: SharedWindow,
-    build_ui: Rc<dyn Fn(Size) -> BoxedWidget>,
+    source: UiSource,
     theme: ThemeProvider,
     window_drag: WindowDragHandle,
     clear_color: Color,
@@ -460,6 +461,12 @@ struct Pipeline {
     needs_layout: Cell<bool>,
     needs_paint: Cell<bool>,
     dump_frame_path: Option<String>,
+}
+
+#[derive(Clone)]
+enum UiSource {
+    Legacy(Rc<dyn Fn(Size) -> BoxedWidget>),
+    Runtime(SharedRuntime),
 }
 
 impl Pipeline {
@@ -477,11 +484,15 @@ impl Pipeline {
     /// reactive effect so it stays subscribed to whatever it reads; layout
     /// and paint wait for the next frame.
     fn build(&self) {
+        let UiSource::Legacy(build_ui) = &self.source else {
+            self.invalidate_layout();
+            return;
+        };
         let started = Instant::now();
         let root = self.with_scope(|| {
             #[cfg(feature = "perf-metrics")]
             let _span = tracing::info_span!("ui_build").entered();
-            build_ui_with_recovery(&self.build_ui, self.viewport.peek())
+            build_ui_with_recovery(build_ui, self.viewport.peek())
         });
         *self.pending_root.borrow_mut() = Some(root);
         if let Ok(mut frame) = self.frame.try_borrow_mut() {
@@ -516,12 +527,21 @@ impl Pipeline {
             return false;
         }
         self.with_scope(|| {
+            if matches!(&self.source, UiSource::Runtime(_)) {
+                self.needs_layout.set(false);
+                self.needs_paint.set(false);
+                self.record();
+                return;
+            }
+            let UiSource::Legacy(build_ui) = &self.source else {
+                unreachable!()
+            };
             let mut layout_pending = false;
             if self.needs_layout.replace(false) {
                 let root = self.pending_root.borrow_mut().take();
                 let mut root = root.unwrap_or_else(|| {
                     let started = Instant::now();
-                    let root = build_ui_with_recovery(&self.build_ui, self.viewport.peek());
+                    let root = build_ui_with_recovery(build_ui, self.viewport.peek());
                     self.frame.borrow_mut().report.build += started.elapsed();
                     root
                 });
@@ -543,7 +563,7 @@ impl Pipeline {
                         break;
                     }
                     let started = Instant::now();
-                    root = build_ui_with_recovery(&self.build_ui, self.viewport.peek());
+                    root = build_ui_with_recovery(build_ui, self.viewport.peek());
                     self.frame.borrow_mut().report.build += started.elapsed();
                 }
             }
@@ -576,14 +596,24 @@ impl Pipeline {
                 .get()
                 .and_then(|index| scene.focus_id_at(index))
         });
-        if let Some(next) = renderer.paint(recorder, self.focused.get(), self.caret_visible.get()) {
-            if scene.is_some() {
-                self.focused
-                    .set(previous_focus.and_then(|id| next.focus_index(id)));
-            } else if self.focused.get().is_some() && next.focus_id_at(0).is_none() {
-                self.focused.set(None);
+        match &self.source {
+            UiSource::Legacy(_) => {
+                if let Some(next) =
+                    renderer.paint(recorder, self.focused.get(), self.caret_visible.get())
+                {
+                    if scene.is_some() {
+                        self.focused
+                            .set(previous_focus.and_then(|id| next.focus_index(id)));
+                    } else if self.focused.get().is_some() && next.focus_id_at(0).is_none() {
+                        self.focused.set(None);
+                    }
+                    *scene = Some(next);
+                }
             }
-            *scene = Some(next);
+            UiSource::Runtime(_) => {
+                renderer.render_runtime(logical, recorder);
+                report.rebuilt = true;
+            }
         }
         if let Some(devtools) = devtools.as_ref() {
             devtools.paint_overlay(recorder, logical);
@@ -757,7 +787,23 @@ impl AppHandle {
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            build_ui: Box::new(build_ui),
+            source: UiSource::Legacy(Rc::new(build_ui)),
+        });
+    }
+
+    pub fn append_runtime_window(
+        &self,
+        options: WindowOptions,
+        clear_color: Color,
+        on_window_ready: impl FnOnce(WindowHandle) + 'static,
+        runtime: SharedRuntime,
+    ) {
+        self.commands.borrow_mut().windows.push(PendingWindow {
+            options,
+            popup: None,
+            clear_color,
+            on_window_ready: Box::new(on_window_ready),
+            source: UiSource::Runtime(runtime),
         });
     }
 
@@ -776,7 +822,7 @@ impl AppHandle {
             popup: Some(popup),
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            build_ui: Box::new(build_ui),
+            source: UiSource::Legacy(Rc::new(build_ui)),
         });
     }
 
@@ -1151,6 +1197,7 @@ struct WindowSpec {
     on_window_ready: Box<dyn FnOnce(WindowHandle)>,
     pipeline: Rc<Pipeline>,
     _effect: Effect,
+    _runtime_subscription: Option<Rc<dyn Fn()>>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -1198,7 +1245,7 @@ struct PendingWindow {
     popup: Option<PopupOptions>,
     clear_color: Color,
     on_window_ready: Box<dyn FnOnce(WindowHandle)>,
-    build_ui: Box<dyn Fn(Size) -> BoxedWidget>,
+    source: UiSource,
 }
 
 impl AppBuilder {
@@ -1280,7 +1327,29 @@ impl AppBuilder {
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            build_ui: Box::new(build_ui),
+            source: UiSource::Legacy(Rc::new(build_ui)),
+        });
+        self
+    }
+
+    /// Opens a window that paints and handles input through an already-mounted
+    /// persistent runtime. Mutations to `runtime` schedule redraws directly.
+    pub fn runtime_window(
+        mut self,
+        mut options: WindowOptions,
+        clear_color: Color,
+        on_window_ready: impl FnOnce(WindowHandle) + 'static,
+        runtime: SharedRuntime,
+    ) -> Self {
+        if let Some(theme) = self.system_theme {
+            options.theme = theme;
+        }
+        self.specs.push(PendingWindow {
+            options,
+            popup: None,
+            clear_color,
+            on_window_ready: Box::new(on_window_ready),
+            source: UiSource::Runtime(runtime),
         });
         self
     }
@@ -1342,7 +1411,10 @@ struct WindowState {
     /// Latest drag-handler call since the last frame; only the position
     /// current at the next `RedrawRequested` is dispatched.
     pending_drag: Option<(Point, Rect, Rc<dyn Fn(Point, Rect)>)>,
+    runtime_dragged: bool,
+    runtime_press_origin: Option<Point>,
     _effect: Effect,
+    _runtime_subscription: Option<Rc<dyn Fn()>>,
     t_run: Instant,
     first_present_logged: bool,
 }
@@ -1355,6 +1427,134 @@ struct DragClick {
 }
 
 impl WindowState {
+    fn runtime(&self) -> Option<SharedRuntime> {
+        match &self.pipeline.source {
+            UiSource::Runtime(runtime) => Some(runtime.clone()),
+            UiSource::Legacy(_) => None,
+        }
+    }
+
+    fn runtime_pointer_moved(&mut self) {
+        let Some(runtime) = self.runtime() else {
+            return;
+        };
+        let point = self.pointer_pos;
+        let (changed, previous, next, cursor, drag) = runtime.with(|runtime| {
+            let next = runtime.hit_test(point);
+            let previous = runtime.pointer().hovered;
+            let changed = previous != next;
+            let previous = changed
+                .then(|| previous.and_then(|id| runtime.get(id)?.events.on_hover.clone()))
+                .flatten();
+            let next_hover = changed
+                .then(|| next.and_then(|id| runtime.get(id)?.events.on_hover.clone()))
+                .flatten();
+            let cursor = next
+                .and_then(|id| runtime.get(id)?.events.cursor)
+                .unwrap_or(CursorIcon::Default);
+            let drag = runtime.pointer().pressed.and_then(|id| {
+                let node = runtime.get(id)?;
+                let handler = node.events.on_drag.clone()?;
+                Some((id, node.layout.rect, handler))
+            });
+            (changed, previous, next_hover, cursor, drag)
+        });
+        if changed {
+            runtime.with_mut(|runtime| {
+                let next = runtime.hit_test(point);
+                runtime.set_hovered(next);
+            });
+        }
+        if let Some(handler) = previous {
+            handler(false);
+        }
+        if let Some(handler) = next {
+            handler(true);
+        }
+        let cursor = self.resize_direction().map(resize_cursor).unwrap_or(cursor);
+        if cursor != self.current_cursor {
+            self.current_cursor = cursor;
+            if let Some(window) = self.pipeline.window.borrow().as_ref() {
+                window.set_cursor(translate_cursor_icon(cursor));
+            }
+        }
+        if let Some((id, rect, handler)) = drag {
+            self.runtime_dragged |= self
+                .runtime_press_origin
+                .is_some_and(|origin| (point.x - origin.x).hypot(point.y - origin.y) >= 4.0);
+            runtime.with_mut(|runtime| runtime.capture_pointer(id));
+            handler(
+                Point {
+                    x: point.x - rect.x,
+                    y: point.y - rect.y,
+                },
+                rect,
+            );
+        }
+    }
+
+    fn runtime_pointer_pressed(&mut self) {
+        let Some(runtime) = self.runtime() else {
+            return;
+        };
+        let point = self.pointer_pos;
+        self.runtime_dragged = false;
+        self.runtime_press_origin = Some(point);
+        let drag_start = runtime.with_mut(|runtime| {
+            let target = runtime.hit_test(point);
+            runtime.set_pressed(target);
+            let focus =
+                target.filter(|&id| runtime.get(id).is_some_and(|node| node.events.focusable));
+            runtime.set_focused(focus);
+            target.and_then(|id| {
+                let node = runtime.get(id)?;
+                Some((node.layout.rect, node.events.on_drag_start.clone()))
+            })
+        });
+        if let Some((rect, Some(handler))) = drag_start {
+            handler(
+                Point {
+                    x: point.x - rect.x,
+                    y: point.y - rect.y,
+                },
+                rect,
+            );
+        }
+    }
+
+    fn runtime_pointer_released(&mut self) {
+        let Some(runtime) = self.runtime() else {
+            return;
+        };
+        let point = self.pointer_pos;
+        let (click, click_at, drag_end) = runtime.with_mut(|runtime| {
+            let pressed = runtime.pointer().pressed;
+            let released_over = runtime.hit_test(point);
+            runtime.set_pressed(None);
+            runtime.release_pointer_capture();
+            let Some(node) = pressed.and_then(|id| runtime.get(id)) else {
+                return (None, None, None);
+            };
+            let drag_end = node.events.on_drag_end.clone();
+            let clicked = pressed == released_over && !self.runtime_dragged;
+            (
+                clicked.then(|| node.events.on_click.clone()).flatten(),
+                clicked.then(|| node.events.on_click_at.clone()).flatten(),
+                drag_end,
+            )
+        });
+        if let Some(handler) = drag_end {
+            handler();
+        }
+        if let Some(handler) = click_at {
+            handler(point);
+        } else if let Some(handler) = click {
+            handler();
+        }
+        self.runtime_dragged = false;
+        self.runtime_press_origin = None;
+    }
+
     fn scene<R>(&self, f: impl FnOnce(&Scene) -> Option<R>) -> Option<R> {
         self.pipeline.frame.borrow().scene.as_ref().and_then(f)
     }
@@ -1448,6 +1648,25 @@ impl WindowState {
     }
 
     fn handle_key_input(&mut self, key: KeyInput) {
+        if let Some(runtime) = self.runtime() {
+            if key.key == Key::Tab {
+                runtime.with_mut(|runtime| {
+                    let next = runtime.next_focus(runtime.pointer().focused, key.modifiers.shift);
+                    runtime.set_focused(next);
+                });
+                self.restart_caret();
+                return;
+            }
+            let handler = runtime.with(|runtime| {
+                let focused = runtime.pointer().focused?;
+                runtime.get(focused)?.events.on_key.clone()
+            });
+            if let Some(handler) = handler {
+                self.restart_caret();
+                handler(key);
+            }
+            return;
+        }
         if key.key == Key::Tab {
             let current = self.pipeline.focused.get();
             let next = self.scene(|scene| scene.next_focus(current, key.modifiers.shift));
@@ -1493,6 +1712,10 @@ impl WindowState {
                     y: (position.y / scale) as f32,
                 };
                 self.set_pointer(Some(self.pointer_pos));
+                if self.runtime().is_some() {
+                    self.runtime_pointer_moved();
+                    return;
+                }
                 if let Some(drag_click) = self.drag_click.as_mut() {
                     let dx = self.pointer_pos.x - drag_click.origin.x;
                     let dy = self.pointer_pos.y - drag_click.origin.y;
@@ -1568,6 +1791,10 @@ impl WindowState {
                     }
                     return;
                 }
+                if self.runtime().is_some() {
+                    self.runtime_pointer_pressed();
+                    return;
+                }
                 let pointer = self.pointer_pos;
                 let Some((click, click_at, new_focus, drag_start, drag_anchor)) =
                     self.scene(|scene| {
@@ -1637,6 +1864,11 @@ impl WindowState {
                 button: MouseButton::Left,
                 ..
             } => {
+                if self.runtime().is_some() {
+                    self.set_press_origin(None);
+                    self.runtime_pointer_released();
+                    return;
+                }
                 self.dragging = None;
                 self.pending_drag = None;
                 self.set_press_origin(None);
@@ -1657,12 +1889,29 @@ impl WindowState {
             }
             WindowEvent::CursorLeft => {
                 self.set_pointer(None);
+                if let Some(runtime) = self.runtime() {
+                    let previous = runtime.with_mut(|runtime| {
+                        let previous = runtime.pointer().hovered;
+                        runtime.set_hovered(None);
+                        previous.and_then(|id| runtime.get(id)?.events.on_hover.clone())
+                    });
+                    if let Some(handler) = previous {
+                        handler(false);
+                    }
+                    return;
+                }
                 if let Some((_, callback)) = self.hovered.take() {
                     callback(false);
                 }
                 self.pipeline.invalidate_paint();
             }
             WindowEvent::Focused(false) => {
+                if let Some(runtime) = self.runtime() {
+                    runtime.with_mut(|runtime| {
+                        runtime.set_pressed(None);
+                        runtime.release_pointer_capture();
+                    });
+                }
                 self.set_press_origin(None);
                 self.dragging = None;
                 self.pending_drag = None;
@@ -1685,6 +1934,16 @@ impl WindowState {
                     MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
                 };
                 let pointer = self.pointer_pos;
+                if let Some(runtime) = self.runtime() {
+                    let handler = runtime.with(|runtime| {
+                        let target = runtime.scroll_target(pointer)?;
+                        runtime.get(target)?.events.on_scroll.clone()
+                    });
+                    if let Some(handler) = handler {
+                        handler(delta_y);
+                    }
+                    return;
+                }
                 let handler = self.scene(|scene| {
                     let index = scene.scroll_hit_test(pointer)?;
                     Some((
@@ -2007,7 +2266,10 @@ impl AppHandler {
             drag_end: None,
             drag_click: None,
             pending_drag: None,
+            runtime_dragged: false,
+            runtime_press_origin: None,
             _effect: spec._effect,
+            _runtime_subscription: spec._runtime_subscription,
             t_run: t0,
             first_present_logged: false,
         };
@@ -2339,7 +2601,7 @@ fn build_window_spec(
         popup,
         clear_color,
         on_window_ready,
-        build_ui,
+        source,
     } = spec;
 
     let window: SharedWindow = Rc::new(RefCell::new(None));
@@ -2362,7 +2624,10 @@ fn build_window_spec(
     let pipeline = Rc::new(Pipeline {
         frame: RefCell::new(FrameState {
             recorder: SceneRecorder::new(),
-            renderer: Renderer::new(),
+            renderer: match &source {
+                UiSource::Legacy(_) => Renderer::new(),
+                UiSource::Runtime(runtime) => Renderer::with_runtime(runtime.clone()),
+            },
             scene: None,
             pending: None,
             presented: None,
@@ -2378,7 +2643,7 @@ fn build_window_spec(
         }),
         scale_factor: Signal::new(1.0),
         window,
-        build_ui: Rc::from(build_ui),
+        source: source.clone(),
         theme: ThemeProvider::new(options.theme),
         window_drag,
         clear_color,
@@ -2391,8 +2656,26 @@ fn build_window_spec(
     });
     let effect = create_effect({
         let pipeline = pipeline.clone();
-        move || pipeline.build()
+        move || match &pipeline.source {
+            UiSource::Legacy(_) => pipeline.build(),
+            UiSource::Runtime(_) => {
+                pipeline.theme.get();
+                pipeline.invalidate_paint();
+            }
+        }
     });
+    let runtime_subscription = if let UiSource::Runtime(runtime) = &source {
+        let weak = Rc::downgrade(&pipeline);
+        let listener: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(pipeline) = weak.upgrade() {
+                pipeline.invalidate_layout();
+            }
+        });
+        runtime.subscribe(&listener);
+        Some(listener)
+    } else {
+        None
+    };
 
     WindowSpec {
         options,
@@ -2400,6 +2683,7 @@ fn build_window_spec(
         on_window_ready,
         pipeline,
         _effect: effect,
+        _runtime_subscription: runtime_subscription,
         close_requested: Rc::new(Cell::new(false)),
         focus_lost_handler: Rc::new(RefCell::new(None)),
         last_input_serial: Rc::new(Cell::new(None)),
@@ -2409,6 +2693,9 @@ fn build_window_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use creamui_core::runtime::{
+        EventState, ImageContent, ImageFit, ImageNode, Mutation, NodeKind, Runtime,
+    };
     use std::cell::Cell;
 
     struct WindowEventHarness {
@@ -2417,6 +2704,14 @@ mod tests {
 
     impl WindowEventHarness {
         fn new(build_ui: impl Fn(Size) -> BoxedWidget + 'static) -> Self {
+            Self::from_source(UiSource::Legacy(Rc::new(build_ui)))
+        }
+
+        fn retained(runtime: SharedRuntime) -> Self {
+            Self::from_source(UiSource::Runtime(runtime))
+        }
+
+        fn from_source(source: UiSource) -> Self {
             let spec = build_window_spec(
                 0,
                 PendingWindow {
@@ -2428,7 +2723,7 @@ mod tests {
                     popup: None,
                     clear_color: Color::rgba(0, 0, 0, 255),
                     on_window_ready: Box::new(|_| {}),
-                    build_ui: Box::new(build_ui),
+                    source,
                 },
                 None,
                 false,
@@ -2457,7 +2752,10 @@ mod tests {
                 drag_end: None,
                 drag_click: None,
                 pending_drag: None,
+                runtime_dragged: false,
+                runtime_press_origin: None,
                 _effect: spec._effect,
+                _runtime_subscription: spec._runtime_subscription,
                 t_run: now,
                 first_present_logged: false,
             };
@@ -2472,6 +2770,262 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn runtime_window_paints_mutations_and_dispatches_clicks() {
+        let clicks = Rc::new(Cell::new(0));
+        let hovers = Rc::new(Cell::new(0));
+        let keys = Rc::new(Cell::new(0));
+        let scrolls = Rc::new(Cell::new(0));
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new().width(100.0).height(100.0).layout,
+            });
+            tx.apply(Mutation::SetPaintStyle {
+                node: root,
+                style: creamui_core::PaintStyle {
+                    background: Some(Color::rgb(255, 0, 0).into()),
+                    ..Default::default()
+                },
+            });
+            tx.apply(Mutation::SetEventHandlers {
+                node: root,
+                handlers: EventState {
+                    on_click: Some(Rc::new({
+                        let clicks = clicks.clone();
+                        move || clicks.set(clicks.get() + 1)
+                    })),
+                    on_hover: Some(Rc::new({
+                        let hovers = hovers.clone();
+                        move |entered| hovers.set(hovers.get() + if entered { 1 } else { -1 })
+                    })),
+                    on_key: Some(Rc::new({
+                        let keys = keys.clone();
+                        move |_| keys.set(keys.get() + 1)
+                    })),
+                    on_scroll: Some(Rc::new({
+                        let scrolls = scrolls.clone();
+                        move |_| scrolls.set(scrolls.get() + 1)
+                    })),
+                    focusable: true,
+                    ..Default::default()
+                },
+            });
+            root
+        };
+        runtime.set_root(Some(root));
+        let runtime = SharedRuntime::new(runtime);
+        let mut harness = WindowEventHarness::retained(runtime.clone());
+        let color = {
+            let frame = harness.state.pipeline.frame.borrow();
+            let pixel = frame
+                .raster
+                .as_ref()
+                .unwrap()
+                .pixmap()
+                .pixel(10, 10)
+                .unwrap();
+            (pixel.red(), pixel.green(), pixel.blue())
+        };
+        assert_eq!(color, (255, 0, 0));
+
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        assert_eq!(hovers.get(), 1);
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        harness.send(WindowEvent::MouseInput {
+            pressed: false,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        assert_eq!(clicks.get(), 1);
+        harness.key(KeyInput {
+            key: Key::Char('x'),
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(keys.get(), 1);
+        harness.send(WindowEvent::MouseWheel {
+            delta: MouseScrollDelta::LineDelta(0.0, -1.0),
+        });
+        assert_eq!(scrolls.get(), 1);
+        harness.send(WindowEvent::CursorLeft);
+        assert_eq!(hovers.get(), 0);
+
+        runtime.transaction(|tx| {
+            tx.apply(Mutation::SetPaintStyle {
+                node: root,
+                style: creamui_core::PaintStyle {
+                    background: Some(Color::rgb(0, 255, 0).into()),
+                    ..Default::default()
+                },
+            });
+        });
+        assert!(harness.state.pipeline.needs_paint.get());
+        harness.state.redraw();
+        let frame = harness.state.pipeline.frame.borrow();
+        let pixel = frame
+            .raster
+            .as_ref()
+            .unwrap()
+            .pixmap()
+            .pixel(10, 10)
+            .unwrap();
+        assert_eq!((pixel.red(), pixel.green(), pixel.blue()), (0, 255, 0));
+    }
+
+    #[test]
+    fn runtime_window_preserves_decoded_image_fit_and_crop() {
+        let image =
+            creamui_core::RgbaImage::new(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+        let mut runtime = Runtime::new();
+        let (root, image_node) = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            let image_node = tx.create_node(NodeKind::Image(
+                ImageNode::decoded(image.clone()).with_fit(ImageFit::Cover),
+            ));
+            tx.insert_child(root, image_node, None);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new().width(40.0).height(40.0).layout,
+            });
+            tx.apply(Mutation::SetLayoutStyle {
+                node: image_node,
+                style: creamui_core::Style::new().width(40.0).height(40.0).layout,
+            });
+            (root, image_node)
+        };
+        runtime.set_root(Some(root));
+        let runtime = SharedRuntime::new(runtime);
+        let mut harness = WindowEventHarness::retained(runtime.clone());
+        let sample = |harness: &WindowEventHarness, x, y| {
+            let frame = harness.state.pipeline.frame.borrow();
+            let pixel = frame.raster.as_ref().unwrap().pixmap().pixel(x, y).unwrap();
+            (pixel.red(), pixel.green(), pixel.blue())
+        };
+        let left = sample(&harness, 5, 20);
+        let right = sample(&harness, 35, 20);
+        assert!(left.0 > left.2 && right.2 > right.0);
+        assert_eq!(sample(&harness, 45, 20), (0, 0, 0));
+
+        runtime.transaction(|tx| {
+            tx.apply(Mutation::SetImage {
+                node: image_node,
+                content: ImageContent::Decoded(image),
+                fit: ImageFit::Contain,
+            });
+        });
+        harness.state.redraw();
+        assert_eq!(sample(&harness, 5, 5), (0, 0, 0));
+        let left = sample(&harness, 5, 20);
+        let right = sample(&harness, 35, 20);
+        assert!(left.0 > left.2 && right.2 > right.0);
+
+        runtime.transaction(|tx| {
+            tx.apply(Mutation::SetOpacity {
+                node: image_node,
+                opacity: 0.5,
+            });
+            tx.apply(Mutation::SetTransform {
+                node: image_node,
+                transform: creamui_core::runtime::Transform2D { x: 10.0, y: 0.0 },
+            });
+        });
+        harness.state.redraw();
+        assert_eq!(sample(&harness, 5, 20), (0, 0, 0));
+        let shifted = sample(&harness, 15, 20);
+        assert!(shifted.0 > shifted.2 && (80..160).contains(&shifted.0));
+    }
+
+    #[test]
+    fn runtime_window_rebuilds_theme_tokens_after_theme_change() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new().width(100.0).height(100.0).layout,
+            });
+            tx.apply(Mutation::SetPaintStyle {
+                node: root,
+                style: creamui_core::PaintStyle {
+                    background: Some(creamui_core::ColorToken::Accent.into()),
+                    ..Default::default()
+                },
+            });
+            root
+        };
+        runtime.set_root(Some(root));
+        let mut harness = WindowEventHarness::retained(SharedRuntime::new(runtime));
+        let mut theme = harness.state.pipeline.theme.get();
+        theme.colors.accent = Color::rgb(16, 32, 48);
+        harness.state.pipeline.theme.set(theme);
+        assert!(harness.state.pipeline.needs_paint.get());
+        harness.state.redraw();
+        let frame = harness.state.pipeline.frame.borrow();
+        let pixel = frame
+            .raster
+            .as_ref()
+            .unwrap()
+            .pixmap()
+            .pixel(10, 10)
+            .unwrap();
+        assert_eq!((pixel.red(), pixel.green(), pixel.blue()), (16, 32, 48));
+    }
+
+    #[test]
+    fn runtime_window_draws_text_decorations() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Text(creamui_core::runtime::TextNode {
+                text: Rc::from("Decorated"),
+            }));
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new().width(100.0).height(30.0).layout,
+            });
+            tx.apply(Mutation::SetTypographyStyle {
+                node: root,
+                style: creamui_core::TypographyStyle {
+                    font_size: Some(16.0),
+                    color: Some(Color::rgb(255, 255, 255).into()),
+                    underline: Some(true),
+                    strikethrough: Some(true),
+                    ..Default::default()
+                },
+            });
+            root
+        };
+        runtime.set_root(Some(root));
+        let harness = WindowEventHarness::retained(SharedRuntime::new(runtime));
+        let frame = harness.state.pipeline.frame.borrow();
+        let list = frame.presented.as_ref().unwrap();
+        assert_eq!(
+            list.items
+                .iter()
+                .filter(|item| matches!(item.primitive, crate::display_list::Primitive::Text(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            list.items
+                .iter()
+                .filter(|item| matches!(item.primitive, crate::display_list::Primitive::Quad(_)))
+                .count(),
+            2
+        );
     }
 
     struct LayoutFeedbackWidget {

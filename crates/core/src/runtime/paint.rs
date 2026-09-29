@@ -90,6 +90,143 @@ pub struct PaintState {
     pub fragment: Option<PaintFragment>,
 }
 
+fn translated(rect: crate::Rect, x: f32, y: f32) -> crate::Rect {
+    crate::Rect {
+        x: rect.x + x,
+        y: rect.y + y,
+        ..rect
+    }
+}
+
+fn faded(color: creamui_theme::Color, opacity: f32) -> creamui_theme::Color {
+    creamui_theme::Color::rgba(
+        color.r,
+        color.g,
+        color.b,
+        (color.a as f32 * opacity).round() as u8,
+    )
+}
+
+pub(super) fn paint_fragment(
+    fragment: &PaintFragment,
+    painter: &mut dyn crate::Painter,
+    transform: super::mutation::Transform2D,
+    opacity: f32,
+) {
+    let mut offsets = Vec::new();
+    let mut offset = (transform.x, transform.y);
+    let mut clips = 0;
+    for op in &fragment.ops {
+        let (x, y) = offset;
+        match op {
+            PaintOp::PushClip(rect) => {
+                painter.push_clip(translated(*rect, x, y));
+                clips += 1;
+            }
+            PaintOp::PushRoundedClip(rect, radius) => {
+                painter.push_clip_rounded(translated(*rect, x, y), *radius);
+                clips += 1;
+            }
+            PaintOp::PopClip => {
+                painter.pop_clip();
+                clips -= 1;
+            }
+            PaintOp::PushTransform(next) => {
+                offsets.push(offset);
+                offset = (x + next.x, y + next.y);
+            }
+            PaintOp::PopTransform => {
+                offset = offsets.pop().expect("transform push precedes pop");
+            }
+            PaintOp::Primitive(primitive) => match primitive {
+                PaintPrimitive::Quad(quad) => painter.fill_rect(
+                    translated(quad.rect, x, y),
+                    faded(quad.color, opacity),
+                    quad.corner_radius,
+                ),
+                PaintPrimitive::Gradient(gradient) => painter.fill_linear_gradient(
+                    translated(gradient.rect, x, y),
+                    faded(gradient.start, opacity),
+                    faded(gradient.end, opacity),
+                    gradient.angle_degrees,
+                    gradient.corner_radius,
+                ),
+                PaintPrimitive::RadialGradient(gradient) => painter.fill_radial_gradient(
+                    translated(gradient.rect, x, y),
+                    faded(gradient.start, opacity),
+                    faded(gradient.end, opacity),
+                    crate::Point {
+                        x: gradient.center.x + x,
+                        y: gradient.center.y + y,
+                    },
+                    gradient.radius,
+                    gradient.corner_radius,
+                ),
+                PaintPrimitive::Border(border) => painter.stroke_rect(
+                    translated(border.rect, x, y),
+                    faded(border.color, opacity),
+                    border.width,
+                    border.corner_radius,
+                ),
+                PaintPrimitive::Text(text) => {
+                    let rect = translated(text.rect, x, y);
+                    let color = faded(text.color, opacity);
+                    if let Some((selection, selected_color)) = &text.selection {
+                        painter.fill_text_selected_weight_font(
+                            rect,
+                            &text.text,
+                            color,
+                            faded(*selected_color, opacity),
+                            selection.clone(),
+                            text.font_size,
+                            text.align,
+                            text.family.as_deref(),
+                            text.bold,
+                            text.italic,
+                        );
+                    } else {
+                        painter.fill_text_font(
+                            rect,
+                            &text.text,
+                            color,
+                            text.font_size,
+                            text.align,
+                            text.family.as_deref(),
+                            text.bold,
+                            text.italic,
+                        );
+                    }
+                    if text.underline || text.strikethrough {
+                        painter.draw_text_decorations(
+                            rect,
+                            &text.text,
+                            color,
+                            text.font_size,
+                            text.align,
+                            text.family.as_deref(),
+                            text.bold,
+                            text.underline,
+                            text.strikethrough,
+                        );
+                    }
+                }
+                PaintPrimitive::Image(image) => {
+                    if let ImageContent::Decoded(decoded) = &image.content {
+                        painter.draw_image_opacity(
+                            translated(image.rect, x, y),
+                            decoded,
+                            image.tint,
+                            opacity,
+                        );
+                    }
+                }
+            },
+        }
+    }
+    debug_assert_eq!(clips, 0);
+    debug_assert!(offsets.is_empty());
+}
+
 fn image_destination(rect: crate::Rect, content: &ImageContent, fit: ImageFit) -> crate::Rect {
     let ImageContent::Decoded(image) = content else {
         return rect;
@@ -437,6 +574,32 @@ impl crate::Painter for RecordingPainter {
             family,
             false,
             false,
+            Some((selected, selected_color)),
+        );
+    }
+
+    fn fill_text_selected_weight_font(
+        &mut self,
+        rect: crate::Rect,
+        text: &str,
+        color: creamui_theme::Color,
+        selected_color: creamui_theme::Color,
+        selected: std::ops::Range<usize>,
+        font_size: f32,
+        align: crate::TextAlign,
+        family: Option<&str>,
+        bold: bool,
+        italic: bool,
+    ) {
+        self.push_text(
+            rect,
+            text,
+            color,
+            font_size,
+            align,
+            family,
+            bold,
+            italic,
             Some((selected, selected_color)),
         );
     }

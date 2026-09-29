@@ -173,6 +173,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
         } else {
             color = sampled;
         }
+        color *= in.params.y;
     }
     return color * coverage;
 }

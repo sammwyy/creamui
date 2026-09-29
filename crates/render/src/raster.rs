@@ -325,6 +325,7 @@ fn draw_image(
     ));
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
+        opacity: image.opacity,
         ..Default::default()
     };
     target.draw_pixmap(0, 0, source, &paint, transform, mask);

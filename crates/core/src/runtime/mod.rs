@@ -1,8 +1,6 @@
-//! The persistent runtime tree: the structure meant to eventually replace
-//! `Instance`/`BoxedWidget` reconciliation as the engine's source of
-//! truth. Built alongside the existing `scene` module, not wired into
-//! `Renderer` yet — see [`mount_legacy_widget`] for the compatibility
-//! bridge between the two.
+//! A persistent tree of layout, paint, composite, and event state.
+//! [`crate::Renderer`] and runtime-backed windows can paint it directly;
+//! [`mount_legacy_widget`] mounts existing widgets into the same tree.
 
 mod arena;
 mod binding;
@@ -137,6 +135,7 @@ impl Runtime {
         if self.root != id {
             self.full_layout_sync = true;
             self.hit_test_dirty = true;
+            self.paint_order_dirty = true;
         }
         self.root = id;
     }
@@ -351,13 +350,28 @@ impl Runtime {
             self.paint_order_dirty = false;
             return;
         };
+        let mut absolute_roots = Vec::new();
         let mut stack = vec![root];
         while let Some(id) = stack.pop() {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
+            if node.layout_style.position == taffy::style::Position::Absolute {
+                absolute_roots.push(id);
+                continue;
+            }
             self.paint_order.push(id);
             stack.extend(node.children.as_slice().iter().rev());
+        }
+        for root in absolute_roots {
+            let mut stack = vec![root];
+            while let Some(id) = stack.pop() {
+                let Some(node) = self.nodes.get(id) else {
+                    continue;
+                };
+                self.paint_order.push(id);
+                stack.extend(node.children.as_slice().iter().rev());
+            }
         }
         self.paint_order_dirty = false;
     }
@@ -366,6 +380,41 @@ impl Runtime {
     /// [`Runtime::rebuild_paint`].
     pub fn paint_order(&self) -> &[RuntimeNodeId] {
         &self.paint_order
+    }
+
+    pub fn paint_to(&self, painter: &mut dyn crate::Painter) {
+        for &id in &self.paint_order {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            let Some(fragment) = &node.paint.fragment else {
+                continue;
+            };
+            if let Some(clip) = node.layout.effective_clip {
+                painter.push_clip(clip);
+            }
+            paint::paint_fragment(
+                fragment,
+                painter,
+                node.layout.effective_transform,
+                node.layout.effective_opacity,
+            );
+            if node.layout.effective_clip.is_some() {
+                painter.pop_clip();
+            }
+        }
+    }
+
+    pub fn invalidate_all_paint(&mut self) {
+        let ids: Vec<_> = self.nodes.iter().map(|(id, _)| id).collect();
+        for id in ids {
+            if let Some(node) = self.nodes.get_mut(id) {
+                if !node.dirty.contains(DirtyFlags::PAINT) {
+                    node.dirty |= DirtyFlags::PAINT;
+                    self.paint_queue.push(id);
+                }
+            }
+        }
     }
 
     /// Recomputes `effective_transform`/`effective_opacity`/`effective_clip`
@@ -391,7 +440,14 @@ impl Runtime {
                 .and_then(|parent| self.nodes.get(parent))
                 .map(|parent| {
                     let clip = if parent.clips_children {
-                        Some(clip_to(parent.layout.effective_clip, parent.layout.rect))
+                        Some(clip_to(
+                            parent.layout.effective_clip,
+                            crate::Rect {
+                                x: parent.layout.rect.x + parent.layout.effective_transform.x,
+                                y: parent.layout.rect.y + parent.layout.effective_transform.y,
+                                ..parent.layout.rect
+                            },
+                        ))
                     } else {
                         parent.layout.effective_clip
                     };
@@ -422,6 +478,9 @@ impl Runtime {
             touched.push(id);
 
             if changed {
+                if node.hit_slot.is_some() {
+                    self.hit_rects.push(id);
+                }
                 queue.extend(node.children.as_slice().iter().copied());
             }
         }
@@ -993,6 +1052,40 @@ mod tests {
 
         runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
         assert_eq!(runtime.paint_order(), &[root, child]);
+    }
+
+    #[test]
+    fn paint_order_defers_absolute_subtrees_and_updates_after_repositioning() {
+        let mut runtime = Runtime::new();
+        let (root, absolute, flow) = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            let absolute = tx.create_node(NodeKind::Container);
+            let flow = tx.create_node(NodeKind::Container);
+            tx.insert_child(root, absolute, None);
+            tx.insert_child(root, flow, None);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: absolute,
+                style: taffy::style::Style {
+                    position: taffy::style::Position::Absolute,
+                    ..Default::default()
+                },
+            });
+            (root, absolute, flow)
+        };
+        runtime.set_root(Some(root));
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        assert_eq!(runtime.paint_order(), &[root, flow, absolute]);
+
+        {
+            let mut tx = runtime.transaction();
+            tx.apply(Mutation::SetLayoutStyle {
+                node: absolute,
+                style: taffy::style::Style::default(),
+            });
+        }
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        assert_eq!(runtime.paint_order(), &[root, absolute, flow]);
     }
 
     #[test]

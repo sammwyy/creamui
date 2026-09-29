@@ -25,8 +25,8 @@ Current limitations and work still to do. Implemented changes belong in
   and transforms beyond translation when that integration is built.
 - Revisit wide-tree costs: layout-rect sync still visits every direct child
   of a wide container on a changed path; changes to hit-list membership or
-  order rebuild the full hit list; `hit_test` scans it linearly. There is no
-  spatial index or explicit z-index for absolute nodes.
+  order rebuild the full hit list. There is no explicit z-index for absolute
+  nodes.
 - Evaluate whether logical nodes without layout can avoid Taffy nodes.
   `RuntimeTransaction::create_node` currently creates one for every node.
 - After runtime integration, add a tree inspector, invalidation reasons,

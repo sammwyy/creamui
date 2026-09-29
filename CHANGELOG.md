@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Runtime pointer hits use a spatial index that preserves paint order and
+  updates moved hit regions without rebuilding the full hit list.
 - Added a themed `VirtualList` and a 100,000-row example with mixed row
   heights and a draggable scrollbar.
 - `RawVirtualList` reads its resolved viewport height and measured row heights

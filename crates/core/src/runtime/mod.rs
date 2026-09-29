@@ -78,6 +78,7 @@ pub struct Runtime {
     /// membership is otherwise unchanged.
     hit_rects: Vec<RuntimeNodeId>,
     hit_entries: Vec<HitEntry>,
+    hit_index: events::HitIndex,
     focus_order: Vec<RuntimeNodeId>,
     pointer: PointerState,
     /// Nodes with a pending fragment regeneration — appended to whenever a
@@ -108,6 +109,7 @@ impl Runtime {
             hit_test_dirty: false,
             hit_rects: Vec::new(),
             hit_entries: Vec::new(),
+            hit_index: events::HitIndex::default(),
             focus_order: Vec::new(),
             pointer: PointerState::default(),
             paint_queue: Vec::new(),

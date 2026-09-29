@@ -1,6 +1,118 @@
 use super::dirty::DirtyFlags;
 use super::node::RuntimeNodeId;
 use super::Runtime;
+use std::collections::HashMap;
+
+const HIT_CELL_SIZE: f32 = 128.0;
+const MAX_INDEXED_CELLS: i64 = 64;
+
+fn hit_cell(value: f32) -> i32 {
+    (value / HIT_CELL_SIZE).floor() as i32
+}
+
+fn cell_range(rect: crate::Rect) -> Option<(i32, i32, i32, i32)> {
+    let x1 = rect.x + rect.width;
+    let y1 = rect.y + rect.height;
+    if !rect.x.is_finite()
+        || !rect.y.is_finite()
+        || !x1.is_finite()
+        || !y1.is_finite()
+        || rect.width < 0.0
+        || rect.height < 0.0
+    {
+        return None;
+    }
+    let (x0, x1, y0, y1) = (
+        hit_cell(rect.x),
+        hit_cell(x1),
+        hit_cell(rect.y),
+        hit_cell(y1),
+    );
+    let width = i64::from(x1) - i64::from(x0) + 1;
+    let height = i64::from(y1) - i64::from(y0) + 1;
+    if width > MAX_INDEXED_CELLS || height > MAX_INDEXED_CELLS || width * height > MAX_INDEXED_CELLS
+    {
+        return None;
+    }
+    Some((x0, x1, y0, y1))
+}
+
+fn insert_ordered(slots: &mut Vec<u32>, slot: u32) {
+    match slots.binary_search(&slot) {
+        Ok(_) => {}
+        Err(index) => slots.insert(index, slot),
+    }
+}
+
+fn remove_ordered(slots: &mut Vec<u32>, slot: u32) {
+    if let Ok(index) = slots.binary_search(&slot) {
+        slots.remove(index);
+    }
+}
+
+#[derive(Default)]
+pub(super) struct HitIndex {
+    cells: HashMap<(i32, i32), Vec<u32>>,
+    spanning: Vec<u32>,
+}
+
+impl HitIndex {
+    fn clear(&mut self) {
+        self.cells.clear();
+        self.spanning.clear();
+    }
+
+    fn insert(&mut self, slot: u32, rect: crate::Rect) {
+        if let Some((x0, x1, y0, y1)) = cell_range(rect) {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    insert_ordered(self.cells.entry((x, y)).or_default(), slot);
+                }
+            }
+        } else {
+            insert_ordered(&mut self.spanning, slot);
+        }
+    }
+
+    fn remove(&mut self, slot: u32, rect: crate::Rect) {
+        if let Some((x0, x1, y0, y1)) = cell_range(rect) {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                        self.cells.entry((x, y))
+                    {
+                        remove_ordered(entry.get_mut(), slot);
+                        if entry.get().is_empty() {
+                            entry.remove();
+                        }
+                    }
+                }
+            }
+        } else {
+            remove_ordered(&mut self.spanning, slot);
+        }
+    }
+
+    fn hit(&self, point: crate::Point, entries: &[HitEntry]) -> Option<RuntimeNodeId> {
+        let local = self
+            .cells
+            .get(&(hit_cell(point.x), hit_cell(point.y)))
+            .and_then(|slots| {
+                slots
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&slot| entries[slot as usize].rect.contains(point))
+            });
+        let spanning = self
+            .spanning
+            .iter()
+            .rev()
+            .copied()
+            .find(|&slot| entries[slot as usize].rect.contains(point));
+        local.max(spanning).map(|slot| entries[slot as usize].node)
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct HitEntry {
@@ -25,7 +137,7 @@ impl Runtime {
     /// instead collects every normal-flow node first, then every
     /// absolutely positioned subtree's nodes (in encounter order),
     /// mirroring the legacy `Scene`'s deferred Flow/Absolute two-pass
-    /// paint — [`Runtime::hit_test`] scans `hit_entries` in reverse, so an
+    /// paint — [`Runtime::hit_test`] selects the highest matching slot, so an
     /// absolutely positioned node's entries, being last, always win over a
     /// flow sibling's regardless of tree depth/order. A node nested inside
     /// an already-deferred absolute subtree is not independently deferred
@@ -38,13 +150,19 @@ impl Runtime {
             for id in self.hit_rects.drain(..) {
                 if let Some(node) = self.nodes.get(id) {
                     if let Some(slot) = node.hit_slot {
-                        self.hit_entries[slot as usize].rect = node.layout.rect;
+                        let entry = &mut self.hit_entries[slot as usize];
+                        if entry.rect != node.layout.rect {
+                            self.hit_index.remove(slot, entry.rect);
+                            entry.rect = node.layout.rect;
+                            self.hit_index.insert(slot, entry.rect);
+                        }
                     }
                 }
             }
             return;
         }
         self.hit_rects.clear();
+        self.hit_index.clear();
         for entry in self.hit_entries.drain(..) {
             if let Some(node) = self.nodes.get_mut(entry.node) {
                 node.hit_slot = None;
@@ -106,18 +224,15 @@ impl Runtime {
             if let Some(node) = self.nodes.get_mut(entry.node) {
                 node.hit_slot = Some(slot as u32);
             }
+            self.hit_index.insert(slot as u32, entry.rect);
         }
         self.hit_test_dirty = false;
     }
 
     /// Topmost interactive node containing `point`, from the retained hit
-    /// list built by the last [`Runtime::rebuild_hit_test`].
+    /// index built by the last [`Runtime::rebuild_hit_test`].
     pub fn hit_test(&self, point: crate::Point) -> Option<RuntimeNodeId> {
-        self.hit_entries
-            .iter()
-            .rev()
-            .find(|entry| entry.rect.contains(point))
-            .map(|entry| entry.node)
+        self.hit_index.hit(point, &self.hit_entries)
     }
 
     /// [`PointerState::pointer_capture`] if set, otherwise [`Runtime::hit_test`].
@@ -294,6 +409,86 @@ mod tests {
             Some(node)
         );
         assert_eq!(runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }), None);
+    }
+
+    #[test]
+    fn spatial_hits_match_reverse_paint_order_after_moves() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let mut nodes = Vec::new();
+        for i in 0..240 {
+            let wide = i % 31 == 0;
+            let node = leaf_at(
+                &mut runtime,
+                root,
+                rect(
+                    (i % 24) as f32 * 36.0 - 100.0,
+                    (i / 24) as f32 * 44.0 - 70.0,
+                    if wide { 8_000.0 } else { (i % 5) as f32 * 12.0 },
+                    if wide { 8_000.0 } else { 25.0 },
+                ),
+            );
+            clickable(&mut runtime, node);
+            nodes.push(node);
+        }
+        runtime.rebuild_hit_test();
+
+        let check = |runtime: &Runtime| {
+            for y in (-3..20).map(|n| n as f32 * 32.0) {
+                for x in (-4..48).map(|n| n as f32 * 32.0) {
+                    let point = crate::Point { x, y };
+                    let expected = runtime
+                        .hit_entries
+                        .iter()
+                        .rev()
+                        .find(|entry| entry.rect.contains(point))
+                        .map(|entry| entry.node);
+                    assert_eq!(runtime.hit_test(point), expected, "at {point:?}");
+                }
+            }
+        };
+        check(&runtime);
+
+        for &node in nodes.iter().step_by(7) {
+            runtime.nodes.get_mut(node).unwrap().layout.rect.x += 800.0;
+            runtime.hit_rects.push(node);
+        }
+        runtime.rebuild_hit_test();
+        check(&runtime);
+    }
+
+    #[test]
+    fn moving_between_indexed_and_spanning_regions_updates_hits() {
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            tx.create_node(NodeKind::Container)
+        };
+        runtime.set_root(Some(root));
+        let node = leaf_at(&mut runtime, root, rect(0.0, 0.0, 10.0, 10.0));
+        clickable(&mut runtime, node);
+        runtime.rebuild_hit_test();
+
+        runtime.nodes.get_mut(node).unwrap().layout.rect = rect(0.0, 0.0, 10_000.0, 10.0);
+        runtime.hit_rects.push(node);
+        runtime.rebuild_hit_test();
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 9_000.0, y: 5.0 }),
+            Some(node)
+        );
+
+        runtime.nodes.get_mut(node).unwrap().layout.rect = rect(5_000.0, 0.0, 10.0, 10.0);
+        runtime.hit_rects.push(node);
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.hit_test(crate::Point { x: 0.0, y: 5.0 }), None);
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 5_005.0, y: 5.0 }),
+            Some(node)
+        );
     }
 
     #[test]

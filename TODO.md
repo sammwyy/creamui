@@ -50,6 +50,9 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Rendering and performance
 
+- Make parallel headless GPU tests reliable. On this system, the render test
+  process can segfault when GPU tests run concurrently; the same suite passes
+  with `--test-threads=1` under Xvfb.
 - Avoid redrawing the full GPU window whenever content changes. The GPU
   clears and draws the full frame; the CPU uses calculated damage. Partial
   GPU presentation needs a way to know which previous pixels remain valid

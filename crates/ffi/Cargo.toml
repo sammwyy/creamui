@@ -25,3 +25,7 @@ creamui-abi = { workspace = true }
 
 [dev-dependencies]
 libloading = "0.8"
+
+[[test]]
+name = "retained_window_smoke"
+harness = false

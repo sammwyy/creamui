@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- ABI-v2 retained trees can run in native windows through `cui_run_window` or
+  `RuntimeTree::run_window`. C mutations schedule frames in the same runtime
+  used for layout, painting, and input.
 - Radial backgrounds accept any number of positioned or implicit color stops.
   CPU and GPU rendering interpolate them with premultiplied alpha; repeating
   gradients use the interval between their first and last stops. ABI-v2 paint

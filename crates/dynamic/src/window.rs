@@ -84,7 +84,7 @@ impl Drop for WindowHandle {
     }
 }
 
-fn c_window_options(options: &WindowOptions, title: &CString) -> CWindowOptionsV2 {
+pub(crate) fn c_window_options(options: &WindowOptions, title: &CString) -> CWindowOptionsV2 {
     let blur = match options.blur {
         None => CBlurRegion {
             kind: CUI_BLUR_NONE,

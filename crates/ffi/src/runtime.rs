@@ -5,20 +5,20 @@
 
 use creamui_abi::{
     CColor, CColorScheme, CNode, CPaintOp, CRadialStop, CRect, CStyle, CTypographyStyle,
-    CUI_NODE_KIND_TEXT, CUI_NODE_NONE, CUI_PAINT_BORDER, CUI_PAINT_IMAGE,
+    CWindowOptionsV2, CUI_NODE_KIND_TEXT, CUI_NODE_NONE, CUI_PAINT_BORDER, CUI_PAINT_IMAGE,
     CUI_PAINT_LINEAR_GRADIENT, CUI_PAINT_POP_CLIP, CUI_PAINT_POP_TRANSFORM, CUI_PAINT_PUSH_CLIP,
     CUI_PAINT_PUSH_ROUNDED_CLIP, CUI_PAINT_PUSH_TRANSFORM, CUI_PAINT_QUAD,
     CUI_PAINT_RADIAL_GRADIENT, CUI_PAINT_REPEATING_RADIAL_GRADIENT, CUI_PAINT_TEXT,
 };
 use creamui_core::runtime::{
-    Mutation, NodeKind, PaintOp, PaintPrimitive, Runtime, RuntimeNodeId, Transform2D,
+    Mutation, NodeKind, PaintOp, PaintPrimitive, Runtime, RuntimeNodeId, SharedRuntime, Transform2D,
 };
 use creamui_core::{PaintStyle, Size};
 use creamui_theme::Color;
 use std::os::raw::{c_char, c_int, c_void};
 use std::rc::Rc;
 
-pub struct CRuntime(Runtime);
+pub struct CRuntime(SharedRuntime);
 
 pub type CEventCallback = Option<extern "C" fn(CNode, *mut c_void)>;
 
@@ -226,7 +226,35 @@ fn paint_op_to_c(op: &PaintOp) -> CPaintOp {
 
 #[no_mangle]
 pub extern "C" fn cui_runtime_new() -> *mut CRuntime {
-    Box::into_raw(Box::new(CRuntime(Runtime::new())))
+    Box::into_raw(Box::new(CRuntime(SharedRuntime::new(Runtime::new()))))
+}
+
+/// Opens a window backed by this runtime and runs its event loop until the
+/// window closes. Mutations from C callbacks schedule new frames.
+///
+/// # Safety
+/// `rt` must be a valid pointer from [`cui_runtime_new`] and remain allocated
+/// until this call returns. `options.base.title` must be a valid NUL-terminated
+/// UTF-8 string for this call. `userdata` must remain valid for callbacks.
+#[no_mangle]
+pub unsafe extern "C" fn cui_run_window(
+    rt: *mut CRuntime,
+    options: CWindowOptionsV2,
+    background: CColor,
+    on_window_ready: Option<crate::CWindowReadyFn>,
+    userdata: *mut c_void,
+) {
+    let Some(rt) = rt.as_ref() else {
+        return;
+    };
+    creamui_render::AppBuilder::new()
+        .runtime_window(
+            crate::window_options_from_c_v2(options),
+            crate::color_from_c(background),
+            crate::window_ready_callback(on_window_ready, userdata),
+            rt.0.clone(),
+        )
+        .run();
 }
 
 /// # Safety
@@ -243,7 +271,7 @@ pub unsafe extern "C" fn cui_runtime_free(rt: *mut CRuntime) {
 /// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
 #[no_mangle]
 pub unsafe extern "C" fn cui_runtime_node_count(rt: *const CRuntime) -> usize {
-    rt.as_ref().map_or(0, |rt| rt.0.len())
+    rt.as_ref().map_or(0, |rt| rt.0.with(Runtime::len))
 }
 
 /// # Safety
@@ -258,7 +286,7 @@ pub unsafe extern "C" fn cui_create_node(rt: *mut CRuntime, kind: c_int) -> CNod
     } else {
         NodeKind::Container
     };
-    rt.0.transaction().create_node(kind).to_bits()
+    rt.0.transaction(|tx| tx.create_node(kind)).to_bits()
 }
 
 /// # Safety
@@ -266,7 +294,7 @@ pub unsafe extern "C" fn cui_create_node(rt: *mut CRuntime, kind: c_int) -> CNod
 #[no_mangle]
 pub unsafe extern "C" fn cui_set_root(rt: *mut CRuntime, node: CNode) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.set_root(decode_optional(node));
+        rt.0.with_mut(|runtime| runtime.set_root(decode_optional(node)));
     }
 }
 
@@ -280,8 +308,9 @@ pub unsafe extern "C" fn cui_insert_child(
     before: CNode,
 ) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction()
-            .insert_child(decode(parent), decode(child), decode_optional(before));
+        rt.0.transaction(|tx| {
+            tx.insert_child(decode(parent), decode(child), decode_optional(before))
+        });
     }
 }
 
@@ -290,7 +319,7 @@ pub unsafe extern "C" fn cui_insert_child(
 #[no_mangle]
 pub unsafe extern "C" fn cui_remove_subtree(rt: *mut CRuntime, node: CNode) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction().remove_subtree(decode(node));
+        rt.0.transaction(|tx| tx.remove_subtree(decode(node)));
     }
 }
 
@@ -303,9 +332,11 @@ pub unsafe extern "C" fn cui_set_text(rt: *mut CRuntime, node: CNode, text: *con
         return;
     };
     let text = crate::cstr_to_string(text);
-    rt.0.transaction().apply(Mutation::SetText {
-        node: decode(node),
-        text: text.into(),
+    rt.0.transaction(|tx| {
+        tx.apply(Mutation::SetText {
+            node: decode(node),
+            text: text.into(),
+        })
     });
 }
 
@@ -314,9 +345,11 @@ pub unsafe extern "C" fn cui_set_text(rt: *mut CRuntime, node: CNode, text: *con
 #[no_mangle]
 pub unsafe extern "C" fn cui_set_layout_style(rt: *mut CRuntime, node: CNode, style: CStyle) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction().apply(Mutation::SetLayoutStyle {
-            node: decode(node),
-            style: crate::style_from_c(style),
+        rt.0.transaction(|tx| {
+            tx.apply(Mutation::SetLayoutStyle {
+                node: decode(node),
+                style: crate::style_from_c(style),
+            })
         });
     }
 }
@@ -331,13 +364,15 @@ pub unsafe extern "C" fn cui_set_background(
     corner_radius: f32,
 ) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction().apply(Mutation::SetPaintStyle {
-            node: decode(node),
-            style: PaintStyle {
-                background: Some(Color::rgba(color.r, color.g, color.b, color.a).into()),
-                corner_radius: Some(corner_radius),
-                ..Default::default()
-            },
+        rt.0.transaction(|tx| {
+            tx.apply(Mutation::SetPaintStyle {
+                node: decode(node),
+                style: PaintStyle {
+                    background: Some(Color::rgba(color.r, color.g, color.b, color.a).into()),
+                    corner_radius: Some(corner_radius),
+                    ..Default::default()
+                },
+            })
         });
     }
 }
@@ -356,9 +391,11 @@ pub unsafe extern "C" fn cui_set_typography_style(
     style: CTypographyStyle,
 ) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction().apply(Mutation::SetTypographyStyle {
-            node: decode(node),
-            style: crate::typography_style_from_c(style),
+        rt.0.transaction(|tx| {
+            tx.apply(Mutation::SetTypographyStyle {
+                node: decode(node),
+                style: crate::typography_style_from_c(style),
+            })
         });
     }
 }
@@ -368,9 +405,11 @@ pub unsafe extern "C" fn cui_set_typography_style(
 #[no_mangle]
 pub unsafe extern "C" fn cui_set_transform(rt: *mut CRuntime, node: CNode, x: f32, y: f32) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.transaction().apply(Mutation::SetTransform {
-            node: decode(node),
-            transform: Transform2D { x, y },
+        rt.0.transaction(|tx| {
+            tx.apply(Mutation::SetTransform {
+                node: decode(node),
+                transform: Transform2D { x, y },
+            })
         });
     }
 }
@@ -383,7 +422,7 @@ pub unsafe extern "C" fn cui_set_transform(rt: *mut CRuntime, node: CNode, x: f3
 #[no_mangle]
 pub unsafe extern "C" fn cui_compute_layout(rt: *mut CRuntime, width: f32, height: f32) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.compute_layout(Size { width, height });
+        rt.0.with_mut(|runtime| runtime.compute_layout(Size { width, height }));
     }
 }
 
@@ -395,7 +434,7 @@ pub unsafe extern "C" fn cui_compute_layout(rt: *mut CRuntime, width: f32, heigh
 #[no_mangle]
 pub unsafe extern "C" fn cui_rebuild_paint(rt: *mut CRuntime, colors: CColorScheme) {
     if let Some(rt) = rt.as_mut() {
-        rt.0.rebuild_paint(&color_scheme_from_c(colors));
+        rt.0.with_mut(|runtime| runtime.rebuild_paint(&color_scheme_from_c(colors)));
     }
 }
 
@@ -406,10 +445,14 @@ pub unsafe extern "C" fn cui_rebuild_paint(rt: *mut CRuntime, colors: CColorSche
 /// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
 #[no_mangle]
 pub unsafe extern "C" fn cui_paint_op_count(rt: *const CRuntime, node: CNode) -> usize {
-    rt.as_ref()
-        .and_then(|rt| rt.0.get(decode(node)))
-        .and_then(|node| node.paint.fragment.as_ref())
-        .map_or(0, |fragment| fragment.ops.len())
+    rt.as_ref().map_or(0, |rt| {
+        rt.0.with(|runtime| {
+            runtime
+                .get(decode(node))
+                .and_then(|node| node.paint.fragment.as_ref())
+                .map_or(0, |fragment| fragment.ops.len())
+        })
+    })
 }
 
 /// Copies one retained paint operation into a C value. Returns a default
@@ -424,25 +467,29 @@ pub unsafe extern "C" fn cui_get_paint_op(
     node: CNode,
     index: usize,
 ) -> CPaintOp {
-    rt.as_ref()
-        .and_then(|rt| rt.0.get(decode(node)))
-        .and_then(|node| node.paint.fragment.as_ref())
-        .and_then(|fragment| fragment.ops.get(index))
-        .map_or_else(CPaintOp::default, paint_op_to_c)
+    rt.as_ref().map_or_else(CPaintOp::default, |rt| {
+        rt.0.with(|runtime| {
+            runtime
+                .get(decode(node))
+                .and_then(|node| node.paint.fragment.as_ref())
+                .and_then(|fragment| fragment.ops.get(index))
+                .map_or_else(CPaintOp::default, paint_op_to_c)
+        })
+    })
 }
 
 fn radial_stops(
-    rt: &CRuntime,
+    runtime: &Runtime,
     node: CNode,
     op_index: usize,
 ) -> Option<&[creamui_core::ResolvedRadialColorStop]> {
-    let op =
-        rt.0.get(decode(node))?
-            .paint
-            .fragment
-            .as_ref()?
-            .ops
-            .get(op_index)?;
+    let op = runtime
+        .get(decode(node))?
+        .paint
+        .fragment
+        .as_ref()?
+        .ops
+        .get(op_index)?;
     match op {
         PaintOp::Primitive(PaintPrimitive::RadialGradient(gradient)) => Some(&gradient.stops),
         _ => None,
@@ -457,9 +504,9 @@ pub unsafe extern "C" fn cui_radial_stop_count(
     node: CNode,
     op_index: usize,
 ) -> usize {
-    rt.as_ref()
-        .and_then(|rt| radial_stops(rt, node, op_index))
-        .map_or(0, |stops| stops.len())
+    rt.as_ref().map_or(0, |rt| {
+        rt.0.with(|runtime| radial_stops(runtime, node, op_index).map_or(0, |stops| stops.len()))
+    })
 }
 
 /// # Safety
@@ -471,13 +518,16 @@ pub unsafe extern "C" fn cui_get_radial_stop(
     op_index: usize,
     stop_index: usize,
 ) -> CRadialStop {
-    rt.as_ref()
-        .and_then(|rt| radial_stops(rt, node, op_index))
-        .and_then(|stops| stops.get(stop_index))
-        .map_or_else(CRadialStop::default, |stop| CRadialStop {
-            offset: stop.offset,
-            color: color_to_c(stop.color),
+    rt.as_ref().map_or_else(CRadialStop::default, |rt| {
+        rt.0.with(|runtime| {
+            radial_stops(runtime, node, op_index)
+                .and_then(|stops| stops.get(stop_index))
+                .map_or_else(CRadialStop::default, |stop| CRadialStop {
+                    offset: stop.offset,
+                    color: color_to_c(stop.color),
+                })
         })
+    })
 }
 
 /// Installs or clears a C click callback. `userdata` is passed back unchanged
@@ -499,12 +549,14 @@ pub unsafe extern "C" fn cui_set_click_callback(
     };
     let on_click =
         callback.map(|callback| Rc::new(move || callback(node, userdata)) as Rc<dyn Fn()>);
-    rt.0.transaction().apply(Mutation::SetEventHandlers {
-        node: decode(node),
-        handlers: creamui_core::runtime::EventState {
-            on_click,
-            ..Default::default()
-        },
+    rt.0.transaction(|tx| {
+        tx.apply(Mutation::SetEventHandlers {
+            node: decode(node),
+            handlers: creamui_core::runtime::EventState {
+                on_click,
+                ..Default::default()
+            },
+        })
     });
 }
 
@@ -515,11 +567,13 @@ pub unsafe extern "C" fn cui_set_click_callback(
 /// `rt` must be null or a pointer previously returned by [`cui_runtime_new`].
 #[no_mangle]
 pub unsafe extern "C" fn cui_dispatch_click(rt: *const CRuntime, node: CNode) -> bool {
-    let Some(callback) = rt
-        .as_ref()
-        .and_then(|rt| rt.0.get(decode(node)))
-        .and_then(|node| node.events.on_click.clone())
-    else {
+    let Some(callback) = rt.as_ref().and_then(|rt| {
+        rt.0.with(|runtime| {
+            runtime
+                .get(decode(node))
+                .and_then(|node| node.events.on_click.clone())
+        })
+    }) else {
         return false;
     };
     callback();
@@ -542,20 +596,20 @@ pub unsafe extern "C" fn cui_get_rect(rt: *const CRuntime, node: CNode) -> CRect
     let Some(rt) = rt.as_ref() else {
         return zero;
     };
-    let Some(node) = rt.0.get(decode(node)) else {
-        return zero;
-    };
-    CRect {
-        x: node.layout.rect.x,
-        y: node.layout.rect.y,
-        width: node.layout.rect.width,
-        height: node.layout.rect.height,
-    }
+    rt.0.with(|runtime| {
+        runtime.get(decode(node)).map_or(zero, |node| CRect {
+            x: node.layout.rect.x,
+            y: node.layout.rect.y,
+            width: node.layout.rect.width,
+            height: node.layout.rect.height,
+        })
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::ffi::CString;
 
     #[test]
@@ -597,11 +651,12 @@ mod tests {
             let text = CString::new("hello").unwrap();
             cui_set_text(rt, node, text.as_ptr());
 
-            let node_ref = (*rt).0.get(decode(node)).unwrap();
-            match &node_ref.kind {
-                NodeKind::Text(t) => assert_eq!(&*t.text, "hello"),
-                _ => panic!("expected a text node"),
-            }
+            (*rt)
+                .0
+                .with(|runtime| match &runtime.get(decode(node)).unwrap().kind {
+                    NodeKind::Text(t) => assert_eq!(&*t.text, "hello"),
+                    _ => panic!("expected a text node"),
+                });
 
             cui_runtime_free(rt);
         }
@@ -632,13 +687,38 @@ mod tests {
     }
 
     #[test]
+    fn c_mutations_notify_the_runtime_used_by_a_window() {
+        unsafe {
+            let rt = cui_runtime_new();
+            let shared = (*rt).0.clone();
+            let notifications = Rc::new(Cell::new(0));
+            let listener: Rc<dyn Fn()> = {
+                let notifications = notifications.clone();
+                Rc::new(move || notifications.set(notifications.get() + 1))
+            };
+            shared.subscribe(&listener);
+
+            let node = cui_create_node(rt, 0);
+            cui_set_root(rt, node);
+            cui_set_background(rt, node, CColor::rgb(10, 20, 30), 0.0);
+            assert_eq!(shared.with(Runtime::len), 1);
+            assert_eq!(notifications.get(), 3);
+
+            cui_runtime_free(rt);
+            assert_eq!(shared.with(Runtime::len), 1);
+        }
+    }
+
+    #[test]
     fn set_transform_reaches_the_node() {
         unsafe {
             let rt = cui_runtime_new();
             let node = cui_create_node(rt, 0);
             cui_set_transform(rt, node, 5.0, 10.0);
 
-            let transform = (*rt).0.get(decode(node)).unwrap().transform;
+            let transform = (*rt)
+                .0
+                .with(|runtime| runtime.get(decode(node)).unwrap().transform);
             assert_eq!(transform, Transform2D { x: 5.0, y: 10.0 });
 
             cui_runtime_free(rt);
@@ -765,9 +845,8 @@ mod tests {
 
     #[test]
     fn radial_stop_snapshots_include_every_color() {
-        let mut rt = CRuntime(Runtime::new());
-        let node = {
-            let mut tx = rt.0.transaction();
+        let rt = CRuntime(SharedRuntime::new(Runtime::new()));
+        let node = rt.0.transaction(|tx| {
             let node = tx.create_node(NodeKind::Container);
             tx.apply(Mutation::SetPaintStyle {
                 node,
@@ -786,13 +865,15 @@ mod tests {
                     .paint,
             });
             node
-        };
-        rt.0.set_root(Some(node));
-        rt.0.compute_layout(Size {
-            width: 40.0,
-            height: 40.0,
         });
-        rt.0.rebuild_paint(&creamui_theme::ColorScheme::default());
+        rt.0.with_mut(|runtime| {
+            runtime.set_root(Some(node));
+            runtime.compute_layout(Size {
+                width: 40.0,
+                height: 40.0,
+            });
+            runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        });
         let ptr = &rt as *const CRuntime;
         let handle = node.to_bits();
         unsafe {
@@ -854,16 +935,18 @@ mod tests {
                 },
             );
 
-            let typography = &(*rt).0.get(decode(node)).unwrap().typography_style;
-            assert_eq!(
-                typography.color,
-                Some(creamui_theme::Color::rgb(1, 2, 3).into())
-            );
-            assert_eq!(typography.font_size, Some(18.0));
-            assert_eq!(typography.font_family.as_deref(), Some("Inter"));
-            assert_eq!(typography.align, Some(creamui_core::TextAlign::Start));
-            assert_eq!(typography.bold, Some(true));
-            assert_eq!(typography.italic, None);
+            (*rt).0.with(|runtime| {
+                let typography = &runtime.get(decode(node)).unwrap().typography_style;
+                assert_eq!(
+                    typography.color,
+                    Some(creamui_theme::Color::rgb(1, 2, 3).into())
+                );
+                assert_eq!(typography.font_size, Some(18.0));
+                assert_eq!(typography.font_family.as_deref(), Some("Inter"));
+                assert_eq!(typography.align, Some(creamui_core::TextAlign::Start));
+                assert_eq!(typography.bold, Some(true));
+                assert_eq!(typography.italic, None);
+            });
 
             cui_runtime_free(rt);
         }
@@ -876,15 +959,17 @@ mod tests {
             let node = cui_create_node(rt, CUI_NODE_KIND_TEXT);
             cui_set_typography_style(rt, node, CTypographyStyle::unset());
 
-            let typography = &(*rt).0.get(decode(node)).unwrap().typography_style;
-            assert_eq!(typography.color, None);
-            assert_eq!(typography.font_size, None);
-            assert_eq!(typography.font_family, None);
-            assert_eq!(typography.align, None);
-            assert_eq!(typography.bold, None);
-            assert_eq!(typography.italic, None);
-            assert_eq!(typography.underline, None);
-            assert_eq!(typography.strikethrough, None);
+            (*rt).0.with(|runtime| {
+                let typography = &runtime.get(decode(node)).unwrap().typography_style;
+                assert_eq!(typography.color, None);
+                assert_eq!(typography.font_size, None);
+                assert_eq!(typography.font_family, None);
+                assert_eq!(typography.align, None);
+                assert_eq!(typography.bold, None);
+                assert_eq!(typography.italic, None);
+                assert_eq!(typography.underline, None);
+                assert_eq!(typography.strikethrough, None);
+            });
 
             cui_runtime_free(rt);
         }

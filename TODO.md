@@ -23,9 +23,6 @@ Current limitations and work still to do. Implemented changes belong in
 ## ABI and platforms
 
 - Add the Android file prompt modal.
-- Connect ABI-v2's `cui_*` runtime tree to a window and present loop. It
-  currently mutates an in-memory `Runtime`; ABI-v1's `creamui_run` builds a
-  separate widget tree.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland
   protocols if X11, Windows, or macOS support is wanted.
 - Verify composited per-pixel transparency for the CPU presenter on each

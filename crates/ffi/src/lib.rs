@@ -1052,6 +1052,17 @@ pub unsafe extern "C" fn creamui_window_handle_free(handle: *mut CWindowHandle) 
     }
 }
 
+/// Requests closure of a live window. The handle remains valid until freed.
+///
+/// # Safety
+/// `handle` must be null or a live pointer from a window-ready callback.
+#[no_mangle]
+pub unsafe extern "C" fn creamui_window_close(handle: *const CWindowHandle) {
+    if let Some(handle) = handle.as_ref() {
+        handle.0.close();
+    }
+}
+
 type CBuildFn = extern "C" fn(width: f32, height: f32, userdata: *mut c_void) -> *mut CWidget;
 type CWindowReadyFn = extern "C" fn(handle: *mut CWindowHandle, userdata: *mut c_void);
 

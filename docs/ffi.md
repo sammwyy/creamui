@@ -8,6 +8,16 @@ Most Rust applications should use the native crates directly. CreamUI also offer
 
 The ABI is intentionally separate from the normal Rust widget API. It is useful for plugin hosts and shared desktop runtimes, but it is not required for ordinary native applications.
 
+For a retained ABI-v2 window, create a tree with `cui_runtime_new`, add nodes
+with `cui_create_node`, set its root with `cui_set_root`, then call
+`cui_run_window` with `CWindowOptionsV2` and a clear color. The call runs the
+window event loop until the window closes. Node mutations made from click
+callbacks schedule another frame. Keep the runtime pointer and callback data
+alive until `cui_run_window` returns, then free the tree with
+`cui_runtime_free`. The dynamic Rust client provides `RuntimeTree::run_window`
+for the same path. A window-ready callback can call `creamui_window_close` on
+its handle, then release the handle with `creamui_window_handle_free`.
+
 See the public Rust API documentation for `creamui-dynamic::AppBuilder` and the exported declarations in `creamui-ffi` when integrating this path.
 
 For initial compositor blur, pass `CWindowOptionsV2` to `creamui_run_v2` or

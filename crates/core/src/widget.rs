@@ -207,6 +207,24 @@ pub trait Painter {
     ) {
         self.fill_rect(rect, start.mix(end, 0.5), corner_radius);
     }
+    fn fill_radial_gradient_ellipse(
+        &mut self,
+        rect: Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        center: Point,
+        radii: [f32; 2],
+        corner_radius: f32,
+    ) {
+        self.fill_radial_gradient(
+            rect,
+            start,
+            end,
+            center,
+            radii[0].max(radii[1]),
+            corner_radius,
+        );
+    }
     fn draw_box_shadow(
         &mut self,
         rect: Rect,

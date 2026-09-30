@@ -189,6 +189,7 @@ fn paint_op_to_c(op: &PaintOp) -> CPaintOp {
                 out.x = gradient.center.x;
                 out.y = gradient.center.y;
                 out.radius = gradient.radius;
+                out.angle_degrees = gradient.radius_y;
             }
             PaintPrimitive::Border(border) => {
                 out.kind = CUI_PAINT_BORDER;
@@ -663,6 +664,25 @@ mod tests {
             assert_eq!(cui_get_paint_op(rt, node, 1).kind, -1);
             cui_runtime_free(rt);
         }
+    }
+
+    #[test]
+    fn radial_paint_op_exposes_both_radii() {
+        let op = PaintOp::Primitive(PaintPrimitive::RadialGradient(
+            creamui_core::runtime::RadialGradientPrimitive {
+                rect: creamui_core::Rect::default(),
+                start: Color::rgb(255, 0, 0),
+                end: Color::rgb(0, 0, 255),
+                center: creamui_core::Point { x: 8.0, y: 12.0 },
+                radius: 20.0,
+                radius_y: 10.0,
+                corner_radius: 0.0,
+            },
+        ));
+        let converted = paint_op_to_c(&op);
+        assert_eq!(converted.kind, CUI_PAINT_RADIAL_GRADIENT);
+        assert_eq!((converted.x, converted.y), (8.0, 12.0));
+        assert_eq!((converted.radius, converted.angle_degrees), (20.0, 10.0));
     }
 
     #[test]

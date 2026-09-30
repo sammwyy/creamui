@@ -54,18 +54,20 @@ Directional JSX props override shorthand props, and inline props override
 the `style` prop. Existing `StyleProp::Padding(LengthValue)` and
 `StyleProp::Margin(LengthValue)` declarations remain supported.
 
-Circular, two-stop radial backgrounds use `radial-gradient(circle, start, end)`
-or `radial-gradient(circle at 25% 75%, start, end)`. The default center is
-`50% 50%`; the radius reaches the farthest corner. Centers outside the box
-are allowed. Colors support the same hexadecimal values and theme tokens as
-other backgrounds. Ellipses, explicit radii, additional stops, and repeating
-gradients are not supported.
+Two-stop radial backgrounds use `radial-gradient(circle, start, end)` or
+`radial-gradient(ellipse at 25% 75%, start, end)`. The default center is
+`50% 50%`; the radii reach the farthest corner. `circle 40px` and
+`ellipse 40px 20px` specify pixel radii. Centers outside the box are allowed.
+Colors support the same hexadecimal values and theme tokens as other
+backgrounds. Additional stops and repeating gradients are not yet supported.
 
 ```rust
 use creamui::{ColorToken, RadialGradient, Style};
 
 let spotlight = Style::new().background(
-    RadialGradient::new(ColorToken::Accent, ColorToken::Surface).at(0.25, 0.75),
+    RadialGradient::new(ColorToken::Accent, ColorToken::Surface)
+        .radii(120.0, 60.0)
+        .at(0.25, 0.75),
 );
 ```
 
@@ -81,8 +83,7 @@ Radial backgrounds also work in interaction state styles. CPU and GPU renderers
 support rounded corners, clipping, scaling, scrolling, and premultiplied-alpha
 interpolation. Each gradient records a single quad; translucent CPU rendering
 only visits the affected pixels. Custom `Painter` implementations can override
-`fill_radial_gradient`; its default fallback paints the average color, as for
-linear gradients.
+`fill_radial_gradient_ellipse`; its default delegates to the circular method.
 
 The [JSX styling gallery](../examples/jsx-styles/README.md) demonstrates these
 properties together. The `universal-styles` example shows the native builder

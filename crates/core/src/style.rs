@@ -135,8 +135,26 @@ impl LinearGradient {
 pub struct RadialGradient {
     pub start: ColorValue,
     pub end: ColorValue,
-    /// Center coordinates as fractions of the background box.
     pub center: crate::Point,
+    pub shape: RadialGradientShape,
+    pub size: RadialGradientSize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RadialGradientShape {
+    #[default]
+    Circle,
+    Ellipse,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum RadialGradientSize {
+    #[default]
+    FarthestCorner,
+    Radii {
+        x: f32,
+        y: f32,
+    },
 }
 
 impl RadialGradient {
@@ -145,7 +163,37 @@ impl RadialGradient {
             start: start.into(),
             end: end.into(),
             center: crate::Point { x: 0.5, y: 0.5 },
+            shape: RadialGradientShape::Circle,
+            size: RadialGradientSize::FarthestCorner,
         }
+    }
+
+    pub fn ellipse(mut self) -> Self {
+        self.shape = RadialGradientShape::Ellipse;
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        assert!(
+            radius.is_finite() && radius > 0.0,
+            "radial gradient radius must be positive and finite"
+        );
+        self.size = RadialGradientSize::Radii {
+            x: radius,
+            y: radius,
+        };
+        self.shape = RadialGradientShape::Circle;
+        self
+    }
+
+    pub fn radii(mut self, x: f32, y: f32) -> Self {
+        assert!(
+            x.is_finite() && x > 0.0 && y.is_finite() && y > 0.0,
+            "radial gradient radii must be positive and finite"
+        );
+        self.shape = RadialGradientShape::Ellipse;
+        self.size = RadialGradientSize::Radii { x, y };
+        self
     }
 
     pub fn at(mut self, x: f32, y: f32) -> Self {
@@ -157,19 +205,26 @@ impl RadialGradient {
         self
     }
 
-    pub fn geometry(self, rect: crate::Rect) -> (crate::Point, f32) {
+    pub fn geometry(self, rect: crate::Rect) -> (crate::Point, [f32; 2]) {
         let x = self.center.x * rect.width;
         let y = self.center.y * rect.height;
-        let radius = x
-            .abs()
-            .max((rect.width - x).abs())
-            .hypot(y.abs().max((rect.height - y).abs()));
+        let dx = x.abs().max((rect.width - x).abs());
+        let dy = y.abs().max((rect.height - y).abs());
+        let radii = match self.size {
+            RadialGradientSize::Radii { x, y } => [x, y],
+            RadialGradientSize::FarthestCorner => match self.shape {
+                RadialGradientShape::Circle => [dx.hypot(dy); 2],
+                RadialGradientShape::Ellipse => {
+                    [dx * std::f32::consts::SQRT_2, dy * std::f32::consts::SQRT_2]
+                }
+            },
+        };
         (
             crate::Point {
                 x: rect.x + x,
                 y: rect.y + y,
             },
-            radius,
+            radii,
         )
     }
 }
@@ -180,7 +235,7 @@ impl FromStr for RadialGradient {
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let invalid = || {
             StyleParseError(format!(
-                "expected `radial-gradient(circle [at x% y%], start, end)`, got `{input}`"
+                "expected `radial-gradient(circle|ellipse [radii] [at x% y%], start, end)`, got `{input}`"
             ))
         };
         let body = input
@@ -196,12 +251,35 @@ impl FromStr for RadialGradient {
             return Err(invalid());
         }
         let mut tokens = shape.split_whitespace();
-        if tokens.next() != Some("circle") {
+        let kind = tokens.next().ok_or_else(invalid)?;
+        let mut gradient = Self::new(start, end);
+        if kind == "ellipse" {
+            gradient = gradient.ellipse();
+        } else if kind != "circle" {
             return Err(invalid());
         }
-        let mut gradient = Self::new(start, end);
-        if let Some(token) = tokens.next() {
-            if token != "at" {
+        let mut token = tokens.next();
+        if token == Some("farthest-corner") {
+            token = tokens.next();
+        } else if let Some(value) = token.filter(|&value| value != "at") {
+            let px = |value: &str| {
+                value
+                    .strip_suffix("px")
+                    .and_then(|value| value.parse::<f32>().ok())
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .ok_or_else(invalid)
+            };
+            let x = px(value)?;
+            gradient = if kind == "circle" {
+                gradient.radius(x)
+            } else {
+                let y = px(tokens.next().ok_or_else(invalid)?)?;
+                gradient.radii(x, y)
+            };
+            token = tokens.next();
+        }
+        if let Some(value) = token {
+            if value != "at" {
                 return Err(invalid());
             }
             let percent = |token: Option<&str>| {
@@ -1467,27 +1545,70 @@ mod tests {
     #[test]
     fn radial_gradient_uses_the_farthest_corner() {
         let gradient = RadialGradient::new(ColorToken::Accent, ColorToken::Surface).at(0.0, 0.0);
-        let (center, radius) = gradient.geometry(crate::Rect {
+        let (center, radii) = gradient.geometry(crate::Rect {
             x: 10.0,
             y: 20.0,
             width: 30.0,
             height: 40.0,
         });
         assert_eq!(center, crate::Point { x: 10.0, y: 20.0 });
-        assert_eq!(radius, 50.0);
+        assert_eq!(radii, [50.0, 50.0]);
+    }
+
+    #[test]
+    fn radial_ellipses_and_explicit_radii_parse_and_resolve() {
+        let rect = crate::Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 80.0,
+            height: 40.0,
+        };
+        let ellipse: RadialGradient = "radial-gradient(ellipse at 25% 75%, #ff0000, #0000ff)"
+            .parse()
+            .unwrap();
+        assert_eq!(ellipse.shape, RadialGradientShape::Ellipse);
+        assert_eq!(
+            ellipse.geometry(rect),
+            (
+                crate::Point { x: 30.0, y: 50.0 },
+                [
+                    60.0 * std::f32::consts::SQRT_2,
+                    30.0 * std::f32::consts::SQRT_2
+                ]
+            )
+        );
+
+        let ellipse: RadialGradient =
+            "radial-gradient(ellipse 12px 8px at 25% 75%, #ff0000, #0000ff)"
+                .parse()
+                .unwrap();
+        assert_eq!(ellipse.geometry(rect).1, [12.0, 8.0]);
+        assert_eq!(
+            ellipse,
+            RadialGradient::new(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255))
+                .radii(12.0, 8.0)
+                .at(0.25, 0.75)
+        );
+
+        let circle: RadialGradient = "radial-gradient(circle 14px, #ff0000, #0000ff)"
+            .parse()
+            .unwrap();
+        assert_eq!(circle.geometry(rect).1, [14.0, 14.0]);
     }
 
     #[test]
     fn radial_gradients_reject_unsupported_or_nonfinite_geometry() {
         for input in [
             "radial-gradient(#ffffff, #000000)",
-            "radial-gradient(ellipse, #ffffff, #000000)",
             "radial-gradient(circle closest-side, #ffffff, #000000)",
             "radial-gradient(circle at 10px 20px, #ffffff, #000000)",
             "radial-gradient(circle at NaN% 50%, #ffffff, #000000)",
             "radial-gradient(circle at 10% 20% 30%, #ffffff, #000000)",
             "radial-gradient(circle, #ffffff)",
             "radial-gradient(circle, #ffffff, #000000, #ff0000)",
+            "radial-gradient(circle -1px, #ffffff, #000000)",
+            "radial-gradient(ellipse 2px, #ffffff, #000000)",
+            "radial-gradient(ellipse 2px NaNpx, #ffffff, #000000)",
         ] {
             assert!(input.parse::<Background>().is_err(), "{input}");
         }

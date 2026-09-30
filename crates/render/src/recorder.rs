@@ -337,15 +337,30 @@ impl Painter for SceneRecorder {
         radius: f32,
         corner_radius: f32,
     ) {
+        self.fill_radial_gradient_ellipse(rect, start, end, center, [radius; 2], corner_radius);
+    }
+
+    fn fill_radial_gradient_ellipse(
+        &mut self,
+        rect: Rect,
+        start: Color,
+        end: Color,
+        center: Point,
+        radii: [f32; 2],
+        corner_radius: f32,
+    ) {
         let bounds = self.bounds(rect);
         if (start.a == 0 && end.a == 0) || bounds.is_empty() {
             return;
         }
-        if !radius.is_finite() || !center.x.is_finite() || !center.y.is_finite() {
-            log::warn!("invalid radial gradient geometry: center={center:?}, radius={radius}");
+        if radii.iter().any(|radius| !radius.is_finite())
+            || !center.x.is_finite()
+            || !center.y.is_finite()
+        {
+            log::warn!("invalid radial gradient geometry: center={center:?}, radii={radii:?}");
             return;
         }
-        if radius <= 0.0 {
+        if radii[0] <= 0.0 || radii[1] <= 0.0 {
             self.fill_rect(rect, end, corner_radius);
             return;
         }
@@ -355,7 +370,10 @@ impl Painter for SceneRecorder {
             background: start,
             gradient: Some(QuadGradient {
                 start: center,
-                end: [center[0] + radius * self.scale, center[1]],
+                end: [
+                    center[0] + radii[0] * self.scale,
+                    center[1] + radii[1] * self.scale,
+                ],
                 start_color: start,
                 end_color: end,
                 radial: true,

@@ -418,13 +418,13 @@ fn paint_instance(
                     radius,
                 ),
                 crate::Background::RadialGradient(gradient) => {
-                    let (center, gradient_radius) = gradient.geometry(rect);
-                    painter.fill_radial_gradient(
+                    let (center, radii) = gradient.geometry(rect);
+                    painter.fill_radial_gradient_ellipse(
                         rect,
                         gradient.start.resolve(&colors),
                         gradient.end.resolve(&colors),
                         center,
-                        gradient_radius,
+                        radii,
                         radius,
                     );
                 }

@@ -76,8 +76,10 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     out.color = premultiply(instance.color);
     out.border_color = premultiply(instance.border_color);
     out.data = instance.data;
-    if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD || kind == KIND_RADIAL_GRADIENT_QUAD {
+    if kind == KIND_LINE || kind == KIND_GRADIENT_QUAD {
         out.data += vec4<f32>(offset, offset);
+    } else if kind == KIND_RADIAL_GRADIENT_QUAD {
+        out.data = vec4<f32>(out.data.xy + offset, out.data.zw);
     }
     out.clip = textureLoad(clips, clip_coord(clip_texel), 0);
     out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, 0.0);
@@ -136,8 +138,8 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
         let outer = rounded_rect_distance(p, in.bounds, in.params.y);
         coverage *= clamp(0.5 - outer, 0.0, 1.0);
         if kind == KIND_RADIAL_GRADIENT_QUAD {
-            let radius = max(length(in.data.zw - in.data.xy), 1e-6);
-            let progress = clamp(length(p - in.data.xy) / radius, 0.0, 1.0);
+            let radii = max(in.data.zw, vec2<f32>(1e-6));
+            let progress = clamp(length((p - in.data.xy) / radii), 0.0, 1.0);
             color = mix(in.color, in.border_color, progress);
         } else if kind == KIND_GRADIENT_QUAD {
             let direction = in.data.zw - in.data.xy;

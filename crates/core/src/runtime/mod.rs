@@ -1142,8 +1142,28 @@ mod tests {
             panic!("expected radial gradient");
         };
         assert_eq!(gradient.radius, 50.0);
+        assert_eq!(gradient.radius_y, 50.0);
         assert_eq!(gradient.start, colors.accent);
         assert_eq!(gradient.end, colors.surface);
+
+        runtime.transaction().apply(Mutation::SetPaintStyle {
+            node,
+            style: crate::Style::new()
+                .background(
+                    crate::RadialGradient::new(
+                        crate::ColorToken::Accent,
+                        crate::ColorToken::Surface,
+                    )
+                    .radii(12.0, 6.0),
+                )
+                .paint,
+        });
+        runtime.rebuild_paint(&colors);
+        let fragment = runtime.get(node).unwrap().paint.fragment.as_ref().unwrap();
+        let PaintOp::Primitive(PaintPrimitive::RadialGradient(gradient)) = &fragment.ops[0] else {
+            panic!("expected radial gradient");
+        };
+        assert_eq!((gradient.radius, gradient.radius_y), (12.0, 6.0));
     }
 
     #[test]

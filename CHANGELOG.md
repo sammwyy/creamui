@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Radial backgrounds support farthest-corner ellipses and explicit pixel radii
+  in typed styles and CSS-like background strings. CPU and GPU rendering use
+  independent horizontal and vertical radii.
 - Absolute runtime nodes accept a z-index mutation. Paint and pointer hit order
   share its stacking order, while keyboard focus keeps document order.
 - Retained layout sync follows changed absolute-child paths without checking

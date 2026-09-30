@@ -429,13 +429,24 @@ fn quad_paint(quad: &Quad) -> Paint<'static> {
     let start = Point::from_xy(gradient.start[0], gradient.start[1]);
     let end = Point::from_xy(gradient.end[0], gradient.end[1]);
     paint.shader = if gradient.radial {
+        let radii = [
+            gradient.end[0] - gradient.start[0],
+            gradient.end[1] - gradient.start[1],
+        ];
         tiny_skia::RadialGradient::new(
-            start,
-            start,
-            (gradient.end[0] - gradient.start[0]).hypot(gradient.end[1] - gradient.start[1]),
+            Point::from_xy(0.0, 0.0),
+            Point::from_xy(0.0, 0.0),
+            1.0,
             stops,
             SpreadMode::Pad,
-            Transform::identity(),
+            Transform::from_row(
+                radii[0],
+                0.0,
+                0.0,
+                radii[1],
+                gradient.start[0],
+                gradient.start[1],
+            ),
         )
     } else {
         LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())
@@ -591,7 +602,8 @@ fn draw_translucent_gradient(
                 y as f32 + 0.5 - start_point[1],
             ];
             let t = if gradient.radial {
-                offset[0].hypot(offset[1]) / length_squared.sqrt()
+                (offset[0] / direction[0].abs().max(1e-6))
+                    .hypot(offset[1] / direction[1].abs().max(1e-6))
             } else {
                 (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
             }
@@ -779,6 +791,26 @@ mod tests {
         assert!(center[0] > 240 && center[2] < 15);
         assert!(edge[2] > edge[0]);
         assert_eq!(rgba(&raster, 0, 0), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn elliptical_gradient_uses_independent_radii() {
+        let list = record(|p| {
+            p.fill_radial_gradient_ellipse(
+                rect(0.0, 0.0, 40.0, 30.0),
+                Color::rgb(255, 0, 0),
+                Color::rgb(0, 0, 255),
+                creamui_core::Point { x: 20.0, y: 15.0 },
+                [15.0, 5.0],
+                0.0,
+            )
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        let horizontal = rgba(&raster, 30, 15);
+        let vertical = rgba(&raster, 20, 25);
+        assert!(horizontal[0] > 50 && horizontal[2] > horizontal[0]);
+        assert_eq!(vertical, [0, 0, 255, 255]);
     }
 
     #[test]

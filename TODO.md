@@ -5,8 +5,7 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Styles, text, and images
 
-- Extend radial backgrounds beyond two-stop, farthest-corner circles to
-  ellipses, explicit radii, additional color stops, and repeating gradients.
+- Extend radial backgrounds with additional color stops and repeating gradients.
 
 ## Persistent runtime
 

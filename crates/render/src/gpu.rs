@@ -926,12 +926,21 @@ impl GpuRenderer {
                             },
                             gradient.start_color,
                             gradient.end_color,
-                            [
-                                gradient.start[0],
-                                gradient.start[1],
-                                gradient.end[0],
-                                gradient.end[1],
-                            ],
+                            if gradient.radial {
+                                [
+                                    gradient.start[0],
+                                    gradient.start[1],
+                                    gradient.end[0] - gradient.start[0],
+                                    gradient.end[1] - gradient.start[1],
+                                ]
+                            } else {
+                                [
+                                    gradient.start[0],
+                                    gradient.start[1],
+                                    gradient.end[0],
+                                    gradient.end[1],
+                                ]
+                            },
                         ),
                         None => (KIND_QUAD, quad.background, quad.border_color, [0.0; 4]),
                     };
@@ -1709,16 +1718,16 @@ mod tests {
     #[test]
     fn radial_gradients_match_cpu_with_alpha_scale_and_scroll() {
         let Some(mut gpu) = headless() else { return };
-        for end_alpha in [255, 40, 0] {
+        for (end_alpha, radii) in [(255, [24.0, 24.0]), (40, [24.0, 9.0]), (0, [24.0, 9.0])] {
             let mut recorder = SceneRecorder::new();
             recorder.begin(96, 64, 2.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
             recorder.push_scroll_layer(rect(4.0, 4.0, 40.0, 24.0), 0.0, Point { x: 0.0, y: 5.0 });
-            recorder.fill_radial_gradient(
+            recorder.fill_radial_gradient_ellipse(
                 rect(4.0, -1.0, 40.0, 36.0),
                 Color::rgb(255, 30, 0),
                 Color::rgba(0, 60, 255, end_alpha),
                 Point { x: 16.0, y: 12.0 },
-                24.0,
+                radii,
                 0.0,
             );
             recorder.pop_clip();
@@ -1734,7 +1743,7 @@ mod tests {
                 .unwrap();
             assert!(
                 worst <= 3,
-                "alpha={end_alpha}: worst channel difference {worst} on {}",
+                "alpha={end_alpha}, radii={radii:?}: worst channel difference {worst} on {}",
                 gpu.adapter_name()
             );
         }

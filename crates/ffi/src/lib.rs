@@ -1067,8 +1067,6 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         blur: None,
         focus_first: false,
         role: creamui_render::platform::WindowRole::Normal,
-        // The C ABI keeps its existing close semantics; the new app/tray
-        // lifecycle controls are Rust-native for now.
         close_behavior: creamui_render::CloseBehavior::Close,
         backend: if options.backend == CUI_RENDER_BACKEND_CPU {
             creamui_render::RenderBackend::Cpu
@@ -1076,6 +1074,7 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
             creamui_render::RenderBackend::Gpu
         },
         theme: Theme::default(),
+        system_bars: Default::default(),
     }
 }
 
@@ -1295,6 +1294,10 @@ mod window_option_tests {
             backend: CUI_RENDER_BACKEND_CPU,
         };
         assert_eq!(window_options_from_c(base()).blur, None);
+        assert_eq!(
+            window_options_from_c(base()).system_bars,
+            creamui_render::WindowOptions::default().system_bars
+        );
         let options = window_options_from_c_v2(CWindowOptionsV2 {
             base: base(),
             blur: CBlurRegion {

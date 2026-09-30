@@ -419,12 +419,13 @@ fn paint_instance(
                 ),
                 crate::Background::RadialGradient(gradient) => {
                     let (center, radii) = gradient.geometry(rect);
-                    painter.fill_radial_gradient_ellipse(
+                    painter.fill_radial_gradient_ellipse_repeating(
                         rect,
                         gradient.start.resolve(&colors),
                         gradient.end.resolve(&colors),
                         center,
                         radii,
+                        gradient.repeating,
                         radius,
                     );
                 }

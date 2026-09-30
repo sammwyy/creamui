@@ -7,7 +7,8 @@ use creamui_abi::{
     CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTypographyStyle, CUI_NODE_KIND_TEXT,
     CUI_NODE_NONE, CUI_PAINT_BORDER, CUI_PAINT_IMAGE, CUI_PAINT_LINEAR_GRADIENT,
     CUI_PAINT_POP_CLIP, CUI_PAINT_POP_TRANSFORM, CUI_PAINT_PUSH_CLIP, CUI_PAINT_PUSH_ROUNDED_CLIP,
-    CUI_PAINT_PUSH_TRANSFORM, CUI_PAINT_QUAD, CUI_PAINT_RADIAL_GRADIENT, CUI_PAINT_TEXT,
+    CUI_PAINT_PUSH_TRANSFORM, CUI_PAINT_QUAD, CUI_PAINT_RADIAL_GRADIENT,
+    CUI_PAINT_REPEATING_RADIAL_GRADIENT, CUI_PAINT_TEXT,
 };
 use creamui_core::runtime::{
     Mutation, NodeKind, PaintOp, PaintPrimitive, Runtime, RuntimeNodeId, Transform2D,
@@ -182,7 +183,11 @@ fn paint_op_to_c(op: &PaintOp) -> CPaintOp {
                 out.angle_degrees = gradient.angle_degrees;
             }
             PaintPrimitive::RadialGradient(gradient) => {
-                out.kind = CUI_PAINT_RADIAL_GRADIENT;
+                out.kind = if gradient.repeating {
+                    CUI_PAINT_REPEATING_RADIAL_GRADIENT
+                } else {
+                    CUI_PAINT_RADIAL_GRADIENT
+                };
                 out.rect = rect_to_c(gradient.rect);
                 out.color = color_to_c(gradient.start);
                 out.color2 = color_to_c(gradient.end);
@@ -668,21 +673,32 @@ mod tests {
 
     #[test]
     fn radial_paint_op_exposes_both_radii() {
-        let op = PaintOp::Primitive(PaintPrimitive::RadialGradient(
-            creamui_core::runtime::RadialGradientPrimitive {
-                rect: creamui_core::Rect::default(),
-                start: Color::rgb(255, 0, 0),
-                end: Color::rgb(0, 0, 255),
-                center: creamui_core::Point { x: 8.0, y: 12.0 },
-                radius: 20.0,
-                radius_y: 10.0,
-                corner_radius: 0.0,
-            },
-        ));
+        let radial = creamui_core::runtime::RadialGradientPrimitive {
+            rect: creamui_core::Rect::default(),
+            start: Color::rgb(255, 0, 0),
+            end: Color::rgb(0, 0, 255),
+            center: creamui_core::Point { x: 8.0, y: 12.0 },
+            radius: 20.0,
+            radius_y: 10.0,
+            repeating: false,
+            corner_radius: 0.0,
+        };
+        let op = PaintOp::Primitive(PaintPrimitive::RadialGradient(radial));
         let converted = paint_op_to_c(&op);
         assert_eq!(converted.kind, CUI_PAINT_RADIAL_GRADIENT);
         assert_eq!((converted.x, converted.y), (8.0, 12.0));
         assert_eq!((converted.radius, converted.angle_degrees), (20.0, 10.0));
+
+        let repeating = PaintOp::Primitive(PaintPrimitive::RadialGradient(
+            creamui_core::runtime::RadialGradientPrimitive {
+                repeating: true,
+                ..radial
+            },
+        ));
+        assert_eq!(
+            paint_op_to_c(&repeating).kind,
+            CUI_PAINT_REPEATING_RADIAL_GRADIENT
+        );
     }
 
     #[test]

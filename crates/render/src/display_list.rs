@@ -201,6 +201,7 @@ pub struct QuadGradient {
     pub start_color: Color,
     pub end_color: Color,
     pub radial: bool,
+    pub repeating: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

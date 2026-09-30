@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Two-stop radial backgrounds can repeat across each radius on the CPU and GPU,
+  including elliptical shapes and translucent colors.
 - Radial backgrounds support farthest-corner ellipses and explicit pixel radii
   in typed styles and CSS-like background strings. CPU and GPU rendering use
   independent horizontal and vertical radii.

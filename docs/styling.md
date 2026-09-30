@@ -59,7 +59,9 @@ Two-stop radial backgrounds use `radial-gradient(circle, start, end)` or
 `50% 50%`; the radii reach the farthest corner. `circle 40px` and
 `ellipse 40px 20px` specify pixel radii. Centers outside the box are allowed.
 Colors support the same hexadecimal values and theme tokens as other
-backgrounds. Additional stops and repeating gradients are not yet supported.
+backgrounds. `repeating-radial-gradient(...)` repeats the two-color pattern
+across each radius; the typed builder also offers `.repeat()`. Additional
+color stops are not yet supported.
 
 ```rust
 use creamui::{ColorToken, RadialGradient, Style};

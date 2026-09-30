@@ -225,6 +225,19 @@ pub trait Painter {
             corner_radius,
         );
     }
+    #[allow(clippy::too_many_arguments)]
+    fn fill_radial_gradient_ellipse_repeating(
+        &mut self,
+        rect: Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        center: Point,
+        radii: [f32; 2],
+        _repeating: bool,
+        corner_radius: f32,
+    ) {
+        self.fill_radial_gradient_ellipse(rect, start, end, center, radii, corner_radius);
+    }
     fn draw_box_shadow(
         &mut self,
         rect: Rect,

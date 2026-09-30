@@ -377,6 +377,7 @@ pub const CUI_PAINT_RADIAL_GRADIENT: c_int = 7;
 pub const CUI_PAINT_BORDER: c_int = 8;
 pub const CUI_PAINT_TEXT: c_int = 9;
 pub const CUI_PAINT_IMAGE: c_int = 10;
+pub const CUI_PAINT_REPEATING_RADIAL_GRADIENT: c_int = 11;
 
 /// One retained paint operation. Fields not used by `kind` are zeroed.
 /// `text` points to UTF-8 bytes in the runtime and `text_len` gives their

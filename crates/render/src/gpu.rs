@@ -24,6 +24,7 @@ const KIND_GLYPH: u32 = 2;
 const KIND_IMAGE: u32 = 3;
 const KIND_GRADIENT_QUAD: u32 = 4;
 const KIND_RADIAL_GRADIENT_QUAD: u32 = 5;
+const KIND_REPEATING_RADIAL_GRADIENT_QUAD: u32 = 6;
 const KIND_BITS: u32 = 4;
 const CLIP_TEXELS_PER_ROW: u32 = 1024;
 const MIN_INSTANCE_UPLOAD_GAP: usize = 8;
@@ -920,7 +921,11 @@ impl GpuRenderer {
                     let (kind, color, border_color, data) = match quad.gradient {
                         Some(gradient) => (
                             if gradient.radial {
-                                KIND_RADIAL_GRADIENT_QUAD
+                                if gradient.repeating {
+                                    KIND_REPEATING_RADIAL_GRADIENT_QUAD
+                                } else {
+                                    KIND_RADIAL_GRADIENT_QUAD
+                                }
                             } else {
                                 KIND_GRADIENT_QUAD
                             },
@@ -1718,16 +1723,22 @@ mod tests {
     #[test]
     fn radial_gradients_match_cpu_with_alpha_scale_and_scroll() {
         let Some(mut gpu) = headless() else { return };
-        for (end_alpha, radii) in [(255, [24.0, 24.0]), (40, [24.0, 9.0]), (0, [24.0, 9.0])] {
+        for (end_alpha, radii, repeating) in [
+            (255, [24.0, 24.0], false),
+            (40, [24.0, 9.0], false),
+            (0, [24.0, 9.0], false),
+            (40, [24.0, 9.0], true),
+        ] {
             let mut recorder = SceneRecorder::new();
             recorder.begin(96, 64, 2.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
             recorder.push_scroll_layer(rect(4.0, 4.0, 40.0, 24.0), 0.0, Point { x: 0.0, y: 5.0 });
-            recorder.fill_radial_gradient_ellipse(
+            recorder.fill_radial_gradient_ellipse_repeating(
                 rect(4.0, -1.0, 40.0, 36.0),
                 Color::rgb(255, 30, 0),
                 Color::rgba(0, 60, 255, end_alpha),
                 Point { x: 16.0, y: 12.0 },
                 radii,
+                repeating,
                 0.0,
             );
             recorder.pop_clip();
@@ -1743,7 +1754,7 @@ mod tests {
                 .unwrap();
             assert!(
                 worst <= 3,
-                "alpha={end_alpha}, radii={radii:?}: worst channel difference {worst} on {}",
+                "alpha={end_alpha}, radii={radii:?}, repeating={repeating}: worst channel difference {worst} on {}",
                 gpu.adapter_name()
             );
         }

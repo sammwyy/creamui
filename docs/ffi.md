@@ -19,6 +19,7 @@ visible. The original entrypoints and struct layout remain available. The
 dynamic Rust client accepts `WindowOptions { blur: Some(BlurRegion::Window),
 ..Default::default() }` or a rectangular `BlurRegion`.
 
-For a `CUI_PAINT_RADIAL_GRADIENT` paint operation, `x` and `y` give the center,
-`radius` gives the horizontal radius, and `angle_degrees` gives the vertical
-radius. For a circular gradient, the two radii are equal.
+For `CUI_PAINT_RADIAL_GRADIENT` and `CUI_PAINT_REPEATING_RADIAL_GRADIENT` paint
+operations, `x` and `y` give the center, `radius` gives the horizontal radius,
+and `angle_degrees` gives the vertical radius. For a circular gradient, the two
+radii are equal.

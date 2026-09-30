@@ -318,6 +318,7 @@ impl Painter for SceneRecorder {
                 start_color: start,
                 end_color: end,
                 radial: false,
+                repeating: false,
             }),
             radius: (corner_radius * self.scale)
                 .min(bounds.width() / 2.0)
@@ -349,6 +350,27 @@ impl Painter for SceneRecorder {
         radii: [f32; 2],
         corner_radius: f32,
     ) {
+        self.fill_radial_gradient_ellipse_repeating(
+            rect,
+            start,
+            end,
+            center,
+            radii,
+            false,
+            corner_radius,
+        );
+    }
+
+    fn fill_radial_gradient_ellipse_repeating(
+        &mut self,
+        rect: Rect,
+        start: Color,
+        end: Color,
+        center: Point,
+        radii: [f32; 2],
+        repeating: bool,
+        corner_radius: f32,
+    ) {
         let bounds = self.bounds(rect);
         if (start.a == 0 && end.a == 0) || bounds.is_empty() {
             return;
@@ -377,6 +399,7 @@ impl Painter for SceneRecorder {
                 start_color: start,
                 end_color: end,
                 radial: true,
+                repeating,
             }),
             radius: (corner_radius * self.scale)
                 .min(bounds.width() / 2.0)

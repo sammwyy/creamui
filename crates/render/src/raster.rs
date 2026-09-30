@@ -438,7 +438,11 @@ fn quad_paint(quad: &Quad) -> Paint<'static> {
             Point::from_xy(0.0, 0.0),
             1.0,
             stops,
-            SpreadMode::Pad,
+            if gradient.repeating {
+                SpreadMode::Repeat
+            } else {
+                SpreadMode::Pad
+            },
             Transform::from_row(
                 radii[0],
                 0.0,
@@ -606,8 +610,12 @@ fn draw_translucent_gradient(
                     .hypot(offset[1] / direction[1].abs().max(1e-6))
             } else {
                 (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
-            }
-            .clamp(0.0, 1.0);
+            };
+            let t = if gradient.repeating {
+                t.rem_euclid(1.0)
+            } else {
+                t.clamp(0.0, 1.0)
+            };
             let alpha = (start[3] + (end[3] - start[3]) * t) * coverage / 255.0;
             let pixel = &mut pixels[index * 4..index * 4 + 4];
             for channel in 0..4 {
@@ -811,6 +819,26 @@ mod tests {
         let vertical = rgba(&raster, 20, 25);
         assert!(horizontal[0] > 50 && horizontal[2] > horizontal[0]);
         assert_eq!(vertical, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn repeating_radial_gradient_restarts_after_each_radius() {
+        let list = record(|p| {
+            p.fill_radial_gradient_ellipse_repeating(
+                rect(0.0, 0.0, 40.0, 30.0),
+                Color::rgb(255, 0, 0),
+                Color::rgb(0, 0, 255),
+                creamui_core::Point { x: 0.5, y: 15.5 },
+                [10.0, 10.0],
+                true,
+                0.0,
+            )
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        for channel in 0..4 {
+            assert!(rgba(&raster, 5, 15)[channel].abs_diff(rgba(&raster, 15, 15)[channel]) <= 2);
+        }
     }
 
     #[test]

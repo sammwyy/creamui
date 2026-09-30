@@ -26,6 +26,7 @@ pub struct RadialGradientPrimitive {
     pub center: crate::Point,
     pub radius: f32,
     pub radius_y: f32,
+    pub repeating: bool,
     pub corner_radius: f32,
 }
 
@@ -152,17 +153,19 @@ pub(super) fn paint_fragment(
                     gradient.angle_degrees,
                     gradient.corner_radius,
                 ),
-                PaintPrimitive::RadialGradient(gradient) => painter.fill_radial_gradient_ellipse(
-                    translated(gradient.rect, x, y),
-                    faded(gradient.start, opacity),
-                    faded(gradient.end, opacity),
-                    crate::Point {
-                        x: gradient.center.x + x,
-                        y: gradient.center.y + y,
-                    },
-                    [gradient.radius, gradient.radius_y],
-                    gradient.corner_radius,
-                ),
+                PaintPrimitive::RadialGradient(gradient) => painter
+                    .fill_radial_gradient_ellipse_repeating(
+                        translated(gradient.rect, x, y),
+                        faded(gradient.start, opacity),
+                        faded(gradient.end, opacity),
+                        crate::Point {
+                            x: gradient.center.x + x,
+                            y: gradient.center.y + y,
+                        },
+                        [gradient.radius, gradient.radius_y],
+                        gradient.repeating,
+                        gradient.corner_radius,
+                    ),
                 PaintPrimitive::Border(border) => painter.stroke_rect(
                     translated(border.rect, x, y),
                     faded(border.color, opacity),
@@ -296,6 +299,7 @@ pub(super) fn generate_fragment(
                     center,
                     radius: radii[0],
                     radius_y: radii[1],
+                    repeating: gradient.repeating,
                     corner_radius: paint.corner_radius.unwrap_or(0.0),
                 })
             }
@@ -471,6 +475,27 @@ impl crate::Painter for RecordingPainter {
         radii: [f32; 2],
         corner_radius: f32,
     ) {
+        self.fill_radial_gradient_ellipse_repeating(
+            rect,
+            start,
+            end,
+            center,
+            radii,
+            false,
+            corner_radius,
+        );
+    }
+
+    fn fill_radial_gradient_ellipse_repeating(
+        &mut self,
+        rect: crate::Rect,
+        start: creamui_theme::Color,
+        end: creamui_theme::Color,
+        center: crate::Point,
+        radii: [f32; 2],
+        repeating: bool,
+        corner_radius: f32,
+    ) {
         self.ops
             .push(PaintOp::Primitive(PaintPrimitive::RadialGradient(
                 RadialGradientPrimitive {
@@ -480,6 +505,7 @@ impl crate::Painter for RecordingPainter {
                     center,
                     radius: radii[0],
                     radius_y: radii[1],
+                    repeating,
                     corner_radius,
                 },
             )));

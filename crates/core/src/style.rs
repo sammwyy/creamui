@@ -138,6 +138,7 @@ pub struct RadialGradient {
     pub center: crate::Point,
     pub shape: RadialGradientShape,
     pub size: RadialGradientSize,
+    pub repeating: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -165,7 +166,13 @@ impl RadialGradient {
             center: crate::Point { x: 0.5, y: 0.5 },
             shape: RadialGradientShape::Circle,
             size: RadialGradientSize::FarthestCorner,
+            repeating: false,
         }
+    }
+
+    pub fn repeat(mut self) -> Self {
+        self.repeating = true;
+        self
     }
 
     pub fn ellipse(mut self) -> Self {
@@ -238,11 +245,16 @@ impl FromStr for RadialGradient {
                 "expected `radial-gradient(circle|ellipse [radii] [at x% y%], start, end)`, got `{input}`"
             ))
         };
-        let body = input
-            .trim()
-            .strip_prefix("radial-gradient(")
-            .and_then(|value| value.strip_suffix(')'))
-            .ok_or_else(invalid)?;
+        let input = input.trim();
+        let (repeating, body) = if let Some(body) = input.strip_prefix("repeating-radial-gradient(")
+        {
+            (true, body)
+        } else if let Some(body) = input.strip_prefix("radial-gradient(") {
+            (false, body)
+        } else {
+            return Err(invalid());
+        };
+        let body = body.strip_suffix(')').ok_or_else(invalid)?;
         let mut parts = body.split(',').map(str::trim);
         let shape = parts.next().ok_or_else(invalid)?;
         let start = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
@@ -253,6 +265,9 @@ impl FromStr for RadialGradient {
         let mut tokens = shape.split_whitespace();
         let kind = tokens.next().ok_or_else(invalid)?;
         let mut gradient = Self::new(start, end);
+        if repeating {
+            gradient = gradient.repeat();
+        }
         if kind == "ellipse" {
             gradient = gradient.ellipse();
         } else if kind != "circle" {
@@ -356,7 +371,8 @@ impl FromStr for Background {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let input = input.trim();
-        if input.starts_with("radial-gradient(") {
+        if input.starts_with("radial-gradient(") || input.starts_with("repeating-radial-gradient(")
+        {
             return input.parse::<RadialGradient>().map(Self::RadialGradient);
         }
         let Some(body) = input
@@ -1594,6 +1610,18 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(circle.geometry(rect).1, [14.0, 14.0]);
+
+        let repeating: Background = "repeating-radial-gradient(ellipse 12px 8px, #ff0000, #0000ff)"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            repeating,
+            Background::RadialGradient(
+                RadialGradient::new(Color::rgb(255, 0, 0), Color::rgb(0, 0, 255))
+                    .radii(12.0, 8.0)
+                    .repeat()
+            )
+        );
     }
 
     #[test]

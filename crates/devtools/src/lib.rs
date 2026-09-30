@@ -455,12 +455,13 @@ fn short_adapter(adapter: Option<&str>) -> &str {
 
 fn engine_text(m: &FrameMetrics) -> String {
     format!(
-        "\n--- engine ---\nReconcile {}\nTaffy s/c/ch {}/{}/{}\nLayout {}  Measure {}\nPaint v/r {}/{}\nText layouts {}\nCPU px {}\nGPU {}  Draws {}",
+        "\n--- engine ---\nReconcile {}\nTaffy s/c/ch {}/{}/{}\nLayout {}  Rects {}  Measure {}\nPaint v/r {}/{}\nText layouts {}\nCPU px {}\nGPU {}  Draws {}",
         m.reconcile_visits,
         m.taffy_style_writes,
         m.taffy_context_writes,
         m.taffy_children_writes,
         m.layout_runs,
+        m.layout_rects_checked,
         m.measure_calls,
         m.paint_nodes_visited,
         m.paint_nodes_recorded,

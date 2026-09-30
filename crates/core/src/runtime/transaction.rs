@@ -211,6 +211,9 @@ impl<'a> RuntimeTransaction<'a> {
                 });
                 if repositioned {
                     self.touch(node, DirtyFlags::HIT_TEST);
+                    if let Some(parent) = self.runtime.nodes.get(node).and_then(|n| n.parent) {
+                        self.touch(parent, DirtyFlags::LAYOUT);
+                    }
                     self.runtime.paint_order_dirty = true;
                 }
                 if changed {

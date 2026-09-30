@@ -18,6 +18,7 @@ pub struct FrameMetrics {
     pub taffy_context_writes: u64,
     pub taffy_children_writes: u64,
     pub layout_runs: u64,
+    pub layout_rects_checked: u64,
     pub measure_calls: u64,
 
     pub paint_nodes_visited: u64,

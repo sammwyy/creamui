@@ -31,6 +31,17 @@ impl Children {
         matches!(self, Children::None)
     }
 
+    pub(super) fn append_unique(&mut self, id: RuntimeNodeId) {
+        match self {
+            Children::None => *self = Children::One(id),
+            Children::One(existing) if *existing != id => {
+                *self = Children::Many(vec![*existing, id]);
+            }
+            Children::Many(ids) if !ids.contains(&id) => ids.push(id),
+            _ => {}
+        }
+    }
+
     /// Inserts `id` before `before`, or at the end when `before` is `None`
     /// or not found among the current children. Idempotent: if `id` is
     /// already present, it's moved rather than duplicated.
@@ -253,6 +264,7 @@ pub struct RuntimeNode {
     /// last layout, so the rect sync only walks those paths and the
     /// subtrees that actually moved.
     pub(super) on_layout_path: bool,
+    pub(super) layout_input_changed: bool,
     /// This node's index in [`super::Runtime`]'s hit-test list, if listed.
     pub(super) hit_slot: Option<u32>,
 }
@@ -286,6 +298,7 @@ impl RuntimeNode {
             paint: super::paint::PaintState::default(),
             touched_stamp: 0,
             on_layout_path: false,
+            layout_input_changed: false,
             hit_slot: None,
         }
     }

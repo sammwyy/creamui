@@ -36,6 +36,7 @@ pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
 
 use arena::Arena;
+use std::collections::HashMap;
 use taffy::TaffyTree;
 
 /// Intersects `rect` into `ambient` (or takes `rect` as-is if there's no
@@ -219,21 +220,35 @@ impl Runtime {
 
         self.layout_dirty = false;
         self.layout_epoch += 1;
-        self.mark_layout_paths();
-        self.sync_layout_rects(root, origin)
+        let path_children = self.mark_layout_paths();
+        self.sync_layout_rects(root, origin, path_children)
     }
 
-    fn mark_layout_paths(&mut self) {
+    fn mark_layout_paths(&mut self) -> HashMap<RuntimeNodeId, Children> {
+        let mut path_children: HashMap<RuntimeNodeId, Children> = HashMap::new();
         for id in std::mem::take(&mut self.layout_roots) {
+            if let Some(node) = self.nodes.get_mut(id) {
+                node.layout_input_changed = true;
+            }
             let mut current = Some(id);
-            while let Some(node) = current.and_then(|id| self.nodes.get_mut(id)) {
+            while let Some(current_id) = current {
+                let Some(node) = self.nodes.get_mut(current_id) else {
+                    break;
+                };
                 if node.on_layout_path {
                     break;
                 }
                 node.on_layout_path = true;
                 current = node.parent;
+                if let Some(parent) = current {
+                    path_children
+                        .entry(parent)
+                        .or_default()
+                        .append_unique(current_id);
+                }
             }
         }
+        path_children
     }
 
     /// Iterative top-down pass (a deep tree can overflow the stack under
@@ -245,6 +260,7 @@ impl Runtime {
         &mut self,
         root: RuntimeNodeId,
         origin: crate::Point,
+        mut path_children: HashMap<RuntimeNodeId, Children>,
     ) -> Vec<crate::Rect> {
         let full = std::mem::take(&mut self.full_layout_sync);
         let mut damage = Vec::new();
@@ -253,6 +269,8 @@ impl Runtime {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
+            #[cfg(feature = "perf-metrics")]
+            crate::metrics::record(|m| m.layout_rects_checked += 1);
             let layout = self
                 .taffy
                 .layout(node.layout.taffy_node)
@@ -279,9 +297,10 @@ impl Runtime {
                     - layout.padding.bottom)
                     .max(0.0),
             };
-            let (on_path, moved, clips_children) = {
+            let (on_path, moved, clips_children, layout_input_changed) = {
                 let node = self.nodes.get_mut(id).expect("checked above");
                 let on_path = std::mem::take(&mut node.on_layout_path);
+                let layout_input_changed = std::mem::take(&mut node.layout_input_changed);
                 let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
                 if moved {
                     damage.push(node.layout.rect);
@@ -296,7 +315,7 @@ impl Runtime {
                     }
                     self.paint_queue.push(id);
                 }
-                (on_path, moved, node.clips_children)
+                (on_path, moved, node.clips_children, layout_input_changed)
             };
 
             if moved && clips_children {
@@ -316,20 +335,40 @@ impl Runtime {
             }
 
             if full || on_path || moved {
+                let changed_children = path_children.remove(&id).unwrap_or_default();
                 let child_origin = crate::Point {
                     x: rect.x,
                     y: rect.y,
                 };
-                stack.extend(
-                    self.nodes
-                        .get(id)
-                        .expect("checked above")
-                        .children
-                        .as_slice()
-                        .iter()
-                        .copied()
-                        .map(|child| (child, child_origin)),
-                );
+                let only_absolute_paths = !full
+                    && !moved
+                    && !layout_input_changed
+                    && !changed_children.is_empty()
+                    && changed_children.as_slice().iter().all(|&child| {
+                        self.nodes.get(child).is_some_and(|node| {
+                            node.layout_style.position == taffy::style::Position::Absolute
+                        })
+                    });
+                if only_absolute_paths {
+                    stack.extend(
+                        changed_children
+                            .as_slice()
+                            .iter()
+                            .copied()
+                            .map(|child| (child, child_origin)),
+                    );
+                } else {
+                    stack.extend(
+                        self.nodes
+                            .get(id)
+                            .expect("checked above")
+                            .children
+                            .as_slice()
+                            .iter()
+                            .copied()
+                            .map(|child| (child, child_origin)),
+                    );
+                }
             }
         }
         damage
@@ -638,6 +677,102 @@ mod tests {
     }
 
     #[test]
+    fn changing_an_absolute_child_preserves_unchanged_sibling_rects() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(400.0, 100.0),
+        });
+        let absolute = tx.create_node(NodeKind::Container);
+        let mut absolute_style = sized(10.0, 10.0);
+        absolute_style.position = taffy::style::Position::Absolute;
+        tx.apply(Mutation::SetLayoutStyle {
+            node: absolute,
+            style: absolute_style.clone(),
+        });
+        tx.insert_child(root, absolute, None);
+        let siblings: Vec<_> = (0..100)
+            .map(|_| {
+                let child = tx.create_node(NodeKind::Container);
+                tx.apply(Mutation::SetLayoutStyle {
+                    node: child,
+                    style: sized(2.0, 10.0),
+                });
+                tx.insert_child(root, child, None);
+                child
+            })
+            .collect();
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        let sibling_rects: Vec<_> = siblings
+            .iter()
+            .map(|&id| runtime.get(id).unwrap().layout.rect)
+            .collect();
+
+        absolute_style.size.width = taffy::style::Dimension::Length(30.0);
+        runtime.transaction().apply(Mutation::SetLayoutStyle {
+            node: absolute,
+            style: absolute_style,
+        });
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::reset_frame_metrics();
+        runtime.compute_layout(VIEWPORT);
+
+        assert_eq!(runtime.get(absolute).unwrap().layout.rect.width, 30.0);
+        for (&id, &rect) in siblings.iter().zip(&sibling_rects) {
+            assert_eq!(runtime.get(id).unwrap().layout.rect, rect);
+        }
+        #[cfg(feature = "perf-metrics")]
+        assert_eq!(crate::metrics::frame_metrics().layout_rects_checked, 2);
+    }
+
+    #[test]
+    fn changing_flow_position_updates_siblings() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(200.0, 100.0),
+        });
+        let first = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: first,
+            style: sized(20.0, 10.0),
+        });
+        tx.insert_child(root, first, None);
+        let second = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: second,
+            style: sized(20.0, 10.0),
+        });
+        tx.insert_child(root, second, None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(runtime.get(second).unwrap().layout.rect.x, 20.0);
+
+        let mut absolute_style = sized(20.0, 10.0);
+        absolute_style.position = taffy::style::Position::Absolute;
+        runtime.transaction().apply(Mutation::SetLayoutStyle {
+            node: first,
+            style: absolute_style,
+        });
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(runtime.get(second).unwrap().layout.rect.x, 0.0);
+
+        runtime.transaction().apply(Mutation::SetLayoutStyle {
+            node: first,
+            style: sized(20.0, 10.0),
+        });
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(runtime.get(second).unwrap().layout.rect.x, 20.0);
+    }
+
+    #[test]
     fn create_and_insert_child_link_both_directions() {
         let mut runtime = Runtime::new();
         let mut tx = runtime.transaction();
@@ -854,10 +989,7 @@ mod tests {
         let mut runtime = Runtime::new();
         let root = full_size_root(&mut runtime);
         runtime.set_root(Some(root));
-        runtime.compute_layout_at(
-            size(100.0, 80.0),
-            crate::Point { x: 4.0, y: 12.0 },
-        );
+        runtime.compute_layout_at(size(100.0, 80.0), crate::Point { x: 4.0, y: 12.0 });
         let rect = runtime.get(root).unwrap().layout.rect;
         assert_eq!(rect.x, 4.0);
         assert_eq!(rect.y, 12.0);

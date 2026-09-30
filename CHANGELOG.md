@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Retained layout sync follows changed absolute-child paths without checking
+  unrelated siblings. Devtools reports how many layout rectangles were checked.
 - `use_safe_area()` reports the logical-pixel bands covered by the status bar,
   navigation bar, display cutout, and on-screen keyboard. Android reads
   `WindowInsets` together with the native content rectangle; the web backend

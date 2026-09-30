@@ -238,6 +238,28 @@ pub trait Painter {
     ) {
         self.fill_radial_gradient_ellipse(rect, start, end, center, radii, corner_radius);
     }
+    fn fill_radial_gradient_stops(
+        &mut self,
+        rect: Rect,
+        stops: &[crate::ResolvedRadialColorStop],
+        center: Point,
+        radii: [f32; 2],
+        repeating: bool,
+        corner_radius: f32,
+    ) {
+        let Some((start, end)) = stops.first().zip(stops.last()) else {
+            return;
+        };
+        self.fill_radial_gradient_ellipse_repeating(
+            rect,
+            start.color,
+            end.color,
+            center,
+            radii,
+            repeating,
+            corner_radius,
+        );
+    }
     fn draw_box_shadow(
         &mut self,
         rect: Rect,

@@ -9,6 +9,7 @@ use creamui_theme::{Color, ColorScheme};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Semantic colors resolved against the active [`ColorScheme`] at paint time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -132,9 +133,33 @@ impl LinearGradient {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RadialColorStop {
+    pub offset: f32,
+    pub color: ColorValue,
+}
+
+impl RadialColorStop {
+    pub fn new(offset: f32, color: impl Into<ColorValue>) -> Self {
+        assert!(
+            offset.is_finite(),
+            "radial gradient stop offset must be finite"
+        );
+        Self {
+            offset,
+            color: color.into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResolvedRadialColorStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct RadialGradient {
-    pub start: ColorValue,
-    pub end: ColorValue,
+    pub stops: Arc<[RadialColorStop]>,
     pub center: crate::Point,
     pub shape: RadialGradientShape,
     pub size: RadialGradientSize,
@@ -161,13 +186,39 @@ pub enum RadialGradientSize {
 impl RadialGradient {
     pub fn new(start: impl Into<ColorValue>, end: impl Into<ColorValue>) -> Self {
         Self {
-            start: start.into(),
-            end: end.into(),
+            stops: Arc::from([
+                RadialColorStop::new(0.0, start),
+                RadialColorStop::new(1.0, end),
+            ]),
             center: crate::Point { x: 0.5, y: 0.5 },
             shape: RadialGradientShape::Circle,
             size: RadialGradientSize::FarthestCorner,
             repeating: false,
         }
+    }
+
+    pub fn with_stops(mut self, stops: impl IntoIterator<Item = RadialColorStop>) -> Self {
+        let stops: Vec<_> = stops.into_iter().collect();
+        assert!(stops.len() >= 2, "radial gradient needs at least two stops");
+        assert!(
+            stops.iter().all(|stop| stop.offset.is_finite())
+                && stops
+                    .windows(2)
+                    .all(|pair| pair[0].offset <= pair[1].offset),
+            "radial gradient stop offsets must be finite and ordered"
+        );
+        self.stops = stops.into();
+        self
+    }
+
+    pub fn resolve_stops(&self, colors: &ColorScheme) -> Vec<ResolvedRadialColorStop> {
+        self.stops
+            .iter()
+            .map(|stop| ResolvedRadialColorStop {
+                offset: stop.offset,
+                color: stop.color.resolve(colors),
+            })
+            .collect()
     }
 
     pub fn repeat(mut self) -> Self {
@@ -212,7 +263,7 @@ impl RadialGradient {
         self
     }
 
-    pub fn geometry(self, rect: crate::Rect) -> (crate::Point, [f32; 2]) {
+    pub fn geometry(&self, rect: crate::Rect) -> (crate::Point, [f32; 2]) {
         let x = self.center.x * rect.width;
         let y = self.center.y * rect.height;
         let dx = x.abs().max((rect.width - x).abs());
@@ -242,7 +293,7 @@ impl FromStr for RadialGradient {
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let invalid = || {
             StyleParseError(format!(
-                "expected `radial-gradient(circle|ellipse [radii] [at x% y%], start, end)`, got `{input}`"
+                "expected `radial-gradient(circle|ellipse [radii] [at x% y%], stop, stop, ...)`, got `{input}`"
             ))
         };
         let input = input.trim();
@@ -257,14 +308,57 @@ impl FromStr for RadialGradient {
         let body = body.strip_suffix(')').ok_or_else(invalid)?;
         let mut parts = body.split(',').map(str::trim);
         let shape = parts.next().ok_or_else(invalid)?;
-        let start = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
-        let end = parts.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
-        if parts.next().is_some() {
+        let mut parsed_stops = Vec::new();
+        for part in parts {
+            let mut tokens = part.split_whitespace();
+            let color = tokens.next().ok_or_else(invalid)?.parse::<ColorValue>()?;
+            let offset = tokens
+                .next()
+                .map(|value| {
+                    value
+                        .strip_suffix('%')
+                        .and_then(|value| value.parse::<f32>().ok())
+                        .filter(|value| value.is_finite())
+                        .map(|value| value / 100.0)
+                        .ok_or_else(invalid)
+                })
+                .transpose()?;
+            if tokens.next().is_some() {
+                return Err(invalid());
+            }
+            parsed_stops.push((color, offset));
+        }
+        if parsed_stops.len() < 2 {
             return Err(invalid());
         }
+        if parsed_stops[0].1.is_none() {
+            parsed_stops[0].1 = Some(0.0);
+        }
+        let last = parsed_stops.len() - 1;
+        if parsed_stops[last].1.is_none() {
+            parsed_stops[last].1 = Some(1.0);
+        }
+        let mut anchor = 0;
+        for index in 1..parsed_stops.len() {
+            let Some(end) = parsed_stops[index].1 else {
+                continue;
+            };
+            let start = parsed_stops[anchor].1.expect("first stop has an offset");
+            let end = end.max(start);
+            parsed_stops[index].1 = Some(end);
+            for gap in anchor + 1..index {
+                let fraction = (gap - anchor) as f32 / (index - anchor) as f32;
+                parsed_stops[gap].1 = Some(start + (end - start) * fraction);
+            }
+            anchor = index;
+        }
+        let stops = parsed_stops
+            .into_iter()
+            .map(|(color, offset)| RadialColorStop::new(offset.expect("offsets filled"), color))
+            .collect::<Vec<_>>();
         let mut tokens = shape.split_whitespace();
         let kind = tokens.next().ok_or_else(invalid)?;
-        let mut gradient = Self::new(start, end);
+        let mut gradient = Self::new(stops[0].color, stops[last].color).with_stops(stops);
         if repeating {
             gradient = gradient.repeat();
         }
@@ -315,7 +409,7 @@ impl FromStr for RadialGradient {
 }
 
 /// A solid or gradient component background.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Background {
     Solid(ColorValue),
     LinearGradient(LinearGradient),
@@ -762,7 +856,7 @@ impl Border {
 }
 
 /// Properties painted behind and around a component's content.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaintStyle {
     pub background: Option<Background>,
     pub box_shadow: Option<BoxShadow>,
@@ -1105,10 +1199,10 @@ impl Style {
     /// hover first, matching the usual pointer-state cascade.
     pub fn resolve(&self, state: impl Into<StyleState>) -> ResolvedStyle {
         let state = state.into();
-        let mut paint = self.paint;
+        let mut paint = self.paint.clone();
         let mut typography = self.typography.clone();
         let mut apply = |patch: &StateStyle| {
-            paint = paint.patched(patch.paint);
+            paint = std::mem::take(&mut paint).patched(patch.paint.clone());
             typography = typography.clone().patched(&patch.typography);
         };
         if state.hovered() {
@@ -1544,7 +1638,7 @@ mod tests {
         let background: Background = "radial-gradient(circle at 25% 75%, var(--accent), #00000000)"
             .parse()
             .unwrap();
-        assert_eq!(background, Background::RadialGradient(expected));
+        assert_eq!(background, Background::RadialGradient(expected.clone()));
         let style = Style::new()
             .background(expected)
             .hover(StateStyle::new().background("radial-gradient(circle, #ffffff, #000000)"));
@@ -1625,6 +1719,30 @@ mod tests {
     }
 
     #[test]
+    fn radial_stops_fill_implicit_positions_and_resolve_theme_colors() {
+        let gradient: RadialGradient =
+            "repeating-radial-gradient(circle 20px, var(--accent) 20%, #00ff00, #0000ff 60%)"
+                .parse()
+                .unwrap();
+        assert!(gradient.repeating);
+        for (stop, expected) in gradient.stops.iter().zip([0.2, 0.4, 0.6]) {
+            assert!((stop.offset - expected).abs() < 1e-6);
+        }
+        let colors = ColorScheme::dark();
+        let resolved = gradient.resolve_stops(&colors);
+        assert_eq!(resolved[0].color, colors.accent);
+        assert_eq!(resolved[1].color, Color::rgb(0, 255, 0));
+        assert_eq!(resolved[2].color, Color::rgb(0, 0, 255));
+
+        let many = RadialGradient::new(Color::rgb(0, 0, 0), Color::rgb(255, 255, 255)).with_stops(
+            (0..32).map(|index| {
+                RadialColorStop::new(index as f32 / 31.0, Color::rgb(index as u8, 0, 0))
+            }),
+        );
+        assert_eq!(many.stops.len(), 32);
+    }
+
+    #[test]
     fn radial_gradients_reject_unsupported_or_nonfinite_geometry() {
         for input in [
             "radial-gradient(#ffffff, #000000)",
@@ -1633,7 +1751,8 @@ mod tests {
             "radial-gradient(circle at NaN% 50%, #ffffff, #000000)",
             "radial-gradient(circle at 10% 20% 30%, #ffffff, #000000)",
             "radial-gradient(circle, #ffffff)",
-            "radial-gradient(circle, #ffffff, #000000, #ff0000)",
+            "radial-gradient(circle, #ffffff 20px, #000000)",
+            "radial-gradient(circle, #ffffff, #000000 NaN%)",
             "radial-gradient(circle -1px, #ffffff, #000000)",
             "radial-gradient(ellipse 2px, #ffffff, #000000)",
             "radial-gradient(ellipse 2px NaNpx, #ffffff, #000000)",

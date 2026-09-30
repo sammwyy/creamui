@@ -4,11 +4,11 @@
 //! [`creamui_abi::CNode`].
 
 use creamui_abi::{
-    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTypographyStyle, CUI_NODE_KIND_TEXT,
-    CUI_NODE_NONE, CUI_PAINT_BORDER, CUI_PAINT_IMAGE, CUI_PAINT_LINEAR_GRADIENT,
-    CUI_PAINT_POP_CLIP, CUI_PAINT_POP_TRANSFORM, CUI_PAINT_PUSH_CLIP, CUI_PAINT_PUSH_ROUNDED_CLIP,
-    CUI_PAINT_PUSH_TRANSFORM, CUI_PAINT_QUAD, CUI_PAINT_RADIAL_GRADIENT,
-    CUI_PAINT_REPEATING_RADIAL_GRADIENT, CUI_PAINT_TEXT,
+    CColor, CColorScheme, CNode, CPaintOp, CRadialStop, CRect, CStyle, CTypographyStyle,
+    CUI_NODE_KIND_TEXT, CUI_NODE_NONE, CUI_PAINT_BORDER, CUI_PAINT_IMAGE,
+    CUI_PAINT_LINEAR_GRADIENT, CUI_PAINT_POP_CLIP, CUI_PAINT_POP_TRANSFORM, CUI_PAINT_PUSH_CLIP,
+    CUI_PAINT_PUSH_ROUNDED_CLIP, CUI_PAINT_PUSH_TRANSFORM, CUI_PAINT_QUAD,
+    CUI_PAINT_RADIAL_GRADIENT, CUI_PAINT_REPEATING_RADIAL_GRADIENT, CUI_PAINT_TEXT,
 };
 use creamui_core::runtime::{
     Mutation, NodeKind, PaintOp, PaintPrimitive, Runtime, RuntimeNodeId, Transform2D,
@@ -189,8 +189,12 @@ fn paint_op_to_c(op: &PaintOp) -> CPaintOp {
                     CUI_PAINT_RADIAL_GRADIENT
                 };
                 out.rect = rect_to_c(gradient.rect);
-                out.color = color_to_c(gradient.start);
-                out.color2 = color_to_c(gradient.end);
+                if let Some(first) = gradient.stops.first() {
+                    out.color = color_to_c(first.color);
+                }
+                if let Some(last) = gradient.stops.last() {
+                    out.color2 = color_to_c(last.color);
+                }
                 out.x = gradient.center.x;
                 out.y = gradient.center.y;
                 out.radius = gradient.radius;
@@ -425,6 +429,55 @@ pub unsafe extern "C" fn cui_get_paint_op(
         .and_then(|node| node.paint.fragment.as_ref())
         .and_then(|fragment| fragment.ops.get(index))
         .map_or_else(CPaintOp::default, paint_op_to_c)
+}
+
+fn radial_stops(
+    rt: &CRuntime,
+    node: CNode,
+    op_index: usize,
+) -> Option<&[creamui_core::ResolvedRadialColorStop]> {
+    let op =
+        rt.0.get(decode(node))?
+            .paint
+            .fragment
+            .as_ref()?
+            .ops
+            .get(op_index)?;
+    match op {
+        PaintOp::Primitive(PaintPrimitive::RadialGradient(gradient)) => Some(&gradient.stops),
+        _ => None,
+    }
+}
+
+/// # Safety
+/// `rt` must be null or a pointer returned by [`cui_runtime_new`].
+#[no_mangle]
+pub unsafe extern "C" fn cui_radial_stop_count(
+    rt: *const CRuntime,
+    node: CNode,
+    op_index: usize,
+) -> usize {
+    rt.as_ref()
+        .and_then(|rt| radial_stops(rt, node, op_index))
+        .map_or(0, |stops| stops.len())
+}
+
+/// # Safety
+/// `rt` must be null or a pointer returned by [`cui_runtime_new`].
+#[no_mangle]
+pub unsafe extern "C" fn cui_get_radial_stop(
+    rt: *const CRuntime,
+    node: CNode,
+    op_index: usize,
+    stop_index: usize,
+) -> CRadialStop {
+    rt.as_ref()
+        .and_then(|rt| radial_stops(rt, node, op_index))
+        .and_then(|stops| stops.get(stop_index))
+        .map_or_else(CRadialStop::default, |stop| CRadialStop {
+            offset: stop.offset,
+            color: color_to_c(stop.color),
+        })
 }
 
 /// Installs or clears a C click callback. `userdata` is passed back unchanged
@@ -675,15 +728,24 @@ mod tests {
     fn radial_paint_op_exposes_both_radii() {
         let radial = creamui_core::runtime::RadialGradientPrimitive {
             rect: creamui_core::Rect::default(),
-            start: Color::rgb(255, 0, 0),
-            end: Color::rgb(0, 0, 255),
+            stops: [
+                creamui_core::ResolvedRadialColorStop {
+                    offset: 0.0,
+                    color: Color::rgb(255, 0, 0),
+                },
+                creamui_core::ResolvedRadialColorStop {
+                    offset: 1.0,
+                    color: Color::rgb(0, 0, 255),
+                },
+            ]
+            .into(),
             center: creamui_core::Point { x: 8.0, y: 12.0 },
             radius: 20.0,
             radius_y: 10.0,
             repeating: false,
             corner_radius: 0.0,
         };
-        let op = PaintOp::Primitive(PaintPrimitive::RadialGradient(radial));
+        let op = PaintOp::Primitive(PaintPrimitive::RadialGradient(radial.clone()));
         let converted = paint_op_to_c(&op);
         assert_eq!(converted.kind, CUI_PAINT_RADIAL_GRADIENT);
         assert_eq!((converted.x, converted.y), (8.0, 12.0));
@@ -699,6 +761,53 @@ mod tests {
             paint_op_to_c(&repeating).kind,
             CUI_PAINT_REPEATING_RADIAL_GRADIENT
         );
+    }
+
+    #[test]
+    fn radial_stop_snapshots_include_every_color() {
+        let mut rt = CRuntime(Runtime::new());
+        let node = {
+            let mut tx = rt.0.transaction();
+            let node = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetPaintStyle {
+                node,
+                style: creamui_core::Style::new()
+                    .background(
+                        creamui_core::RadialGradient::new(
+                            Color::rgb(255, 0, 0),
+                            Color::rgb(0, 0, 255),
+                        )
+                        .with_stops([
+                            creamui_core::RadialColorStop::new(0.0, Color::rgb(255, 0, 0)),
+                            creamui_core::RadialColorStop::new(0.5, Color::rgb(0, 255, 0)),
+                            creamui_core::RadialColorStop::new(1.0, Color::rgb(0, 0, 255)),
+                        ]),
+                    )
+                    .paint,
+            });
+            node
+        };
+        rt.0.set_root(Some(node));
+        rt.0.compute_layout(Size {
+            width: 40.0,
+            height: 40.0,
+        });
+        rt.0.rebuild_paint(&creamui_theme::ColorScheme::default());
+        let ptr = &rt as *const CRuntime;
+        let handle = node.to_bits();
+        unsafe {
+            assert_eq!(cui_radial_stop_count(ptr, handle, 0), 3);
+            assert_eq!(cui_get_radial_stop(ptr, handle, 0, 1).offset, 0.5);
+            assert_eq!(
+                cui_get_radial_stop(ptr, handle, 0, 1).color,
+                CColor::rgb(0, 255, 0)
+            );
+            assert_eq!(
+                cui_get_radial_stop(ptr, handle, 0, 3),
+                CRadialStop::default()
+            );
+            assert_eq!(cui_radial_stop_count(std::ptr::null(), handle, 0), 0);
+        }
     }
 
     #[test]

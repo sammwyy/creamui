@@ -6,12 +6,13 @@
 //! rasterizer and presenters use to redraw and upload only those regions.
 
 use crate::text::TextLayout;
-use creamui_core::{Rect, RgbaImage, Size};
+use creamui_core::{Rect, ResolvedRadialColorStop, RgbaImage, Size};
 use creamui_theme::Color;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 
 const MAX_DAMAGE_RECTS: usize = 8;
 const MAX_DAMAGE_AREA_RATIO: f32 = 0.5;
@@ -194,7 +195,7 @@ fn translate_rounded_clips(
 
 /// A rounded rectangle with an optional inner border. `bounds` is the
 /// outer edge; the border is drawn inside it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QuadGradient {
     pub start: [f32; 2],
     pub end: [f32; 2],
@@ -202,9 +203,10 @@ pub struct QuadGradient {
     pub end_color: Color,
     pub radial: bool,
     pub repeating: bool,
+    pub stops: Option<Arc<[ResolvedRadialColorStop]>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Quad {
     pub bounds: Bounds,
     pub background: Color,
@@ -303,12 +305,12 @@ impl Primitive {
         match self {
             Primitive::Quad(quad) => Primitive::Quad(Quad {
                 bounds: quad.bounds.translate(offset),
-                gradient: quad.gradient.map(|gradient| QuadGradient {
+                gradient: quad.gradient.as_ref().map(|gradient| QuadGradient {
                     start: [gradient.start[0] + dx, gradient.start[1] + dy],
                     end: [gradient.end[0] + dx, gradient.end[1] + dy],
-                    ..gradient
+                    ..gradient.clone()
                 }),
-                ..*quad
+                ..quad.clone()
             }),
             Primitive::Line(line) => Primitive::Line(Line {
                 from: [line.from[0] + dx, line.from[1] + dy],

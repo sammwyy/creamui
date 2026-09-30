@@ -778,6 +778,8 @@ pub struct GpuRenderer {
     clip_rows: u32,
     clip_texels: Vec<[f32; 4]>,
     rounded_texels: Vec<[f32; 4]>,
+    gradient_texels: Vec<[f32; 4]>,
+    gradient_instances: Vec<usize>,
     uploaded_clips: Vec<[f32; 4]>,
     clip_ids: FxHashMap<Vec<u32>, u32>,
     last_clip: Option<(crate::display_list::Clip, u16, u32)>,
@@ -820,6 +822,8 @@ impl GpuRenderer {
             clip_rows: 1,
             clip_texels: Vec::new(),
             rounded_texels: Vec::new(),
+            gradient_texels: Vec::new(),
+            gradient_instances: Vec::new(),
             uploaded_clips: Vec::new(),
             clip_ids: FxHashMap::default(),
             last_clip: None,
@@ -896,6 +900,8 @@ impl GpuRenderer {
         self.batches.clear();
         self.clip_texels.clear();
         self.rounded_texels.clear();
+        self.gradient_texels.clear();
+        self.gradient_instances.clear();
         self.clip_ids.clear();
         self.last_clip = None;
         self.frame_images.clear();
@@ -918,35 +924,61 @@ impl GpuRenderer {
             let clip = self.clip_index(item, &spaces) << KIND_BITS;
             match &item.primitive {
                 Primitive::Quad(quad) => {
-                    let (kind, color, border_color, data) = match quad.gradient {
-                        Some(gradient) => (
+                    let mut shape = [quad.radius, quad.border_width, 0.0];
+                    let (kind, color, border_color, data) = match quad.gradient.as_ref() {
+                        Some(gradient) => {
                             if gradient.radial {
-                                if gradient.repeating {
-                                    KIND_REPEATING_RADIAL_GRADIENT_QUAD
-                                } else {
-                                    KIND_RADIAL_GRADIENT_QUAD
+                                if let Some(stops) = gradient.stops.as_deref() {
+                                    let simple = stops.len() == 2
+                                        && stops[0].offset == 0.0
+                                        && stops[1].offset == 1.0;
+                                    if !simple {
+                                        shape[1] = self.gradient_texels.len() as f32;
+                                        shape[2] = stops.len() as f32;
+                                        self.gradient_instances.push(self.instances.len());
+                                        for stop in stops {
+                                            let color = stop.color;
+                                            let alpha = color.a as f32 / 255.0;
+                                            self.gradient_texels.push([stop.offset, 0.0, 0.0, 0.0]);
+                                            self.gradient_texels.push([
+                                                color.r as f32 / 255.0 * alpha,
+                                                color.g as f32 / 255.0 * alpha,
+                                                color.b as f32 / 255.0 * alpha,
+                                                alpha,
+                                            ]);
+                                        }
+                                    }
                                 }
-                            } else {
-                                KIND_GRADIENT_QUAD
-                            },
-                            gradient.start_color,
-                            gradient.end_color,
-                            if gradient.radial {
-                                [
-                                    gradient.start[0],
-                                    gradient.start[1],
-                                    gradient.end[0] - gradient.start[0],
-                                    gradient.end[1] - gradient.start[1],
-                                ]
-                            } else {
-                                [
-                                    gradient.start[0],
-                                    gradient.start[1],
-                                    gradient.end[0],
-                                    gradient.end[1],
-                                ]
-                            },
-                        ),
+                            }
+                            (
+                                if gradient.radial {
+                                    if gradient.repeating {
+                                        KIND_REPEATING_RADIAL_GRADIENT_QUAD
+                                    } else {
+                                        KIND_RADIAL_GRADIENT_QUAD
+                                    }
+                                } else {
+                                    KIND_GRADIENT_QUAD
+                                },
+                                gradient.start_color,
+                                gradient.end_color,
+                                if gradient.radial {
+                                    [
+                                        gradient.start[0],
+                                        gradient.start[1],
+                                        gradient.end[0] - gradient.start[0],
+                                        gradient.end[1] - gradient.start[1],
+                                    ]
+                                } else {
+                                    [
+                                        gradient.start[0],
+                                        gradient.start[1],
+                                        gradient.end[0],
+                                        gradient.end[1],
+                                    ]
+                                },
+                            )
+                        }
                         None => (KIND_QUAD, quad.background, quad.border_color, [0.0; 4]),
                     };
                     self.instances.push(Instance {
@@ -959,7 +991,7 @@ impl GpuRenderer {
                         data,
                         color: rgba(color),
                         border_color: rgba(border_color),
-                        shape: [quad.radius, quad.border_width, 0.0],
+                        shape,
                         tag: kind | clip,
                     });
                 }
@@ -1043,7 +1075,12 @@ impl GpuRenderer {
         for header in self.clip_texels.chunks_exact_mut(2) {
             header[1][2] += header_texels as f32;
         }
+        let gradient_base = header_texels + self.rounded_texels.len();
+        for &index in &self.gradient_instances {
+            self.instances[index].shape[1] += gradient_base as f32;
+        }
         self.clip_texels.append(&mut self.rounded_texels);
+        self.clip_texels.append(&mut self.gradient_texels);
         let row_texels = CLIP_TEXELS_PER_ROW as usize;
         let rows = (self.clip_texels.len() as u32)
             .div_ceil(CLIP_TEXELS_PER_ROW)
@@ -1589,7 +1626,7 @@ mod tests {
     use crate::display_list::Damage;
     use crate::raster::Rasterizer;
     use crate::recorder::SceneRecorder;
-    use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
+    use creamui_core::{Painter, Point, Rect, ResolvedRadialColorStop, RgbaImage, TextAlign};
     use creamui_theme::ColorScheme;
     use std::ops::{Deref, DerefMut};
     use std::sync::{Mutex, MutexGuard};
@@ -1755,6 +1792,52 @@ mod tests {
             assert!(
                 worst <= 3,
                 "alpha={end_alpha}, radii={radii:?}, repeating={repeating}: worst channel difference {worst} on {}",
+                gpu.adapter_name()
+            );
+        }
+    }
+
+    #[test]
+    fn radial_multistop_gradients_match_cpu() {
+        let Some(mut gpu) = headless() else { return };
+        let stops = [
+            ResolvedRadialColorStop {
+                offset: 0.1,
+                color: Color::rgb(255, 0, 0),
+            },
+            ResolvedRadialColorStop {
+                offset: 0.35,
+                color: Color::rgba(0, 255, 0, 120),
+            },
+            ResolvedRadialColorStop {
+                offset: 0.6,
+                color: Color::rgba(0, 0, 255, 0),
+            },
+        ];
+        for repeating in [false, true] {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(96, 64, 1.0, Color::rgba(0, 0, 0, 0), ColorScheme::default());
+            recorder.fill_radial_gradient_stops(
+                rect(0.0, 0.0, 96.0, 64.0),
+                &stops,
+                Point { x: 12.5, y: 31.5 },
+                [24.0, 12.0],
+                repeating,
+                8.0,
+            );
+            let list = recorder.finish();
+            let gpu_pixels = gpu.render_to_pixels(&list);
+            let mut cpu = Rasterizer::new(list.width, list.height);
+            cpu.render(&list, &Damage::Full);
+            let worst = gpu_pixels
+                .iter()
+                .zip(cpu.pixmap().data())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(
+                worst <= 3,
+                "repeating={repeating}: worst channel difference {worst} on {}",
                 gpu.adapter_name()
             );
         }

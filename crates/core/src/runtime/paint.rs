@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use super::node::{ImageContent, ImageFit, NodeKind, RuntimeNode};
 
@@ -18,11 +20,10 @@ pub struct GradientPrimitive {
     pub corner_radius: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RadialGradientPrimitive {
     pub rect: crate::Rect,
-    pub start: creamui_theme::Color,
-    pub end: creamui_theme::Color,
+    pub stops: Arc<[crate::ResolvedRadialColorStop]>,
     pub center: crate::Point,
     pub radius: f32,
     pub radius_y: f32,
@@ -153,11 +154,24 @@ pub(super) fn paint_fragment(
                     gradient.angle_degrees,
                     gradient.corner_radius,
                 ),
-                PaintPrimitive::RadialGradient(gradient) => painter
-                    .fill_radial_gradient_ellipse_repeating(
+                PaintPrimitive::RadialGradient(gradient) => {
+                    let stops = if opacity == 1.0 {
+                        Cow::Borrowed(gradient.stops.as_ref())
+                    } else {
+                        Cow::Owned(
+                            gradient
+                                .stops
+                                .iter()
+                                .map(|stop| crate::ResolvedRadialColorStop {
+                                    offset: stop.offset,
+                                    color: faded(stop.color, opacity),
+                                })
+                                .collect(),
+                        )
+                    };
+                    painter.fill_radial_gradient_stops(
                         translated(gradient.rect, x, y),
-                        faded(gradient.start, opacity),
-                        faded(gradient.end, opacity),
+                        &stops,
                         crate::Point {
                             x: gradient.center.x + x,
                             y: gradient.center.y + y,
@@ -165,7 +179,8 @@ pub(super) fn paint_fragment(
                         [gradient.radius, gradient.radius_y],
                         gradient.repeating,
                         gradient.corner_radius,
-                    ),
+                    );
+                }
                 PaintPrimitive::Border(border) => painter.stroke_rect(
                     translated(border.rect, x, y),
                     faded(border.color, opacity),
@@ -274,7 +289,7 @@ pub(super) fn generate_fragment(
     let mut ops = Vec::new();
     let paint = &node.paint_style;
 
-    if let Some(background) = paint.background {
+    if let Some(background) = paint.background.as_ref() {
         let primitive = match background {
             crate::Background::Solid(color) => PaintPrimitive::Quad(QuadPrimitive {
                 rect,
@@ -294,8 +309,7 @@ pub(super) fn generate_fragment(
                 let (center, radii) = gradient.geometry(rect);
                 PaintPrimitive::RadialGradient(RadialGradientPrimitive {
                     rect,
-                    start: gradient.start.resolve(colors),
-                    end: gradient.end.resolve(colors),
+                    stops: gradient.resolve_stops(colors).into(),
                     center,
                     radius: radii[0],
                     radius_y: radii[1],
@@ -496,12 +510,39 @@ impl crate::Painter for RecordingPainter {
         repeating: bool,
         corner_radius: f32,
     ) {
+        self.fill_radial_gradient_stops(
+            rect,
+            &[
+                crate::ResolvedRadialColorStop {
+                    offset: 0.0,
+                    color: start,
+                },
+                crate::ResolvedRadialColorStop {
+                    offset: 1.0,
+                    color: end,
+                },
+            ],
+            center,
+            radii,
+            repeating,
+            corner_radius,
+        );
+    }
+
+    fn fill_radial_gradient_stops(
+        &mut self,
+        rect: crate::Rect,
+        stops: &[crate::ResolvedRadialColorStop],
+        center: crate::Point,
+        radii: [f32; 2],
+        repeating: bool,
+        corner_radius: f32,
+    ) {
         self.ops
             .push(PaintOp::Primitive(PaintPrimitive::RadialGradient(
                 RadialGradientPrimitive {
                     rect,
-                    start,
-                    end,
+                    stops: Arc::from(stops),
                     center,
                     radius: radii[0],
                     radius_y: radii[1],

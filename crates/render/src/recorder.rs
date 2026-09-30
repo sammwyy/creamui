@@ -6,11 +6,12 @@ use crate::display_list::{
     RoundedClip, ScrollLayer, TextRun,
 };
 use crate::text::TextSystem;
-use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign};
+use creamui_core::{Painter, Point, Rect, ResolvedRadialColorStop, RgbaImage, TextAlign};
 use creamui_theme::{Color, ColorScheme};
 use std::cell::{Ref, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
 type RecorderInstant = std::time::Instant;
@@ -319,6 +320,7 @@ impl Painter for SceneRecorder {
                 end_color: end,
                 radial: false,
                 repeating: false,
+                stops: None,
             }),
             radius: (corner_radius * self.scale)
                 .min(bounds.width() / 2.0)
@@ -371,8 +373,42 @@ impl Painter for SceneRecorder {
         repeating: bool,
         corner_radius: f32,
     ) {
+        self.fill_radial_gradient_stops(
+            rect,
+            &[
+                ResolvedRadialColorStop {
+                    offset: 0.0,
+                    color: start,
+                },
+                ResolvedRadialColorStop {
+                    offset: 1.0,
+                    color: end,
+                },
+            ],
+            center,
+            radii,
+            repeating,
+            corner_radius,
+        );
+    }
+
+    fn fill_radial_gradient_stops(
+        &mut self,
+        rect: Rect,
+        stops: &[ResolvedRadialColorStop],
+        center: Point,
+        radii: [f32; 2],
+        repeating: bool,
+        corner_radius: f32,
+    ) {
         let bounds = self.bounds(rect);
-        if (start.a == 0 && end.a == 0) || bounds.is_empty() {
+        if stops.len() < 2 || stops.iter().all(|stop| stop.color.a == 0) || bounds.is_empty() {
+            return;
+        }
+        if stops.iter().any(|stop| !stop.offset.is_finite())
+            || stops.windows(2).any(|pair| pair[0].offset > pair[1].offset)
+        {
+            log::warn!("invalid radial gradient stops");
             return;
         }
         if radii.iter().any(|radius| !radius.is_finite())
@@ -383,10 +419,12 @@ impl Painter for SceneRecorder {
             return;
         }
         if radii[0] <= 0.0 || radii[1] <= 0.0 {
-            self.fill_rect(rect, end, corner_radius);
+            self.fill_rect(rect, stops[stops.len() - 1].color, corner_radius);
             return;
         }
         let center = self.point(center);
+        let start = stops[0].color;
+        let end = stops[stops.len() - 1].color;
         self.push(Primitive::Quad(Quad {
             bounds,
             background: start,
@@ -400,6 +438,7 @@ impl Painter for SceneRecorder {
                 end_color: end,
                 radial: true,
                 repeating,
+                stops: Some(Arc::from(stops)),
             }),
             radius: (corner_radius * self.scale)
                 .min(bounds.width() / 2.0)

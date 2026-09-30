@@ -258,6 +258,7 @@ impl<'a> RuntimeTransaction<'a> {
                 }
             }
             Mutation::SetPaintStyle { node, style } => {
+                let border = style.border;
                 let before = self
                     .runtime
                     .nodes
@@ -269,11 +270,11 @@ impl<'a> RuntimeTransaction<'a> {
                     changed
                 });
                 if changed {
-                    if before != style.border {
+                    if before != border {
                         if let Some(current) = self.runtime.nodes.get(node) {
                             let layout = crate::style::layout_with_border(
                                 current.layout_style.clone(),
-                                style.border.map(|border| border.width),
+                                border.map(|border| border.width),
                             );
                             let _ = self.runtime.taffy.set_style(
                                 current.layout.taffy_node,

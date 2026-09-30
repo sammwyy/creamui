@@ -84,6 +84,9 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
     }
     out.clip = textureLoad(clips, clip_coord(clip_texel), 0);
     out.params = vec4<f32>(kind, instance.shape.x, instance.shape.y, 0.0);
+    if (kind == KIND_RADIAL_GRADIENT_QUAD || kind == KIND_REPEATING_RADIAL_GRADIENT_QUAD) && instance.shape.z > 0.0 {
+        out.border_color = vec4<f32>(instance.shape.z, 0.0, 0.0, 0.0);
+    }
     out.rounded_clip = vec4<f32>(0.0);
     out.clip_index = 0u;
     if clip_extra.w > 0.0 {
@@ -109,6 +112,43 @@ fn segment_distance(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     let ab = b - a;
     let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
     return length(p - a - ab * t);
+}
+
+fn radial_stop_color(progress: f32, stop_info: vec2<u32>, first_color: vec4<f32>, last_color: vec4<f32>, repeating: bool) -> vec4<f32> {
+    if stop_info.y < 2u {
+        let t = select(clamp(progress, 0.0, 1.0), fract(progress), repeating);
+        return mix(first_color, last_color, t);
+    }
+    let base = stop_info.x;
+    let first_offset = textureLoad(clips, clip_coord(base), 0).x;
+    let last_index = base + (stop_info.y - 1u) * 2u;
+    let last_offset = textureLoad(clips, clip_coord(last_index), 0).x;
+    let last = textureLoad(clips, clip_coord(last_index + 1u), 0);
+    var t = progress;
+    if repeating {
+        let period = last_offset - first_offset;
+        if period <= 1e-6 {
+            return last;
+        }
+        t = first_offset + fract((t - first_offset) / period) * period;
+    }
+    var previous_offset = first_offset;
+    var previous = textureLoad(clips, clip_coord(base + 1u), 0);
+    if t < first_offset {
+        return previous;
+    }
+    for (var i = 1u; i < stop_info.y; i += 1u) {
+        let index = base + i * 2u;
+        let next_offset = textureLoad(clips, clip_coord(index), 0).x;
+        let next = textureLoad(clips, clip_coord(index + 1u), 0);
+        if t < next_offset {
+            let fraction = clamp((t - previous_offset) / max(next_offset - previous_offset, 1e-6), 0.0, 1.0);
+            return mix(previous, next, fraction);
+        }
+        previous_offset = next_offset;
+        previous = next;
+    }
+    return last;
 }
 
 @fragment
@@ -141,8 +181,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
         if kind == KIND_RADIAL_GRADIENT_QUAD || kind == KIND_REPEATING_RADIAL_GRADIENT_QUAD {
             let radii = max(in.data.zw, vec2<f32>(1e-6));
             let distance = length((p - in.data.xy) / radii);
-            let progress = select(clamp(distance, 0.0, 1.0), fract(distance), kind == KIND_REPEATING_RADIAL_GRADIENT_QUAD);
-            color = mix(in.color, in.border_color, progress);
+            color = radial_stop_color(distance, vec2<u32>(u32(in.params.z), u32(in.border_color.x)), in.color, in.border_color, kind == KIND_REPEATING_RADIAL_GRADIENT_QUAD);
         } else if kind == KIND_GRADIENT_QUAD {
             let direction = in.data.zw - in.data.xy;
             let progress = clamp(
@@ -155,7 +194,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
             color = in.color;
         }
         let border = in.params.z;
-        if border > 0.0 {
+        if kind == KIND_QUAD && border > 0.0 {
             let inset = vec4<f32>(border, border, -border, -border);
             let inner = rounded_rect_distance(p, in.bounds + inset, max(in.params.y - border, 0.0));
             let ring = in.border_color * clamp(0.5 + inner, 0.0, 1.0);

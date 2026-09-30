@@ -269,7 +269,7 @@ mod tests {
 
         color.set(9);
         assert_eq!(
-            runtime.with(|r| r.get(node).unwrap().paint_style.background),
+            runtime.with(|r| r.get(node).unwrap().paint_style.background.clone()),
             Some(Color::rgb(9, 0, 0).into())
         );
     }

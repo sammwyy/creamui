@@ -23,3 +23,6 @@ For `CUI_PAINT_RADIAL_GRADIENT` and `CUI_PAINT_REPEATING_RADIAL_GRADIENT` paint
 operations, `x` and `y` give the center, `radius` gives the horizontal radius,
 and `angle_degrees` gives the vertical radius. For a circular gradient, the two
 radii are equal.
+Use `cui_radial_stop_count` and `cui_get_radial_stop` to read every resolved
+color stop in a retained radial paint operation. The dynamic Rust client
+offers `RuntimeTree::radial_stop_count` and `RuntimeTree::radial_stop`.

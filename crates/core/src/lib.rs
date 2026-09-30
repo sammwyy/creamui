@@ -21,9 +21,9 @@ pub use image::RgbaImage;
 pub use scene::{render_frame, FocusId, Renderer, Scene};
 pub use style::{
     Background, Border, BoxShadow, ColorToken, ColorValue, EdgeValues, InteractionState,
-    InteractionStyles, LengthValue, LinearGradient, PaintStyle, RadialGradient,
-    RadialGradientShape, RadialGradientSize, ResolvedStyle, StateStyle, Style, StyleParseError,
-    StyleProp, StyleState, TypographyStyle,
+    InteractionStyles, LengthValue, LinearGradient, PaintStyle, RadialColorStop, RadialGradient,
+    RadialGradientShape, RadialGradientSize, ResolvedRadialColorStop, ResolvedStyle, StateStyle,
+    Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
 pub use virtualize::{visible_range, HeightIndex};
 pub use widget::{

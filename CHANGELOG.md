@@ -4,6 +4,10 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Radial backgrounds accept any number of positioned or implicit color stops.
+  CPU and GPU rendering interpolate them with premultiplied alpha; repeating
+  gradients use the interval between their first and last stops. ABI-v2 paint
+  snapshots expose the complete resolved stop list.
 - Two-stop radial backgrounds can repeat across each radius on the CPU and GPU,
   including elliptical shapes and translucent colors.
 - Radial backgrounds support farthest-corner ellipses and explicit pixel radii

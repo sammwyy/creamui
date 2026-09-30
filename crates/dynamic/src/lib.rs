@@ -44,7 +44,7 @@ mod widget;
 mod window;
 
 pub use creamui_abi::{
-    CColorScheme, CNode, CPaintOp, CRect, CUI_NODE_KIND_CONTAINER, CUI_NODE_KIND_TEXT,
+    CColorScheme, CNode, CPaintOp, CRadialStop, CRect, CUI_NODE_KIND_CONTAINER, CUI_NODE_KIND_TEXT,
     CUI_NODE_NONE,
 };
 pub use runtime::{LoadError, Runtime, RuntimeTree};

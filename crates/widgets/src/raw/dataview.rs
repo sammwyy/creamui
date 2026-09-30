@@ -92,7 +92,7 @@ impl Widget for RawListView {
             }
         }
         let mut scroll_style: creamui_core::Style = fill_style().into();
-        scroll_style.paint = self.style.paint;
+        scroll_style.paint = self.style.paint.clone();
         scroll_style.states = self.style.states.clone();
         let scroll_view = RawScrollView::controlled(scroll_style, self.scroll.clone());
         vec![Box::new(scroll_view.with_children(stacked))]

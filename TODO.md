@@ -3,10 +3,6 @@
 Current limitations and work still to do. Implemented changes belong in
 `CHANGELOG.md` rather than this list.
 
-## Styles, text, and images
-
-- Extend radial backgrounds with additional color stops.
-
 ## Persistent runtime
 
 - Rewrite `jsx!` and `#[component]` to mount through `MountCx`, including

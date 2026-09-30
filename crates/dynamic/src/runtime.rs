@@ -5,7 +5,7 @@
 //! is a safe wrapper around a resolved, verified-present function pointer.
 
 use creamui_abi::{
-    CColor, CColorScheme, CNode, CPaintOp, CRect, CStyle, CTheme, CTypographyStyle,
+    CColor, CColorScheme, CNode, CPaintOp, CRadialStop, CRect, CStyle, CTheme, CTypographyStyle,
     CWindowOptionsV2, CUI_NODE_NONE,
 };
 use libloading::{Library, Symbol};
@@ -109,6 +109,9 @@ pub(crate) type CuiGetRectFn = unsafe extern "C" fn(*const c_void, CNode) -> CRe
 pub(crate) type CuiRebuildPaintFn = unsafe extern "C" fn(*mut c_void, CColorScheme);
 pub(crate) type CuiPaintOpCountFn = unsafe extern "C" fn(*const c_void, CNode) -> usize;
 pub(crate) type CuiGetPaintOpFn = unsafe extern "C" fn(*const c_void, CNode, usize) -> CPaintOp;
+pub(crate) type CuiRadialStopCountFn = unsafe extern "C" fn(*const c_void, CNode, usize) -> usize;
+pub(crate) type CuiGetRadialStopFn =
+    unsafe extern "C" fn(*const c_void, CNode, usize, usize) -> CRadialStop;
 pub(crate) type CuiSetClickCallbackFn = unsafe extern "C" fn(
     *mut c_void,
     CNode,
@@ -178,6 +181,8 @@ pub(crate) struct Symbols {
     pub(crate) cui_rebuild_paint: CuiRebuildPaintFn,
     pub(crate) cui_paint_op_count: CuiPaintOpCountFn,
     pub(crate) cui_get_paint_op: CuiGetPaintOpFn,
+    pub(crate) cui_radial_stop_count: Option<CuiRadialStopCountFn>,
+    pub(crate) cui_get_radial_stop: Option<CuiGetRadialStopFn>,
     pub(crate) cui_set_click_callback: CuiSetClickCallbackFn,
     pub(crate) cui_dispatch_click: CuiDispatchClickFn,
 }
@@ -277,6 +282,14 @@ impl Symbols {
                 cui_rebuild_paint: resolve!(lib, "cui_rebuild_paint"),
                 cui_paint_op_count: resolve!(lib, "cui_paint_op_count"),
                 cui_get_paint_op: resolve!(lib, "cui_get_paint_op"),
+                cui_radial_stop_count: lib
+                    .get::<CuiRadialStopCountFn>(b"cui_radial_stop_count\0")
+                    .ok()
+                    .map(|symbol| *symbol),
+                cui_get_radial_stop: lib
+                    .get::<CuiGetRadialStopFn>(b"cui_get_radial_stop\0")
+                    .ok()
+                    .map(|symbol| *symbol),
                 cui_set_click_callback: resolve!(lib, "cui_set_click_callback"),
                 cui_dispatch_click: resolve!(lib, "cui_dispatch_click"),
             })
@@ -446,6 +459,21 @@ impl RuntimeTree {
 
     pub fn paint_op(&self, node: CNode, index: usize) -> CPaintOp {
         unsafe { (self.rt.sym.cui_get_paint_op)(self.ptr.cast_const(), node, index) }
+    }
+
+    pub fn radial_stop_count(&self, node: CNode, op_index: usize) -> usize {
+        self.rt.sym.cui_radial_stop_count.map_or(0, |count| unsafe {
+            count(self.ptr.cast_const(), node, op_index)
+        })
+    }
+
+    pub fn radial_stop(&self, node: CNode, op_index: usize, stop_index: usize) -> CRadialStop {
+        self.rt
+            .sym
+            .cui_get_radial_stop
+            .map_or_else(CRadialStop::default, |get| unsafe {
+                get(self.ptr.cast_const(), node, op_index, stop_index)
+            })
     }
 
     /// Installs a raw C callback. The caller owns the callback userdata and

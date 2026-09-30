@@ -1143,8 +1143,8 @@ mod tests {
         };
         assert_eq!(gradient.radius, 50.0);
         assert_eq!(gradient.radius_y, 50.0);
-        assert_eq!(gradient.start, colors.accent);
-        assert_eq!(gradient.end, colors.surface);
+        assert_eq!(gradient.stops[0].color, colors.accent);
+        assert_eq!(gradient.stops[1].color, colors.surface);
 
         runtime.transaction().apply(Mutation::SetPaintStyle {
             node,

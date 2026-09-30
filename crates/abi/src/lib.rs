@@ -420,6 +420,22 @@ impl Default for CPaintOp {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CRadialStop {
+    pub offset: f32,
+    pub color: CColor,
+}
+
+impl Default for CRadialStop {
+    fn default() -> Self {
+        Self {
+            offset: 0.0,
+            color: CColor::rgba(0, 0, 0, 0),
+        }
+    }
+}
+
 /// Window creation options. `title` must be a valid NUL-terminated UTF-8
 /// string for the duration of the call it's passed to.
 #[repr(C)]

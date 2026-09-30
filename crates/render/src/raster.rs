@@ -9,6 +9,7 @@ use crate::display_list::{
     Bounds, Clip, Damage, DisplayList, FrameDiff, ImagePrimitive, Line, Primitive, Quad,
     QuadGradient, RoundedClip, ScrollBlit, TextRun,
 };
+use creamui_core::ResolvedRadialColorStop;
 use creamui_theme::Color;
 use std::collections::HashMap;
 use tiny_skia::{
@@ -401,7 +402,7 @@ fn solid(color: Color) -> Paint<'static> {
 }
 
 fn quad_paint(quad: &Quad) -> Paint<'static> {
-    let Some(gradient) = quad.gradient else {
+    let Some(gradient) = quad.gradient.as_ref() else {
         return solid(quad.background);
     };
     let mut paint = Paint::default();
@@ -510,11 +511,16 @@ fn push_rounded_rect(pb: &mut PathBuilder, b: Bounds, radius: f32) {
 }
 
 fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Option<&Mask>) {
-    let translucent_gradient = quad
-        .gradient
-        .filter(|gradient| gradient.start_color.a != gradient.end_color.a);
-    if let Some(gradient) = translucent_gradient {
-        draw_translucent_gradient(target, quad, gradient, transform, mask);
+    let pixel_gradient = quad.gradient.as_ref().filter(|gradient| {
+        gradient.stops.as_ref().is_some_and(|stops| {
+            stops.len() != 2
+                || stops[0].offset != 0.0
+                || stops[1].offset != 1.0
+                || stops[0].color.a != stops[1].color.a
+        }) || gradient.start_color.a != gradient.end_color.a
+    });
+    if let Some(gradient) = pixel_gradient {
+        draw_gradient_pixels(target, quad, gradient, transform, mask);
     } else if quad.background.a > 0 || quad.gradient.is_some() {
         let paint = quad_paint(quad);
         if quad.radius <= 0.01 {
@@ -550,10 +556,42 @@ fn draw_quad(target: &mut PixmapMut, quad: &Quad, transform: Transform, mask: Op
     }
 }
 
-fn draw_translucent_gradient(
+fn sample_gradient_stops(
+    stops: &[ResolvedRadialColorStop],
+    colors: &[[f32; 4]],
+    progress: f32,
+    repeating: bool,
+) -> [f32; 4] {
+    let first = stops[0].offset;
+    let last = stops[stops.len() - 1].offset;
+    let t = if repeating {
+        let period = last - first;
+        if period <= 1e-6 {
+            return colors[colors.len() - 1];
+        }
+        first + (progress - first).rem_euclid(period)
+    } else {
+        progress
+    };
+    if t < first {
+        return colors[0];
+    }
+    if t >= last {
+        return colors[colors.len() - 1];
+    }
+    let upper = stops.partition_point(|stop| stop.offset <= t);
+    let lower = upper - 1;
+    let fraction =
+        ((t - stops[lower].offset) / (stops[upper].offset - stops[lower].offset)).clamp(0.0, 1.0);
+    std::array::from_fn(|channel| {
+        colors[lower][channel] + (colors[upper][channel] - colors[lower][channel]) * fraction
+    })
+}
+
+fn draw_gradient_pixels(
     target: &mut PixmapMut,
     quad: &Quad,
-    gradient: QuadGradient,
+    gradient: &QuadGradient,
     transform: Transform,
     mask: Option<&Mask>,
 ) {
@@ -588,8 +626,21 @@ fn draw_translucent_gradient(
             color.a as f32,
         ]
     };
-    let start = premultiply(gradient.start_color);
-    let end = premultiply(gradient.end_color);
+    let simple_stops = [
+        ResolvedRadialColorStop {
+            offset: 0.0,
+            color: gradient.start_color,
+        },
+        ResolvedRadialColorStop {
+            offset: 1.0,
+            color: gradient.end_color,
+        },
+    ];
+    let stops = gradient.stops.as_deref().unwrap_or(&simple_stops);
+    let colors = stops
+        .iter()
+        .map(|stop| premultiply(stop.color))
+        .collect::<Vec<_>>();
     let pixels = target.data_mut();
     for y in y0..y1 {
         for x in x0..x1 {
@@ -611,15 +662,11 @@ fn draw_translucent_gradient(
             } else {
                 (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
             };
-            let t = if gradient.repeating {
-                t.rem_euclid(1.0)
-            } else {
-                t.clamp(0.0, 1.0)
-            };
-            let alpha = (start[3] + (end[3] - start[3]) * t) * coverage / 255.0;
+            let sampled = sample_gradient_stops(stops, &colors, t, gradient.repeating);
+            let alpha = sampled[3] * coverage / 255.0;
             let pixel = &mut pixels[index * 4..index * 4 + 4];
             for channel in 0..4 {
-                let source = (start[channel] + (end[channel] - start[channel]) * t) * coverage;
+                let source = sampled[channel] * coverage;
                 pixel[channel] = (source + pixel[channel] as f32 * (1.0 - alpha))
                     .round()
                     .clamp(0.0, 255.0) as u8;
@@ -839,6 +886,77 @@ mod tests {
         for channel in 0..4 {
             assert!(rgba(&raster, 5, 15)[channel].abs_diff(rgba(&raster, 15, 15)[channel]) <= 2);
         }
+    }
+
+    #[test]
+    fn radial_gradient_interpolates_multiple_stops() {
+        let stops = [
+            ResolvedRadialColorStop {
+                offset: 0.0,
+                color: Color::rgb(255, 0, 0),
+            },
+            ResolvedRadialColorStop {
+                offset: 0.5,
+                color: Color::rgb(0, 255, 0),
+            },
+            ResolvedRadialColorStop {
+                offset: 1.0,
+                color: Color::rgb(0, 0, 255),
+            },
+        ];
+        let list = record(|p| {
+            p.fill_radial_gradient_stops(
+                rect(0.0, 0.0, 40.0, 30.0),
+                &stops,
+                creamui_core::Point { x: 0.5, y: 15.5 },
+                [20.0, 20.0],
+                false,
+                0.0,
+            )
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert_eq!(rgba(&raster, 0, 15), [255, 0, 0, 255]);
+        assert_eq!(rgba(&raster, 10, 15), [0, 255, 0, 255]);
+        assert_eq!(rgba(&raster, 20, 15), [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn repeating_radial_stops_use_their_own_interval() {
+        let stops = [
+            ResolvedRadialColorStop {
+                offset: 0.2,
+                color: Color::rgb(255, 0, 0),
+            },
+            ResolvedRadialColorStop {
+                offset: 0.4,
+                color: Color::rgb(0, 255, 0),
+            },
+            ResolvedRadialColorStop {
+                offset: 0.6,
+                color: Color::rgb(0, 0, 255),
+            },
+        ];
+        let list = record(|p| {
+            p.fill_radial_gradient_stops(
+                rect(0.0, 0.0, 40.0, 30.0),
+                &stops,
+                creamui_core::Point { x: 0.5, y: 15.5 },
+                [10.0, 10.0],
+                true,
+                0.0,
+            )
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert_eq!(rgba(&raster, 4, 15), [0, 255, 0, 255]);
+        let first_period = rgba(&raster, 3, 15);
+        let next_period = rgba(&raster, 7, 15);
+        assert!(first_period[0] > 100 && first_period[1] > 100);
+        assert!(first_period
+            .iter()
+            .zip(next_period)
+            .all(|(a, b)| a.abs_diff(b) <= 1));
     }
 
     #[test]

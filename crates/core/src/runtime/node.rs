@@ -241,6 +241,7 @@ pub struct RuntimeNode {
     pub paint_style: crate::PaintStyle,
     pub typography_style: crate::TypographyStyle,
     pub transform: super::mutation::Transform2D,
+    pub z_index: i32,
     /// This node's own opacity, in `[0.0, 1.0]`, independent of its
     /// ancestors' — see [`LayoutState::effective_opacity`] for the
     /// cascaded value a renderer actually composites with.
@@ -280,6 +281,7 @@ impl RuntimeNode {
             paint_style: crate::PaintStyle::default(),
             typography_style: crate::TypographyStyle::default(),
             transform: super::mutation::Transform2D::default(),
+            z_index: 0,
             opacity: 1.0,
             clips_children: false,
             dirty: DirtyFlags::STRUCTURE,

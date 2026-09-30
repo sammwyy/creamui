@@ -39,6 +39,10 @@ pub enum Mutation {
         node: RuntimeNodeId,
         transform: Transform2D,
     },
+    SetZIndex {
+        node: RuntimeNodeId,
+        z_index: i32,
+    },
     /// Clamped to `[0.0, 1.0]`; see [`super::node::RuntimeNode::opacity`].
     SetOpacity {
         node: RuntimeNodeId,

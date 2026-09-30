@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Absolute runtime nodes accept a z-index mutation. Paint and pointer hit order
+  share its stacking order, while keyboard focus keeps document order.
 - Retained layout sync follows changed absolute-child paths without checking
   unrelated siblings. Devtools reports how many layout rectangles were checked.
 - `use_safe_area()` reports the logical-pixel bands covered by the status bar,

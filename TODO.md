@@ -20,8 +20,7 @@ Current limitations and work still to do. Implemented changes belong in
   apply translation, per-primitive opacity, and rectangular ancestor clips.
 - Revisit wide-tree costs: layout-rect sync still visits every direct flow
   child of a wide container on a changed path; changes to hit-list membership or
-  order rebuild the full hit list. There is no explicit z-index for absolute
-  nodes.
+  order rebuild the full hit list.
 - After runtime integration, add a tree inspector, invalidation reasons,
   and damage/layout/hit-region overlays to devtools. F3 and
   `CUI_FRAME_LOG=1` already report per-frame timings and metrics.

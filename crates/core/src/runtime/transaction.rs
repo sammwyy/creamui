@@ -87,6 +87,23 @@ impl<'a> RuntimeTransaction<'a> {
         }
     }
 
+    fn damage_subtree(&mut self, root: RuntimeNodeId) {
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            if let Some(node) = self.runtime.nodes.get(id) {
+                if let Some(fragment) = &node.paint.fragment {
+                    let transform = node.layout.effective_transform;
+                    self.runtime.paint_order_damage.push(crate::Rect {
+                        x: fragment.bounds.x + transform.x,
+                        y: fragment.bounds.y + transform.y,
+                        ..fragment.bounds
+                    });
+                }
+                stack.extend(node.children.as_slice().iter().copied());
+            }
+        }
+    }
+
     fn sync_taffy_children(&mut self, parent: RuntimeNodeId) {
         let Some(parent_node) = self.runtime.nodes.get(parent) else {
             return;
@@ -211,6 +228,7 @@ impl<'a> RuntimeTransaction<'a> {
                 });
                 if repositioned {
                     self.touch(node, DirtyFlags::HIT_TEST);
+                    self.damage_subtree(node);
                     if let Some(parent) = self.runtime.nodes.get(node).and_then(|n| n.parent) {
                         self.touch(parent, DirtyFlags::LAYOUT);
                     }
@@ -322,6 +340,22 @@ impl<'a> RuntimeTransaction<'a> {
                 });
                 if changed {
                     self.touch(node, DirtyFlags::COMPOSITE);
+                }
+            }
+            Mutation::SetZIndex { node, z_index } => {
+                let changed = self.runtime.nodes.get_mut(node).is_some_and(|n| {
+                    let changed = n.z_index != z_index;
+                    n.z_index = z_index;
+                    changed
+                });
+                if changed
+                    && self.runtime.nodes.get(node).is_some_and(|n| {
+                        n.layout_style.position == taffy::style::Position::Absolute
+                    })
+                {
+                    self.touch(node, DirtyFlags::HIT_TEST);
+                    self.runtime.paint_order_dirty = true;
+                    self.damage_subtree(node);
                 }
             }
             Mutation::SetOpacity { node, opacity } => {

@@ -147,16 +147,8 @@ impl Runtime {
     /// Rebuilds the retained hit-test list and focus order from scratch if
     /// (and only if) something marked either dirty since the last call.
     ///
-    /// `focus_order` is always plain depth-first document order, unaffected
-    /// by position — tab order doesn't follow paint order. `hit_entries`
-    /// instead collects every normal-flow node first, then every
-    /// absolutely positioned subtree's nodes (in encounter order),
-    /// mirroring the legacy `Scene`'s deferred Flow/Absolute two-pass
-    /// paint — [`Runtime::hit_test`] selects the highest matching slot, so an
-    /// absolutely positioned node's entries, being last, always win over a
-    /// flow sibling's regardless of tree depth/order. A node nested inside
-    /// an already-deferred absolute subtree is not independently deferred
-    /// again — its whole ancestor subtree already moved as one unit.
+    /// `focus_order` follows depth-first document order. `hit_entries`
+    /// follows paint order, including absolute positioning and z-index.
     ///
     /// When only listed nodes moved, their entries' rects are patched in
     /// place instead.
@@ -190,49 +182,29 @@ impl Runtime {
             return;
         };
 
-        let mut deferred_absolute: Vec<RuntimeNodeId> = Vec::new();
-        let mut stack: Vec<(RuntimeNodeId, bool)> = vec![(root, false)];
-        while let Some((id, inside_absolute)) = stack.pop() {
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            let is_absolute_root =
-                !inside_absolute && node.layout_style.position == taffy::style::Position::Absolute;
-            if is_absolute_root {
-                deferred_absolute.push(id);
+            if node.events.focusable {
+                self.focus_order.push(id);
             }
-            if !inside_absolute && !is_absolute_root && node.events.is_interactive() {
+            stack.extend(node.children.as_slice().iter().rev().copied());
+        }
+
+        if self.paint_order_dirty {
+            self.rebuild_paint_order();
+        }
+        for &id in &self.paint_order {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            if node.events.is_interactive() {
                 self.hit_entries.push(HitEntry {
                     node: id,
                     rect: visible_hit_rect(node),
                 });
-            }
-            if node.events.focusable {
-                self.focus_order.push(id);
-            }
-            let inside_absolute = inside_absolute || is_absolute_root;
-            stack.extend(
-                node.children
-                    .as_slice()
-                    .iter()
-                    .rev()
-                    .map(|&child| (child, inside_absolute)),
-            );
-        }
-
-        for absolute_root in deferred_absolute {
-            let mut stack = vec![absolute_root];
-            while let Some(id) = stack.pop() {
-                let Some(node) = self.nodes.get(id) else {
-                    continue;
-                };
-                if node.events.is_interactive() {
-                    self.hit_entries.push(HitEntry {
-                        node: id,
-                        rect: visible_hit_rect(node),
-                    });
-                }
-                stack.extend(node.children.as_slice().iter().rev());
             }
         }
 
@@ -623,6 +595,47 @@ mod tests {
             runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }),
             Some(popover)
         );
+    }
+
+    #[test]
+    fn absolute_z_index_changes_paint_and_hit_order_without_changing_focus_order() {
+        let mut runtime = Runtime::new();
+        let root = runtime.transaction().create_node(NodeKind::Container);
+        runtime.set_root(Some(root));
+        let first = absolute_leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        let nested = absolute_leaf_at(&mut runtime, first, rect(0.0, 0.0, 100.0, 100.0));
+        let second = absolute_leaf_at(&mut runtime, root, rect(0.0, 0.0, 100.0, 100.0));
+        for node in [first, nested, second] {
+            runtime.transaction().apply(Mutation::SetEventHandlers {
+                node,
+                handlers: EventState {
+                    on_click: Some(Rc::new(|| {})),
+                    focusable: true,
+                    ..Default::default()
+                },
+            });
+        }
+        let point = crate::Point { x: 5.0, y: 5.0 };
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.hit_test(point), Some(second));
+
+        runtime.transaction().apply(Mutation::SetZIndex {
+            node: first,
+            z_index: 1,
+        });
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.paint_order(), &[root, second, first, nested]);
+        assert_eq!(runtime.hit_test(point), Some(nested));
+        assert_eq!(runtime.next_focus(None, false), Some(first));
+        assert_eq!(runtime.next_focus(Some(first), false), Some(nested));
+        assert_eq!(runtime.next_focus(Some(nested), false), Some(second));
+
+        runtime.transaction().apply(Mutation::SetZIndex {
+            node: first,
+            z_index: -1,
+        });
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.hit_test(point), Some(second));
     }
 
     #[test]

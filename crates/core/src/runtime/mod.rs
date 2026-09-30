@@ -89,6 +89,7 @@ pub struct Runtime {
     /// [`Runtime::rebuild_paint`] skip re-deriving paint order otherwise.
     paint_order_dirty: bool,
     paint_order: Vec<RuntimeNodeId>,
+    paint_order_damage: Vec<crate::Rect>,
     composite_queue: Vec<RuntimeNodeId>,
     /// Bumped once per [`Runtime::transaction`] call; see
     /// [`RuntimeNode::touched_stamp`](super::node::RuntimeNode::touched_stamp).
@@ -116,6 +117,7 @@ impl Runtime {
             paint_queue: Vec::new(),
             paint_order_dirty: false,
             paint_order: Vec::new(),
+            paint_order_damage: Vec::new(),
             composite_queue: Vec::new(),
             transaction_stamp: 0,
         }
@@ -384,7 +386,8 @@ impl Runtime {
         }
 
         let queue = std::mem::take(&mut self.paint_queue);
-        let mut damage = Vec::with_capacity(queue.len() * 2);
+        let mut damage = std::mem::take(&mut self.paint_order_damage);
+        damage.reserve(queue.len() * 2);
         for id in queue {
             let Some(node) = self.nodes.get(id) else {
                 continue;
@@ -411,28 +414,25 @@ impl Runtime {
             self.paint_order_dirty = false;
             return;
         };
-        let mut absolute_roots = Vec::new();
-        let mut stack = vec![root];
-        while let Some(id) = stack.pop() {
-            let Some(node) = self.nodes.get(id) else {
-                continue;
-            };
-            if node.layout_style.position == taffy::style::Position::Absolute {
-                absolute_roots.push(id);
-                continue;
-            }
-            self.paint_order.push(id);
-            stack.extend(node.children.as_slice().iter().rev());
-        }
-        for root in absolute_roots {
-            let mut stack = vec![root];
+        let mut contexts = vec![root];
+        while let Some(context_root) = contexts.pop() {
+            let mut absolute_roots = Vec::new();
+            let mut stack = vec![context_root];
             while let Some(id) = stack.pop() {
                 let Some(node) = self.nodes.get(id) else {
                     continue;
                 };
+                if id != context_root
+                    && node.layout_style.position == taffy::style::Position::Absolute
+                {
+                    absolute_roots.push(id);
+                    continue;
+                }
                 self.paint_order.push(id);
                 stack.extend(node.children.as_slice().iter().rev());
             }
+            absolute_roots.sort_by_key(|&id| self.nodes.get(id).map_or(0, |node| node.z_index));
+            contexts.extend(absolute_roots.into_iter().rev());
         }
         self.paint_order_dirty = false;
     }
@@ -1256,6 +1256,57 @@ mod tests {
         }
         runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
         assert_eq!(runtime.paint_order(), &[root, absolute, flow]);
+    }
+
+    #[test]
+    fn changing_absolute_z_index_damages_its_descendant_bounds() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(100.0, 100.0),
+        });
+        let absolute = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: absolute,
+            style: taffy::style::Style {
+                position: taffy::style::Position::Absolute,
+                ..sized(10.0, 10.0)
+            },
+        });
+        tx.insert_child(root, absolute, None);
+        let child = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: child,
+            style: sized(20.0, 20.0),
+        });
+        tx.apply(Mutation::SetPaintStyle {
+            node: child,
+            style: crate::Style::new()
+                .background(creamui_theme::Color::rgb(255, 0, 0))
+                .paint,
+        });
+        tx.insert_child(absolute, child, None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        let child_bounds = runtime
+            .get(child)
+            .unwrap()
+            .paint
+            .fragment
+            .as_ref()
+            .unwrap()
+            .bounds;
+
+        runtime.transaction().apply(Mutation::SetZIndex {
+            node: absolute,
+            z_index: 2,
+        });
+        let damage = runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+        assert!(damage.contains(&child_bounds));
     }
 
     #[test]

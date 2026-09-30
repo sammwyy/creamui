@@ -22,6 +22,22 @@ pub use self::winit::{
 #[cfg(all(feature = "android", target_os = "android"))]
 pub use ::winit::platform::android::activity::AndroidApp;
 
+/// Fullscreen the native surface and set status/navigation icon contrast.
+///
+/// `light_background` requests dark icons. Desktop and web backends ignore
+/// the call. Returns whether the platform accepted it.
+pub fn sync_system_bars(light_background: bool) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        android_insets::sync_system_bars(light_background)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = light_background;
+        true
+    }
+}
+
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::sync::Arc;
 use std::time::Duration;

@@ -64,6 +64,7 @@ pub struct Runtime {
     /// Bumped once per [`Runtime::compute_layout`] call.
     layout_epoch: u64,
     last_viewport: Option<crate::Size>,
+    last_origin: crate::Point,
     /// Nodes whose layout inputs changed since the last layout.
     layout_roots: Vec<RuntimeNodeId>,
     /// Makes the next rect sync visit every node, e.g. after the root moved.
@@ -102,6 +103,7 @@ impl Runtime {
             layout_dirty: false,
             layout_epoch: 0,
             last_viewport: None,
+            last_origin: crate::Point::default(),
             layout_roots: Vec::new(),
             full_layout_sync: false,
             hit_test_dirty: false,
@@ -161,14 +163,30 @@ impl Runtime {
     /// window-space rect actually moved and returns their old+new rects as
     /// damage. No-op otherwise, or when there is no root.
     pub fn compute_layout(&mut self, viewport: crate::Size) -> Vec<crate::Rect> {
+        self.compute_layout_at(viewport, crate::Point::default())
+    }
+
+    /// Like [`Runtime::compute_layout`], placing the root at `origin` in
+    /// window space. `viewport` is the size available to the root, not the
+    /// surface around it.
+    pub fn compute_layout_at(
+        &mut self,
+        viewport: crate::Size,
+        origin: crate::Point,
+    ) -> Vec<crate::Rect> {
         let Some(root) = self.root else {
             return Vec::new();
         };
         let viewport_changed = self.last_viewport != Some(viewport);
-        if !self.layout_dirty && !viewport_changed {
+        let origin_changed = self.last_origin != origin;
+        if !self.layout_dirty && !viewport_changed && !origin_changed {
             return Vec::new();
         }
+        if origin_changed {
+            self.full_layout_sync = true;
+        }
         self.last_viewport = Some(viewport);
+        self.last_origin = origin;
 
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.layout_runs += 1);
@@ -202,7 +220,7 @@ impl Runtime {
         self.layout_dirty = false;
         self.layout_epoch += 1;
         self.mark_layout_paths();
-        self.sync_layout_rects(root)
+        self.sync_layout_rects(root, origin)
     }
 
     fn mark_layout_paths(&mut self) {
@@ -223,10 +241,14 @@ impl Runtime {
     /// parent-relative output. A subtree is skipped when it is not on a
     /// changed node's ancestor path and its root kept its rect: `taffy`
     /// lays it out from the same inputs, so nothing inside it moved.
-    fn sync_layout_rects(&mut self, root: RuntimeNodeId) -> Vec<crate::Rect> {
+    fn sync_layout_rects(
+        &mut self,
+        root: RuntimeNodeId,
+        origin: crate::Point,
+    ) -> Vec<crate::Rect> {
         let full = std::mem::take(&mut self.full_layout_sync);
         let mut damage = Vec::new();
-        let mut stack: Vec<(RuntimeNodeId, crate::Point)> = vec![(root, crate::Point::default())];
+        let mut stack: Vec<(RuntimeNodeId, crate::Point)> = vec![(root, origin)];
         while let Some((id, parent_origin)) = stack.pop() {
             let Some(node) = self.nodes.get(id) else {
                 continue;
@@ -825,6 +847,22 @@ mod tests {
         assert!(!runtime.is_layout_dirty());
         assert_eq!(runtime.get(root).unwrap().layout.rect.width, 100.0);
         assert_eq!(runtime.layout_epoch(), 1);
+    }
+
+    #[test]
+    fn layout_origin_shifts_the_root_without_resizing_it() {
+        let mut runtime = Runtime::new();
+        let root = full_size_root(&mut runtime);
+        runtime.set_root(Some(root));
+        runtime.compute_layout_at(
+            size(100.0, 80.0),
+            crate::Point { x: 4.0, y: 12.0 },
+        );
+        let rect = runtime.get(root).unwrap().layout.rect;
+        assert_eq!(rect.x, 4.0);
+        assert_eq!(rect.y, 12.0);
+        assert_eq!(rect.width, 100.0);
+        assert_eq!(rect.height, 80.0);
     }
 
     #[test]

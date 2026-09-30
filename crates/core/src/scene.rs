@@ -818,7 +818,10 @@ pub struct Renderer {
     root: Option<Instance>,
     runtime: Option<crate::runtime::SharedRuntime>,
     runtime_colors: Option<creamui_theme::ColorScheme>,
+    /// Clip rectangle. Larger than the laid-out root when system bars inset it.
     viewport: Size,
+    /// Window-space origin of the laid-out root.
+    origin: Point,
     layout_feedback: bool,
     previous_focus_order: RefCell<Vec<FocusId>>,
 }
@@ -831,6 +834,7 @@ impl Renderer {
             runtime: None,
             runtime_colors: None,
             viewport: Size::default(),
+            origin: Point::default(),
             layout_feedback: false,
             previous_focus_order: RefCell::new(Vec::new()),
         }
@@ -854,7 +858,7 @@ impl Renderer {
             if colors_changed {
                 runtime.invalidate_all_paint();
             }
-            let mut damage = runtime.compute_layout(viewport);
+            let mut damage = runtime.compute_layout_at(viewport, self.origin);
             damage.extend(runtime.rebuild_paint(&colors));
             runtime.rebuild_composite();
             runtime.rebuild_hit_test();
@@ -862,6 +866,21 @@ impl Renderer {
             damage
         });
         self.viewport = viewport;
+        Some(damage)
+    }
+
+    /// Like [`Renderer::render_runtime`], laying the tree out in `layout` and
+    /// painting it at `origin` inside a `surface`-sized clip.
+    pub fn render_runtime_in(
+        &mut self,
+        layout: Size,
+        origin: Point,
+        surface: Size,
+        painter: &mut dyn Painter,
+    ) -> Option<Vec<Rect>> {
+        self.origin = origin;
+        let damage = self.render_runtime(layout, painter)?;
+        self.viewport = surface;
         Some(damage)
     }
 
@@ -899,6 +918,13 @@ impl Renderer {
     /// Reconciles `root` against the retained tree and recomputes layout,
     /// without painting.
     pub fn update(&mut self, root: BoxedWidget, viewport: Size) {
+        self.place(root, viewport, Point::default(), viewport);
+    }
+
+    /// Lays `root` out in `layout` and positions that box at `origin` inside
+    /// `surface`. The clip stays the whole surface, so the bands outside the
+    /// box are left unpainted.
+    pub fn place(&mut self, root: BoxedWidget, layout: Size, origin: Point, surface: Size) {
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.root_builds += 1);
 
@@ -917,8 +943,8 @@ impl Renderer {
             .compute_layout_with_measure(
                 instance.node_id,
                 taffy::geometry::Size {
-                    width: AvailableSpace::Definite(viewport.width),
-                    height: AvailableSpace::Definite(viewport.height),
+                    width: AvailableSpace::Definite(layout.width),
+                    height: AvailableSpace::Definite(layout.height),
                 },
                 |known_dimensions, available_space, _node_id, measure, _style| match measure {
                     Some(measure) => {
@@ -930,8 +956,9 @@ impl Renderer {
                 },
             )
             .expect("layout computation should not fail for a well-formed tree");
-        self.viewport = viewport;
-        self.layout_feedback = report_layout(&self.tree, &instance, Point::default());
+        self.origin = origin;
+        self.viewport = surface;
+        self.layout_feedback = report_layout(&self.tree, &instance, origin);
         self.root = Some(instance);
     }
 
@@ -973,7 +1000,7 @@ impl Renderer {
                 &self.tree,
                 instance,
                 painter,
-                Point::default(),
+                self.origin,
                 clip,
                 clip,
                 &mut focus,

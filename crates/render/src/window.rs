@@ -83,13 +83,18 @@ struct SafeAreaProvider {
     safe_area: Signal<SafeArea>,
 }
 
-/// Logical-pixel bands of this window covered by system UI.
+/// Logical-pixel bands of this window still left for the application.
 ///
 /// Only callable while a window is building its widget tree. The status
 /// bar, navigation bar, display cutout, and on-screen keyboard occupy these
 /// bands, and taps there are delivered to the system rather than the
-/// application. Inset toolbars and other controls by `top`, `right`,
-/// `bottom`, and `left`. The tree rebuilds when the bands change.
+/// application. The tree rebuilds when the bands change.
+///
+/// [`SystemBars::Inset`] consumes the bands: the layout viewport already
+/// starts below them, and this hook returns [`SafeArea::ZERO`].
+/// [`SystemBars::EdgeToEdge`] leaves the viewport fullscreen, and this hook
+/// returns the bands so the app can pad the controls that must stay
+/// reachable while backgrounds extend underneath.
 ///
 /// Desktop client areas are [`SafeArea::ZERO`]. Android reads window insets
 /// plus the native content rectangle. A browser page reads
@@ -99,6 +104,40 @@ pub fn use_safe_area() -> SafeArea {
     creamui_reactive::use_context::<SafeAreaProvider>()
         .safe_area
         .get()
+}
+
+/// How a window shares the screen with the status bar, navigation bar,
+/// display cutout, and on-screen keyboard.
+///
+/// Desktop windows report an empty safe area, so both modes lay out the
+/// same rectangle there. Android and a browser page with
+/// `viewport-fit=cover` are where the choice shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SystemBars {
+    /// The layout viewport is the rectangle the system bars leave free.
+    /// Widgets cannot draw underneath them. The covered bands are painted
+    /// with the system-bar color, and [`use_safe_area`] is empty because
+    /// the window already consumed those insets. The keyboard shrinks the
+    /// viewport.
+    #[default]
+    Inset,
+    /// The layout viewport is the whole surface. System bars overlay the
+    /// app. [`use_safe_area`] reports the covered bands so the app can pad
+    /// what must stay reachable and let the rest extend underneath.
+    EdgeToEdge,
+}
+
+#[derive(Clone)]
+struct SystemBarsProvider {
+    mode: Signal<SystemBars>,
+}
+
+/// The window's current [`SystemBars`] mode.
+///
+/// Only callable while a window is building its widget tree. The tree
+/// rebuilds when the mode changes.
+pub fn use_system_bars() -> SystemBars {
+    creamui_reactive::use_context::<SystemBarsProvider>().mode.get()
 }
 
 /// Width classes for adaptive layouts.
@@ -224,6 +263,9 @@ pub struct WindowOptions {
     pub backend: RenderBackend,
     /// Made available to `use_theme()` while this window's `build_ui` runs.
     pub theme: Theme,
+    /// Whether the layout viewport stops at the system bars or draws
+    /// underneath them. See [`SystemBars`].
+    pub system_bars: SystemBars,
 }
 
 impl Default for WindowOptions {
@@ -242,6 +284,7 @@ impl Default for WindowOptions {
             close_behavior: CloseBehavior::Close,
             backend: RenderBackend::default(),
             theme: Theme::default(),
+            system_bars: SystemBars::Inset,
         }
     }
 }
@@ -278,6 +321,14 @@ impl WindowOptions {
 
     pub fn bottom_panel(mut self) -> Self {
         self.role = WindowRole::BottomPanel;
+        self
+    }
+
+    /// Sets whether the window lays out inside the system bars or draws
+    /// underneath them. Change it later with
+    /// [`WindowHandle::set_system_bars`].
+    pub fn system_bars(mut self, mode: SystemBars) -> Self {
+        self.system_bars = mode;
         self
     }
 }
@@ -406,6 +457,7 @@ fn with_window_scope<R>(
     theme: &ThemeProvider,
     viewport: &Signal<Size>,
     safe_area: &Signal<SafeArea>,
+    system_bars: &Signal<SystemBars>,
     window_drag: &WindowDragHandle,
     f: impl FnOnce() -> R,
 ) -> R {
@@ -417,9 +469,67 @@ fn with_window_scope<R>(
         creamui_reactive::provide_context(SafeAreaProvider {
             safe_area: safe_area.clone(),
         });
+        creamui_reactive::provide_context(SystemBarsProvider {
+            mode: system_bars.clone(),
+        });
         creamui_reactive::provide_context(window_drag.clone());
         f()
     })
+}
+
+/// Where the app's layout box sits on the surface.
+struct ContentFrame {
+    origin: creamui_core::Point,
+    layout: Size,
+    exposed: SafeArea,
+}
+
+fn content_frame(mode: SystemBars, occupied: SafeArea, surface: Size) -> ContentFrame {
+    let occupied = occupied.clamp(surface.width, surface.height);
+    match mode {
+        SystemBars::EdgeToEdge => ContentFrame {
+            origin: creamui_core::Point::default(),
+            layout: surface,
+            exposed: occupied,
+        },
+        SystemBars::Inset => ContentFrame {
+            origin: creamui_core::Point {
+                x: occupied.left,
+                y: occupied.top,
+            },
+            layout: Size {
+                width: (surface.width - occupied.left - occupied.right).max(0.0),
+                height: (surface.height - occupied.top - occupied.bottom).max(0.0),
+            },
+            exposed: SafeArea::ZERO,
+        },
+    }
+}
+
+fn color_is_light(color: Color) -> bool {
+    let channel = |component: u8| {
+        let value = component as f32 / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance =
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+    luminance > 0.5
+}
+
+/// System-bar policy shared by the pipeline and [`WindowHandle`].
+#[derive(Clone)]
+struct SystemChrome {
+    mode: Signal<SystemBars>,
+    /// Bands the platform reports, before the layout mode consumes them.
+    occupied: Signal<SafeArea>,
+    /// Fill for the bands [`SystemBars::Inset`] leaves outside the layout,
+    /// and the color used to choose status/navigation icon contrast.
+    color: Rc<Cell<Option<Color>>>,
+    applied_light_background: Rc<Cell<Option<bool>>>,
 }
 
 struct BlankWidget;
@@ -556,8 +666,13 @@ struct FrameState {
 /// present per compositor frame.
 struct Pipeline {
     frame: RefCell<FrameState>,
+    /// Full window, including the bands system bars cover.
+    surface: Signal<Size>,
+    /// Rectangle `build_ui` lays out into. Smaller than [`Self::surface`]
+    /// when [`SystemBars::Inset`] consumes system bars.
     viewport: Signal<Size>,
     safe_area: Signal<SafeArea>,
+    chrome: SystemChrome,
     scale_factor: Signal<f64>,
     window: SharedWindow,
     source: UiSource,
@@ -584,9 +699,51 @@ impl Pipeline {
             &self.theme,
             &self.viewport,
             &self.safe_area,
+            &self.chrome.mode,
             &self.window_drag,
             f,
         )
+    }
+
+    fn content_frame(&self) -> ContentFrame {
+        content_frame(
+            self.chrome.mode.peek(),
+            self.chrome.occupied.peek(),
+            self.surface.peek(),
+        )
+    }
+
+    /// Publishes the layout viewport and the safe area the app should see
+    /// for the current mode. Writes are batched so the window effect runs
+    /// once.
+    fn sync_frame(&self) {
+        let frame = self.content_frame();
+        creamui_reactive::batch(|| {
+            set_if_changed(&self.viewport, frame.layout);
+            set_if_changed(&self.safe_area, frame.exposed);
+        });
+        self.apply_system_bar_icons();
+    }
+
+    fn apply_system_bar_icons(&self) {
+        let color = self.chrome.color.get().unwrap_or(self.clear_color);
+        let light_background = color_is_light(color);
+        if self.chrome.applied_light_background.get() == Some(light_background) {
+            return;
+        }
+        if creamui_platform::sync_system_bars(light_background) {
+            self.chrome
+                .applied_light_background
+                .set(Some(light_background));
+        }
+    }
+
+    fn system_bar_clear(&self) -> Color {
+        if self.chrome.mode.peek() == SystemBars::Inset {
+            self.chrome.color.get().unwrap_or(self.clear_color)
+        } else {
+            self.clear_color
+        }
     }
 
     fn request_redraw(&self) {
@@ -603,6 +760,7 @@ impl Pipeline {
             self.invalidate_layout();
             return;
         };
+        let _mode = self.chrome.mode.get();
         let started = Instant::now();
         let root = self.with_scope(|| {
             #[cfg(feature = "perf-metrics")]
@@ -628,7 +786,7 @@ impl Pipeline {
     }
 
     fn physical_size(&self) -> (Size, u32, u32, f64) {
-        let logical = self.viewport.peek();
+        let logical = self.surface.peek();
         let scale = self.scale_factor.peek();
         let width = (logical.width as f64 * scale).round().max(1.0) as u32;
         let height = (logical.height as f64 * scale).round().max(1.0) as u32;
@@ -664,7 +822,13 @@ impl Pipeline {
                     let changed = {
                         let mut frame = self.frame.borrow_mut();
                         let started = Instant::now();
-                        frame.renderer.update(root, self.viewport.peek());
+                        let placed = self.content_frame();
+                        frame.renderer.place(
+                            root,
+                            placed.layout,
+                            placed.origin,
+                            self.surface.peek(),
+                        );
                         frame.report.layout += started.elapsed();
                         frame.report.rebuilt = true;
                         frame.renderer.layout_feedback()
@@ -705,7 +869,7 @@ impl Pipeline {
             report,
             ..
         } = &mut *frame;
-        recorder.begin(width, height, scale as f32, self.clear_color, colors);
+        recorder.begin(width, height, scale as f32, self.system_bar_clear(), colors);
         let previous_focus = scene.as_ref().and_then(|scene| {
             self.focused
                 .get()
@@ -726,7 +890,8 @@ impl Pipeline {
                 }
             }
             UiSource::Runtime(_) => {
-                renderer.render_runtime(logical, recorder);
+                let placed = self.content_frame();
+                renderer.render_runtime_in(placed.layout, placed.origin, logical, recorder);
                 report.rebuilt = true;
             }
         }
@@ -1130,6 +1295,8 @@ struct InstalledTray {
 pub struct WindowHandle {
     window: SharedWindow,
     theme: ThemeProvider,
+    chrome: SystemChrome,
+    on_chrome_changed: Rc<dyn Fn()>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -1312,6 +1479,36 @@ impl WindowHandle {
     /// rebuild, which this schedules immediately.
     pub fn set_theme(&self, theme: Theme) {
         self.theme.set(theme);
+    }
+
+    /// The window's current system-bar mode.
+    pub fn system_bars(&self) -> SystemBars {
+        self.chrome.mode.peek()
+    }
+
+    /// Lays the window out inside the system bars, or draws underneath them.
+    /// Takes effect on the next frame. [`use_safe_area`] and [`use_viewport`]
+    /// follow the new mode.
+    pub fn set_system_bars(&self, mode: SystemBars) {
+        if self.chrome.mode.peek() == mode {
+            return;
+        }
+        creamui_reactive::batch(|| {
+            self.chrome.mode.set(mode);
+            (self.on_chrome_changed)();
+        });
+    }
+
+    /// Color of the bands [`SystemBars::Inset`] leaves outside the layout,
+    /// and the color used to choose light or dark system-bar icons. `None`
+    /// keeps the window clear color until a color is set.
+    pub fn set_system_bar_color(&self, color: Color) {
+        if self.chrome.color.get() == Some(color) {
+            return;
+        }
+        self.chrome.color.set(Some(color));
+        self.chrome.applied_light_background.set(None);
+        (self.on_chrome_changed)();
     }
 }
 
@@ -1770,21 +1967,22 @@ impl WindowState {
         }
     }
 
-    fn queue_viewport(&mut self, viewport: Size) {
+    fn queue_viewport(&mut self, surface: Size) {
         if self
             .pending_viewport
-            .unwrap_or_else(|| self.pipeline.viewport.peek())
-            != viewport
+            .unwrap_or_else(|| self.pipeline.surface.peek())
+            != surface
         {
-            self.pending_viewport = Some(viewport);
+            self.pending_viewport = Some(surface);
             self.pipeline.invalidate_layout();
         }
     }
 
     fn flush_pending_viewport(&mut self) {
-        if let Some(viewport) = self.pending_viewport.take() {
-            if self.pipeline.viewport.peek() != viewport {
-                self.pipeline.viewport.set(viewport);
+        if let Some(surface) = self.pending_viewport.take() {
+            if self.pipeline.surface.peek() != surface {
+                self.pipeline.surface.set(surface);
+                self.pipeline.sync_frame();
             }
         }
     }
@@ -1796,7 +1994,17 @@ impl WindowState {
         let Some(window) = self.pipeline.window.borrow().as_ref().cloned() else {
             return;
         };
-        set_if_changed(&self.pipeline.safe_area, window.safe_area());
+        let occupied = window.safe_area();
+        if self.pipeline.chrome.occupied.peek() != occupied {
+            log::debug!(
+                "creamui-render: system insets {occupied:?}, mode {:?}",
+                self.pipeline.chrome.mode.peek()
+            );
+            self.pipeline.chrome.occupied.set(occupied);
+            self.pipeline.sync_frame();
+        } else {
+            self.pipeline.apply_system_bar_icons();
+        }
     }
 
     fn restart_caret(&mut self) {
@@ -2552,18 +2760,19 @@ impl AppHandler {
 
         let pipeline = spec.pipeline;
         pipeline.scale_factor.set(window.scale_factor());
+        *pipeline.window.borrow_mut() = Some(window.clone());
         {
             let physical = window.inner_size();
             let scale = window.scale_factor();
-            let viewport = Size {
+            let surface = Size {
                 width: (physical.width as f64 / scale) as f32,
                 height: (physical.height as f64 / scale) as f32,
             };
-            if pipeline.viewport.peek() != viewport {
-                pipeline.viewport.set(viewport);
+            if pipeline.surface.peek() != surface {
+                pipeline.surface.set(surface);
             }
+            pipeline.sync_frame();
         }
-        *pipeline.window.borrow_mut() = Some(window.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
         let presenter = {
@@ -2604,9 +2813,18 @@ impl AppHandler {
             UiSource::Legacy(_) => None,
         };
 
+        let on_chrome_changed: Rc<dyn Fn()> = {
+            let pipeline = pipeline.clone();
+            Rc::new(move || {
+                pipeline.sync_frame();
+                pipeline.invalidate_paint();
+            })
+        };
         (spec.on_window_ready)(WindowHandle {
             window: pipeline.window.clone(),
             theme: pipeline.theme.clone(),
+            chrome: pipeline.chrome.clone(),
+            on_chrome_changed,
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
@@ -3036,11 +3254,21 @@ fn build_window_spec(
             last_report: FrameReport::default(),
             adapter: None,
         }),
+        surface: Signal::new(Size {
+            width: options.width as f32,
+            height: options.height as f32,
+        }),
         viewport: Signal::new(Size {
             width: options.width as f32,
             height: options.height as f32,
         }),
         safe_area: Signal::new(SafeArea::ZERO),
+        chrome: SystemChrome {
+            mode: Signal::new(options.system_bars),
+            occupied: Signal::new(SafeArea::ZERO),
+            color: Rc::new(Cell::new(None)),
+            applied_light_background: Rc::new(Cell::new(None)),
+        },
         scale_factor: Signal::new(1.0),
         window,
         source: source.clone(),
@@ -3060,6 +3288,9 @@ fn build_window_spec(
             UiSource::Legacy(_) => pipeline.build(),
             UiSource::Runtime(_) => {
                 pipeline.theme.get();
+                pipeline.chrome.mode.get();
+                pipeline.viewport.get();
+                pipeline.safe_area.get();
                 pipeline.invalidate_paint();
             }
         }

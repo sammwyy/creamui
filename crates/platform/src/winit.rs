@@ -555,6 +555,11 @@ fn from_winit_key(key: &WinitKey) -> Key {
         WinitKey::Named(NamedKey::Home) => Key::Home,
         WinitKey::Named(NamedKey::End) => Key::End,
         WinitKey::Named(NamedKey::F3) => Key::F3,
+        WinitKey::Named(NamedKey::F4) => Key::F4,
+        WinitKey::Named(NamedKey::F5) => Key::F5,
+        WinitKey::Named(NamedKey::F6) => Key::F6,
+        WinitKey::Named(NamedKey::F7) => Key::F7,
+        WinitKey::Named(NamedKey::F8) => Key::F8,
         _ => Key::Other,
     }
 }

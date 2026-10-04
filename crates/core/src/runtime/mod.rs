@@ -7,6 +7,7 @@ mod binding;
 mod branch;
 mod dirty;
 mod events;
+mod inspection;
 mod keyed;
 mod mount;
 mod mount_cx;
@@ -20,6 +21,7 @@ pub use binding::{create_binding, SharedRuntime};
 pub use branch::create_branch;
 pub use dirty::DirtyFlags;
 pub use events::{HitEntry, PointerState};
+pub use inspection::{InspectedNode, RuntimeInspection};
 pub use keyed::create_keyed_list;
 pub use mount::mount_legacy_widget;
 pub use mount_cx::MountCx;
@@ -97,6 +99,7 @@ pub struct Runtime {
     /// Bumped once per [`Runtime::transaction`] call; see
     /// [`RuntimeNode::touched_stamp`](super::node::RuntimeNode::touched_stamp).
     transaction_stamp: u64,
+    inspection_invalidations: Option<HashMap<RuntimeNodeId, DirtyFlags>>,
 }
 
 impl Runtime {
@@ -128,6 +131,7 @@ impl Runtime {
             paint_order_damage: Vec::new(),
             composite_queue: Vec::new(),
             transaction_stamp: 0,
+            inspection_invalidations: None,
         }
     }
 
@@ -151,6 +155,9 @@ impl Runtime {
             self.hit_order_dirty = true;
             self.focus_order_dirty = true;
             self.paint_order_dirty = true;
+            if let Some(root) = id {
+                self.record_invalidation(root, DirtyFlags::STRUCTURE);
+            }
         }
         self.root = id;
     }
@@ -329,6 +336,9 @@ impl Runtime {
                 }
                 (on_path, moved, node.clips_children, layout_input_changed)
             };
+            if moved {
+                self.record_invalidation(id, DirtyFlags::LAYOUT);
+            }
 
             if moved && clips_children {
                 let children = self
@@ -479,6 +489,7 @@ impl Runtime {
     pub fn invalidate_all_paint(&mut self) {
         let ids: Vec<_> = self.nodes.iter().map(|(id, _)| id).collect();
         for id in ids {
+            self.record_invalidation(id, DirtyFlags::PAINT);
             if let Some(node) = self.nodes.get_mut(id) {
                 if !node.dirty.contains(DirtyFlags::PAINT) {
                     node.dirty |= DirtyFlags::PAINT;

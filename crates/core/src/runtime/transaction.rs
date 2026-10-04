@@ -49,6 +49,7 @@ impl<'a> RuntimeTransaction<'a> {
     }
 
     fn touch(&mut self, id: RuntimeNodeId, flags: DirtyFlags) {
+        self.runtime.record_invalidation(id, flags);
         match self.runtime.nodes.get_mut(id) {
             Some(node) => {
                 let newly_paint_dirty =
@@ -146,6 +147,7 @@ impl<'a> RuntimeTransaction<'a> {
         self.runtime.layout_roots.push(id);
         self.runtime.paint_order_dirty = true;
         self.touched.push(id);
+        self.runtime.record_invalidation(id, DirtyFlags::STRUCTURE);
         id
     }
 

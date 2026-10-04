@@ -846,6 +846,18 @@ impl Renderer {
         renderer
     }
 
+    pub fn set_runtime_inspection_enabled(&mut self, enabled: bool) {
+        if let Some(runtime) = &self.runtime {
+            runtime.with_mut_quiet(|runtime| runtime.set_inspection_enabled(enabled));
+        }
+    }
+
+    pub fn take_runtime_inspection(&mut self) -> Option<crate::runtime::RuntimeInspection> {
+        self.runtime
+            .as_ref()?
+            .with_mut_quiet(|runtime| runtime.take_inspection())
+    }
+
     pub fn render_runtime(
         &mut self,
         viewport: Size,

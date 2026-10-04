@@ -311,6 +311,7 @@ impl Runtime {
     }
 
     fn mark_interaction_dirty(&mut self, node: RuntimeNodeId) {
+        self.record_invalidation(node, DirtyFlags::PAINT);
         if let Some(n) = self.nodes.get_mut(node) {
             if !n.dirty.contains(DirtyFlags::PAINT) {
                 n.dirty |= DirtyFlags::PAINT;

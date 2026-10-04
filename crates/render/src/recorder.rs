@@ -140,6 +140,10 @@ impl SceneRecorder {
         self.text.borrow()
     }
 
+    pub(crate) fn current_list(&self) -> &DisplayList {
+        &self.list
+    }
+
     fn state(&self) -> ClipState {
         self.clips
             .last()

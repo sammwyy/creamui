@@ -12,7 +12,7 @@ categories = ["gui"]
 
 [features]
 default = ["winit-adapter", "desktop"]
-winit-adapter = ["winit/rwh_06"]
+winit-adapter = ["dep:winit", "winit/rwh_06"]
 desktop = ["winit/x11", "winit/wayland", "winit/wayland-dlopen", "winit/wayland-csd-adwaita"]
 android = ["winit-adapter", "winit/android-native-activity"]
 wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:wayland-protocols-wlr", "dep:xkbcommon"]
@@ -28,7 +28,7 @@ blur-blair = ["wayland", "dep:blair-blur-protocol"]
 
 [dependencies]
 raw-window-handle = { workspace = true }
-winit = { workspace = true }
+winit = { workspace = true, optional = true }
 smithay-client-toolkit = { version = "0.19", optional = true }
 wayland-client = { version = "0.31", features = ["system"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }

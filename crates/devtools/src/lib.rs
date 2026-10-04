@@ -7,12 +7,16 @@
 //! every presented frame's timings to stderr.
 
 use creamui_core::metrics::FrameMetrics;
+use creamui_core::runtime::RuntimeInspection;
 use creamui_core::{Painter, Rect, Size, TextAlign};
-use creamui_render::{install_devtools, Devtools, FrameReport, WindowDevtools};
+use creamui_render::{install_devtools, Devtools, DevtoolsCommand, FrameReport, WindowDevtools};
 use creamui_theme::Color;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+
+mod inspector;
+use inspector::Inspector;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
@@ -89,6 +93,7 @@ impl Devtools for BenchmarkDevtools {
             process_stats: self.process_stats.clone(),
             last: FrameReport::default(),
             last_summary: Instant::now(),
+            inspector: Inspector::default(),
         })
     }
 }
@@ -101,6 +106,7 @@ struct BenchmarkWindow {
     process_stats: Rc<RefCell<ProcessStats>>,
     last: FrameReport,
     last_summary: Instant,
+    inspector: Inspector,
 }
 
 impl WindowDevtools for BenchmarkWindow {
@@ -128,6 +134,7 @@ impl WindowDevtools for BenchmarkWindow {
     }
 
     fn paint_overlay(&self, painter: &mut dyn Painter, viewport: Size) {
+        self.inspector.paint(painter, viewport);
         if self.visible {
             draw_overlay(
                 painter,
@@ -141,12 +148,24 @@ impl WindowDevtools for BenchmarkWindow {
     }
 
     fn refresh_interval(&self) -> Option<Duration> {
-        self.visible.then_some(OVERLAY_REFRESH)
+        (self.visible || self.inspector.enabled()).then_some(OVERLAY_REFRESH)
     }
 
     fn toggle(&mut self) -> bool {
         self.visible = !self.visible;
         true
+    }
+
+    fn command(&mut self, command: DevtoolsCommand) -> bool {
+        self.inspector.command(command)
+    }
+
+    fn runtime_inspection_enabled(&self) -> bool {
+        self.inspector.enabled()
+    }
+
+    fn runtime_inspected(&mut self, snapshot: RuntimeInspection, damage: &[Rect]) {
+        self.inspector.inspect(snapshot, damage);
     }
 }
 
@@ -536,6 +555,7 @@ mod tests {
             process_stats: Rc::new(RefCell::new(ProcessStats::new())),
             last: FrameReport::default(),
             last_summary: Instant::now(),
+            inspector: Inspector::default(),
         }
     }
 

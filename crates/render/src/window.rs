@@ -13,7 +13,7 @@
 use crate::backend::RenderBackend;
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 use crate::cpu::SoftwareSurface;
-use crate::devtools::{devtools_for_new_window, FrameReport, WindowDevtools};
+use crate::devtools::{devtools_for_new_window, DevtoolsCommand, FrameReport, WindowDevtools};
 use crate::display_list::{self, DisplayList};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gpu::GpuSurface;
@@ -661,6 +661,7 @@ struct FrameState {
     devtools: Option<Box<dyn WindowDevtools>>,
     report: FrameReport,
     last_report: FrameReport,
+    inspected_content: Option<DisplayList>,
     adapter: Option<Rc<str>>,
 }
 
@@ -869,6 +870,7 @@ impl Pipeline {
             pending,
             devtools,
             report,
+            inspected_content,
             ..
         } = &mut *frame;
         recorder.begin(width, height, scale as f32, self.system_bar_clear(), colors);
@@ -877,6 +879,11 @@ impl Pipeline {
                 .get()
                 .and_then(|index| scene.focus_id_at(index))
         });
+        renderer.set_runtime_inspection_enabled(
+            devtools
+                .as_ref()
+                .is_some_and(|tools| tools.runtime_inspection_enabled()),
+        );
         match &self.source {
             UiSource::Legacy(_) => {
                 if let Some(next) =
@@ -894,6 +901,34 @@ impl Pipeline {
             UiSource::Runtime(_) => {
                 let placed = self.content_frame();
                 renderer.render_runtime_in(placed.layout, placed.origin, logical, recorder);
+                if let Some(snapshot) = renderer.take_runtime_inspection() {
+                    if let Some(tools) = devtools.as_mut() {
+                        let content = recorder.current_list();
+                        let damage: Vec<_> =
+                            display_list::diff(inspected_content.as_ref(), content)
+                                .changed(content.viewport())
+                                .regions(content.viewport())
+                                .into_iter()
+                                .map(|bounds| Rect {
+                                    x: bounds.x0 / scale as f32,
+                                    y: bounds.y0 / scale as f32,
+                                    width: bounds.width() / scale as f32,
+                                    height: bounds.height() / scale as f32,
+                                })
+                                .collect();
+                        let previous = inspected_content
+                            .get_or_insert_with(|| DisplayList::new(width, height, content.clear));
+                        previous.width = content.width;
+                        previous.height = content.height;
+                        previous.clear = content.clear;
+                        previous.items.clone_from(&content.items);
+                        previous.layers.clone_from(&content.layers);
+                        log::trace!("creamui-render: inspected {} runtime nodes at layout epoch {} with {} damage regions", snapshot.nodes.len(), snapshot.layout_epoch, damage.len());
+                        tools.runtime_inspected(snapshot, &damage);
+                    }
+                } else {
+                    *inspected_content = None;
+                }
                 report.rebuilt = true;
             }
         }
@@ -2555,6 +2590,29 @@ impl WindowState {
                     }
                     return;
                 }
+                let command = match event.key {
+                    PlatformKey::F4 => Some(DevtoolsCommand::ToggleTree),
+                    PlatformKey::F5 => Some(DevtoolsCommand::ToggleDamage),
+                    PlatformKey::F6 => Some(DevtoolsCommand::ToggleLayout),
+                    PlatformKey::F7 => Some(DevtoolsCommand::ToggleHitRegions),
+                    PlatformKey::F8 if self.modifiers.shift => Some(DevtoolsCommand::PreviousNode),
+                    PlatformKey::F8 => Some(DevtoolsCommand::NextNode),
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    let changed = self
+                        .pipeline
+                        .frame
+                        .borrow_mut()
+                        .devtools
+                        .as_mut()
+                        .is_some_and(|tools| tools.command(command));
+                    if changed {
+                        self.next_devtools_refresh = Instant::now();
+                        self.pipeline.invalidate_paint();
+                    }
+                    return;
+                }
                 let Some(key) = translate_key(&event.key) else {
                     return;
                 };
@@ -3254,6 +3312,7 @@ fn build_window_spec(
             devtools: devtools_for_new_window(),
             report: FrameReport::default(),
             last_report: FrameReport::default(),
+            inspected_content: None,
             adapter: None,
         }),
         surface: Signal::new(Size {
@@ -3549,6 +3608,107 @@ mod tests {
 
         assert!(deltas.borrow().is_empty());
         assert_eq!(clicks.get(), 1);
+    }
+
+    #[test]
+    fn runtime_inspection_is_opt_in_and_reports_composited_content_damage() {
+        struct InspectionTools {
+            enabled: bool,
+            frames: Rc<RefCell<Vec<(creamui_core::runtime::RuntimeInspection, Vec<Rect>)>>>,
+        }
+        impl WindowDevtools for InspectionTools {
+            fn frame_presented(&mut self, _: &FrameReport) {}
+            fn paint_overlay(&self, _: &mut dyn creamui_core::Painter, _: Size) {}
+            fn refresh_interval(&self) -> Option<Duration> {
+                None
+            }
+            fn toggle(&mut self) -> bool {
+                false
+            }
+            fn command(&mut self, command: DevtoolsCommand) -> bool {
+                if command != DevtoolsCommand::ToggleTree {
+                    return false;
+                }
+                self.enabled = !self.enabled;
+                true
+            }
+            fn runtime_inspection_enabled(&self) -> bool {
+                self.enabled
+            }
+            fn runtime_inspected(
+                &mut self,
+                snapshot: creamui_core::runtime::RuntimeInspection,
+                damage: &[Rect],
+            ) {
+                self.frames.borrow_mut().push((snapshot, damage.to_vec()));
+            }
+        }
+        let mut runtime = Runtime::new();
+        let root = runtime.transaction().create_node(NodeKind::Container);
+        runtime.set_root(Some(root));
+        runtime.transaction().apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: creamui_core::Style::new().width(20.0).height(20.0).layout,
+        });
+        runtime.transaction().apply(Mutation::SetPaintStyle {
+            node: root,
+            style: creamui_core::PaintStyle {
+                background: Some(Color::rgb(255, 0, 0).into()),
+                ..Default::default()
+            },
+        });
+        let runtime = SharedRuntime::new(runtime);
+        let mut harness = WindowEventHarness::retained(runtime.clone());
+        let frames = Rc::new(RefCell::new(Vec::new()));
+        harness.state.pipeline.frame.borrow_mut().devtools = Some(Box::new(InspectionTools {
+            enabled: false,
+            frames: frames.clone(),
+        }));
+        harness.state.pipeline.invalidate_paint();
+        harness.state.redraw();
+        assert!(frames.borrow().is_empty());
+
+        let toggle = WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+            key: PlatformKey::F4,
+            pressed: true,
+            synthetic: false,
+        });
+        harness.send(toggle.clone());
+        harness.state.redraw();
+        assert_eq!(frames.borrow().len(), 1);
+        runtime.transaction(|tx| {
+            tx.apply(Mutation::SetTransform {
+                node: root,
+                transform: creamui_core::runtime::Transform2D { x: 40.0, y: 0.0 },
+            })
+        });
+        harness.state.redraw();
+        {
+            let frames = frames.borrow();
+            let (snapshot, damage) = frames.last().unwrap();
+            assert_eq!(snapshot.nodes[0].visual_rect.x, 40.0);
+            assert!(snapshot.nodes[0]
+                .invalidations
+                .contains(creamui_core::runtime::DirtyFlags::COMPOSITE));
+            for point in [Point { x: 5.0, y: 5.0 }, Point { x: 45.0, y: 5.0 }] {
+                assert!(damage.iter().any(|rect| rect.contains(point)));
+            }
+            assert!(damage.iter().all(|rect| rect.width < 100.0));
+        }
+        let captured = frames.borrow().len();
+        harness.send(toggle);
+        harness.state.redraw();
+        assert_eq!(frames.borrow().len(), captured);
+        assert!(harness
+            .state
+            .pipeline
+            .frame
+            .borrow()
+            .inspected_content
+            .is_none());
+        assert!(runtime
+            .with_mut(|runtime| runtime.take_inspection())
+            .is_none());
     }
 
     #[test]

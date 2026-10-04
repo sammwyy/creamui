@@ -1788,6 +1788,11 @@ fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
     }
     match key {
         61 => Key::F3,
+        62 => Key::F4,
+        63 => Key::F5,
+        64 => Key::F6,
+        65 => Key::F7,
+        66 => Key::F8,
         _ => Key::Other,
     }
 }

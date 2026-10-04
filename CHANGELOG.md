@@ -4,6 +4,13 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Devtools adds a retained-tree inspector with stable node selection and
+  invalidation reasons. F4 toggles the tree, F5 damage, F6 layout rectangles,
+  and F7 hit regions; F8 and Shift+F8 browse nodes. Damage reflects content
+  display-list changes, including transforms and removal, without including
+  the overlays. Runtime snapshots and invalidation tracking are opt-in.
+- `use_system_bars()` is exported by the render and facade crates.
+- Standalone Wayland builds omit the Winit dependency.
 - Runtime handler changes update hit membership directly. Paint-order changes
   update ranks while preserving spatial entries, and focus changes rebuild
   only focus order. Removing the runtime root clears retained hit and focus state.

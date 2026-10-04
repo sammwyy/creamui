@@ -5,7 +5,8 @@
 //! [`crate::run`] and are then instantiated once for every CreamUI window.
 
 use creamui_core::metrics::FrameMetrics;
-use creamui_core::{Painter, Size};
+use creamui_core::runtime::RuntimeInspection;
+use creamui_core::{Painter, Rect, Size};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -62,6 +63,26 @@ pub trait WindowDevtools {
     /// Handles F3 for this window. Return `true` when its visible output
     /// changed and CreamUI should schedule a paint-only repaint.
     fn toggle(&mut self) -> bool;
+
+    fn command(&mut self, _command: DevtoolsCommand) -> bool {
+        false
+    }
+
+    fn runtime_inspection_enabled(&self) -> bool {
+        false
+    }
+
+    fn runtime_inspected(&mut self, _snapshot: RuntimeInspection, _damage: &[Rect]) {}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DevtoolsCommand {
+    ToggleTree,
+    ToggleDamage,
+    ToggleLayout,
+    ToggleHitRegions,
+    NextNode,
+    PreviousNode,
 }
 
 /// Factory for development tooling. Register one with [`install_devtools`]

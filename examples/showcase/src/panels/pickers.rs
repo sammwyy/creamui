@@ -2,8 +2,7 @@ use crate::prelude::*;
 
 /// Date/time, color, and file pickers live together because each returns a
 /// value chosen from a structured external domain rather than free text.
-/// The file picker uses the operating system dialog; the others keep their
-/// controlled values in the showcase's regular reactive state.
+/// Picker controllers retain their state across reactive rebuilds.
 #[component]
 pub fn PickersPanel(
     date_time: DateTimeController,
@@ -52,7 +51,7 @@ pub fn PickersPanel(
                     label={format!("Color · {color_label}")}
                     control={Box::new(jsx!{<ColorPicker controller={&color_picker} value={selected_color} on_change={move |next| set_color.set(next)} />}) as BoxedWidget}
                 />
-                <FieldCard label={"File · native system dialog".to_owned()} control={file_control} />
+                <FieldCard label={if cfg!(target_os = "android") { "File · local path prompt".to_owned() } else if cfg!(target_arch = "wasm32") { "File · unavailable in the browser".to_owned() } else { "File · native system dialog".to_owned() }} control={file_control} />
             </CardRow>
         </RawView>
     })

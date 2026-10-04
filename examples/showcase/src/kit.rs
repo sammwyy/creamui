@@ -74,7 +74,11 @@ pub fn CardRow(children: Vec<BoxedWidget>) -> BoxedWidget {
     Box::new(
         RawView::new(Style {
             align_items: Some(AlignItems::Stretch),
-            ..row(theme.spacing_large)
+            ..if use_screen_class() == ScreenClass::Compact {
+                column(theme.spacing_large)
+            } else {
+                row(theme.spacing_large)
+            }
         })
         .with_children(children),
     )
@@ -315,6 +319,8 @@ pub fn FilePicker(
 ) -> BoxedWidget {
     Box::new(
         creamui_widgets::FilePicker::new(value, on_change)
+            .width("100%")
+            .max_width(320.0)
             .title(title)
             .filter(filter_label, filter_extensions),
     )

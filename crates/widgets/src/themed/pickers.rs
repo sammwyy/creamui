@@ -792,7 +792,8 @@ impl creamui_core::Styled for ColorPicker {
     }
 }
 
-/// A themed file picker that delegates choosing the file to the platform's native dialog. Use [`RawFilePicker`] when the file source is not local.
+/// A native desktop file dialog or an Android file path prompt.
+/// Android requires a surrounding `FilePickerController::host`.
 pub struct FilePicker {
     theme: Theme,
     style: creamui_core::Style,
@@ -800,8 +801,10 @@ pub struct FilePicker {
     placeholder: String,
     title: String,
     filters: Vec<(String, Vec<String>)>,
+    prompt: Option<crate::FilePickerController>,
     on_change: Rc<dyn Fn(PathBuf)>,
     disabled: bool,
+    raw: std::cell::OnceCell<RawFilePicker>,
 }
 impl FilePicker {
     pub fn default_style() -> Style {
@@ -822,20 +825,40 @@ impl FilePicker {
         let theme = use_theme();
         Self {
             theme,
-            style: style.into(),
+            style: creamui_core::Style::from(style)
+                .color(theme.text_primary)
+                .font_size(13.0)
+                .background(theme.surface_elevated)
+                .hover(creamui_core::StateStyle::new().background(theme.surface_hover))
+                .border(theme.border_strong, theme.input_border_width)
+                .corner_radius(theme.input_radius)
+                .focus(creamui_core::StateStyle::new().outline(theme.accent, 2.0)),
             value: value.into(),
             placeholder: "Choose a file…".into(),
             title: "Choose a file".into(),
             filters: Vec::new(),
+            #[cfg(target_os = "android")]
+            prompt: Some(creamui_reactive::use_context::<crate::FilePickerController>()),
+            #[cfg(not(target_os = "android"))]
+            prompt: None,
             on_change: Rc::new(on_change),
             disabled: false,
+            raw: std::cell::OnceCell::new(),
         }
     }
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
+        self.raw.take();
         self.placeholder = text.into();
         self
     }
+    /// Uses the hosted file path modal instead of the native desktop dialog.
+    pub fn prompt(mut self, controller: &crate::FilePickerController) -> Self {
+        self.raw.take();
+        self.prompt = Some(controller.clone());
+        self
+    }
     pub fn title(mut self, text: impl Into<String>) -> Self {
+        self.raw.take();
         self.title = text.into();
         self
     }
@@ -848,16 +871,23 @@ impl FilePicker {
             name.into(),
             extensions.into_iter().map(Into::into).collect(),
         ));
+        self.raw.take();
         self
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self.raw.take();
         self
     }
-    fn raw(&self) -> RawFilePicker {
+    fn raw(&self) -> &RawFilePicker {
+        self.raw.get_or_init(|| self.build_raw())
+    }
+    fn build_raw(&self) -> RawFilePicker {
         let callback = self.on_change.clone();
         let title = self.title.clone();
         let filters = self.filters.clone();
+        let prompt = self.prompt.clone();
+        let value = self.value.clone();
         RawFilePicker::new(
             self.style.clone(),
             self.value.clone(),
@@ -865,6 +895,17 @@ impl FilePicker {
             self.theme.text_disabled,
             self.theme.border,
             move || {
+                if let Some(prompt) = &prompt {
+                    prompt.open(
+                        value.clone(),
+                        crate::file_prompt::FileRequest {
+                            title: title.clone(),
+                            filters: filters.clone(),
+                            on_change: callback.clone(),
+                        },
+                    );
+                    return;
+                }
                 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 {
                     let mut dialog = rfd::FileDialog::new().set_title(&title);
@@ -875,31 +916,25 @@ impl FilePicker {
                         callback(path);
                     }
                 }
-                #[cfg(any(target_arch = "wasm32", target_os = "android"))]
-                {
-                    // File selection needs an asynchronous host integration.
-                    let _ = (&callback, &title, &filters);
-                }
             },
         )
         .placeholder(self.placeholder.clone())
-        .background(self.theme.surface_elevated)
-        .hover_style(creamui_core::StateStyle::new().background(self.theme.surface_hover))
-        .border(self.theme.border_strong, self.theme.input_border_width)
-        .corner_radius(self.theme.input_radius)
-        .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0))
-        .disabled(self.disabled)
+        .with_style(self.style.clone())
+        .disabled(self.disabled || (cfg!(target_arch = "wasm32") && self.prompt.is_none()))
     }
 }
 impl Widget for FilePicker {
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }
+    fn style_state(&self) -> creamui_core::StyleState {
+        self.raw().style_state()
+    }
     fn paint(&self, p: &mut dyn Painter, r: Rect) {
         self.raw().paint(p, r)
     }
     fn focusable(&self) -> bool {
-        !self.disabled
+        self.raw().focusable()
     }
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         self.raw().on_key()
@@ -916,6 +951,7 @@ impl Widget for FilePicker {
 }
 impl creamui_core::Styled for FilePicker {
     fn set_style(&mut self, style: creamui_core::Style) {
+        self.raw.take();
         self.style = style;
     }
 }

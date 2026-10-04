@@ -55,6 +55,166 @@ use creamui_widgets::{
     ColorPickerController, DateTimeController, ScrollController, SelectController, TreeController,
 };
 
+#[test]
+fn themed_file_picker_paints_its_box_and_preserves_common_overrides() {
+    creamui_reactive::with_context_scope(|| {
+        let theme = Theme::light();
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+        let picker = creamui_widgets::FilePicker::new("", |_| {});
+        let viewport = Size {
+            width: 320.0,
+            height: 40.0,
+        };
+        let mut painter = RecordingPainter::default();
+        render_frame(Box::new(picker), viewport, &mut painter);
+        assert!(painter
+            .filled_rects
+            .iter()
+            .any(|(_, color)| *color == theme.surface_elevated));
+        assert!(painter
+            .stroked_rects
+            .iter()
+            .any(|(_, color)| *color == theme.border_strong));
+
+        let picker = creamui_widgets::FilePicker::new("", |_| {});
+        picker.paint(
+            &mut RecordingPainter::default(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 320.0,
+                height: 40.0,
+            },
+        );
+        let background = Color::rgb(10, 20, 30);
+        let border = Color::rgb(40, 50, 60);
+        let picker = picker
+            .background(background)
+            .border(border, 2.0)
+            .disabled(true);
+        assert!(!picker.focusable());
+        assert!(picker.style_state().disabled());
+        let mut painter = RecordingPainter::default();
+        render_frame(Box::new(picker), viewport, &mut painter);
+        assert!(painter
+            .filled_rects
+            .iter()
+            .any(|(_, color)| *color == background));
+        assert!(painter
+            .stroked_rects
+            .iter()
+            .any(|(_, color)| *color == border));
+    });
+}
+
+#[test]
+fn file_prompt_validates_paths_and_preserves_edits_across_rebuilds() {
+    use creamui_widgets::{FilePicker, FilePickerController};
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let prompt = FilePickerController::default();
+        let chosen = Signal::new(Vec::new());
+        let build = || {
+            let chosen = chosen.clone();
+            prompt.host(|| {
+                Box::new(
+                    FilePicker::new("", move |path| {
+                        chosen.update(|paths| paths.push(path));
+                    })
+                    .prompt(&prompt)
+                    .filter("Rust manifests", ["toml"]),
+                )
+            })
+        };
+        let viewport = Size {
+            width: 320.0,
+            height: 480.0,
+        };
+        let mut renderer = Renderer::new();
+        let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+        scene.hit_test(Point { x: 10.0, y: 20.0 }).unwrap()();
+        assert!(prompt.is_open());
+        let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+        assert_eq!(scene.modal_focus(), Some(0));
+        assert!(scene.focus_accepts_text_input(0));
+        assert_eq!(scene.next_focus(Some(2), false), Some(0));
+        scene.on_key_at(0).unwrap()(KeyInput {
+            key: Key::Enter,
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(prompt.error().as_deref(), Some("Enter a file path."));
+        assert!(chosen.peek().is_empty());
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        prompt.path().set_value(path.to_str().unwrap());
+        assert!(prompt.error().is_none());
+        let mut painter = RecordingPainter::default();
+        let scene = renderer.render(build(), viewport, &mut painter);
+        assert!(painter
+            .texts
+            .iter()
+            .any(|text| text == path.to_str().unwrap()));
+        scene.on_key_at(0).unwrap()(KeyInput {
+            key: Key::Enter,
+            modifiers: Modifiers::default(),
+        });
+        assert!(!prompt.is_open());
+        assert_eq!(chosen.peek(), vec![path]);
+        prompt.submit();
+        assert_eq!(chosen.peek().len(), 1);
+    });
+}
+
+#[test]
+fn file_prompt_isolates_background_input_and_cancels_without_a_callback() {
+    use creamui_widgets::{FilePicker, FilePickerController};
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let prompt = FilePickerController::default();
+        let chosen = Signal::new(false);
+        let background_clicked = Signal::new(false);
+        let build = || {
+            let chosen = chosen.clone();
+            let clicked = background_clicked.clone();
+            prompt.host(|| {
+                Box::new(
+                    RawView::new(creamui_widgets::layout::column(0.0))
+                        .child(Box::new(RawButton::new(
+                            CommonStyle::new().width(320.0).height(40.0),
+                            move || clicked.set(true),
+                        )))
+                        .child(Box::new(
+                            FilePicker::new("", move |_| chosen.set(true)).prompt(&prompt),
+                        )),
+                )
+            })
+        };
+        let viewport = Size {
+            width: 320.0,
+            height: 480.0,
+        };
+        let mut renderer = Renderer::new();
+        for focus in 0..3 {
+            let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+            scene.hit_test(Point { x: 10.0, y: 60.0 }).unwrap()();
+            let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+            assert!(scene.focus_hit_test(Point { x: 10.0, y: 20.0 }).is_none());
+            assert_eq!(scene.next_focus(Some(2), false), Some(0));
+            scene.on_key_at(focus).unwrap()(KeyInput {
+                key: Key::Escape,
+                modifiers: Modifiers::default(),
+            });
+            assert!(!prompt.is_open());
+        }
+        let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+        scene.hit_test(Point { x: 10.0, y: 60.0 }).unwrap()();
+        let scene = renderer.render(build(), viewport, &mut RecordingPainter::default());
+        scene.hit_test(Point { x: 10.0, y: 20.0 }).unwrap()();
+        assert!(!prompt.is_open());
+        assert!(!background_clicked.peek());
+        assert!(!chosen.peek());
+    });
+}
+
 #[derive(Default)]
 struct RecordingPainter {
     hovered: bool,

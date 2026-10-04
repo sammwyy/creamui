@@ -13,7 +13,13 @@ viewport, retaining node IDs as row keys.
 ```rust
 use creamui_widgets::Button;
 
-let save = Button::new(&theme, "Save", || save_document());
+let save = Button::new("Save", || save_document());
 ```
 
 See the [component guide](https://github.com/sammwyy/creamui/blob/main/docs/components.md) for the full component map.
+
+`FilePicker` uses native desktop dialogs and a hosted Android path prompt.
+Keep a `FilePickerController` per window and wrap application content with
+`controller.host(...)` in the reactive build closure. See the
+[file picker guide](../../docs/components.md#file-pickers) for context,
+validation, and browser support.

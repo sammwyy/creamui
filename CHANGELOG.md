@@ -4,6 +4,24 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Android `FilePicker` opens a themed local path modal through a persistent
+  `FilePickerController` host. It preserves edits, validates readable regular
+  files and extension filters, and keeps background controls outside modal
+  pointer and focus navigation. Dialogs share that isolation. Themed text
+  inputs forward IME eligibility, and opening a modal enables the keyboard.
+- File pickers expose their themed box styles to the scene painter and retain
+  common style overrides. Narrow showcase cards stack vertically. Unhosted
+  browser file pickers are disabled while the asynchronous bridge is pending.
+- Android inset and system-bar calls use the window's actual Activity;
+  system-bar mutations run on the Java UI thread. The platform
+  `sync_system_bars` function now requires a `PlatformWindow` argument.
+  Unicode control keys retain Enter, Tab, Backspace, and Escape semantics;
+  physical modifier keys enable selection and clipboard shortcuts. Insets are
+  sampled through keyboard transitions so dismissal restores the full viewport.
+- Android GPU devices discard native object labels to avoid Ranchu's Vulkan
+  debug-name crash. The Android demo writes framework diagnostics and panics
+  to logcat.
+
 - GPU windows retain a color texture and redraw calculated damage, clearing
   translucent regions before replay and culling unrelated instance ranges.
   Each swapchain buffer receives the complete retained frame by texture copy

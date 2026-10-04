@@ -188,6 +188,11 @@ impl Button {
         )
     }
 
+    pub fn on_key_press(mut self, handler: impl Fn(KeyInput) + 'static) -> Self {
+        self.inner = self.inner.on_key_press(handler);
+        self
+    }
+
     /// Disable activation and apply the shared muted control treatment.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.inner.disabled = disabled || self.state == ButtonState::Loading;

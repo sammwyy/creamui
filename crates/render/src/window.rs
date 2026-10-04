@@ -734,7 +734,9 @@ impl Pipeline {
         if self.chrome.applied_light_background.get() == Some(light_background) {
             return;
         }
-        if creamui_platform::sync_system_bars(light_background) {
+        if self.window.borrow().as_ref().is_some_and(|window| {
+            creamui_platform::sync_system_bars(window.as_ref(), light_background)
+        }) {
             self.chrome
                 .applied_light_background
                 .set(Some(light_background));
@@ -889,12 +891,19 @@ impl Pipeline {
                 if let Some(next) =
                     renderer.paint(recorder, self.focused.get(), self.caret_visible.get())
                 {
-                    if scene.is_some() {
+                    let entering_modal = scene
+                        .as_ref()
+                        .is_none_or(|previous| previous.modal_focus().is_none());
+                    let focused = if scene.is_some() {
+                        previous_focus.and_then(|id| next.focus_index(id))
+                    } else {
                         self.focused
-                            .set(previous_focus.and_then(|id| next.focus_index(id)));
-                    } else if self.focused.get().is_some() && next.focus_id_at(0).is_none() {
-                        self.focused.set(None);
-                    }
+                            .get()
+                            .filter(|&index| next.focus_id_at(index).is_some())
+                    };
+                    self.focused.set(
+                        focused.or_else(|| entering_modal.then(|| next.modal_focus()).flatten()),
+                    );
                     *scene = Some(next);
                 }
             }
@@ -1790,6 +1799,8 @@ struct WindowState {
     runtime_press_origin: Option<Point>,
     touch: Option<TouchGesture>,
     ime_allowed: bool,
+    #[cfg(any(target_os = "android", test))]
+    inset_poll: Option<(Instant, Instant)>,
     _effect: Effect,
     _runtime_subscription: Option<Rc<dyn Fn()>>,
     t_run: Instant,
@@ -2062,6 +2073,11 @@ impl WindowState {
             return;
         }
         self.ime_allowed = allowed;
+        #[cfg(any(target_os = "android", test))]
+        {
+            let now = Instant::now();
+            self.inset_poll = Some((now, now + Duration::from_secs(2)));
+        }
         if let Some(window) = self.pipeline.window.borrow().as_ref() {
             window.set_ime_allowed(allowed);
         }
@@ -2651,6 +2667,9 @@ impl WindowState {
             return;
         }
         let presented = self.pipeline.present(self.presenter.as_mut());
+        if matches!(self.pipeline.source, UiSource::Legacy(_)) {
+            self.refresh_ime_for_legacy_focus();
+        }
         self.paced_present = presented
             && (self
                 .presenter
@@ -2695,6 +2714,17 @@ impl WindowState {
         let mut wake_at = |at: Instant| {
             next_wake = Some(next_wake.map_or(at, |t: Instant| t.min(at)));
         };
+        #[cfg(any(target_os = "android", test))]
+        if let Some((next, until)) = self.inset_poll {
+            if now >= next {
+                self.refresh_safe_area();
+                self.inset_poll =
+                    (now < until).then_some(((now + Duration::from_millis(50)).min(until), until));
+            }
+            if let Some((next, _)) = self.inset_poll {
+                wake_at(next);
+            }
+        }
         if self.pipeline.animated() {
             if std::mem::take(&mut self.paced_present) {
                 self.pipeline.invalidate_paint();
@@ -2920,6 +2950,8 @@ impl AppHandler {
             runtime_press_origin: None,
             touch: None,
             ime_allowed: false,
+            #[cfg(any(target_os = "android", test))]
+            inset_poll: None,
             _effect: spec._effect,
             _runtime_subscription: spec._runtime_subscription,
             t_run: t0,
@@ -3448,6 +3480,7 @@ mod tests {
                 runtime_press_origin: None,
                 touch: None,
                 ime_allowed: false,
+                inset_poll: None,
                 _effect: spec._effect,
                 _runtime_subscription: spec._runtime_subscription,
                 t_run: now,
@@ -3563,6 +3596,70 @@ mod tests {
 
         assert!(!harness.state.ime_allowed);
         assert_eq!(harness.state.pipeline.focused.get(), None);
+    }
+
+    #[test]
+    fn ime_changes_poll_insets_until_the_animation_settles() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(creamui_widgets::RawView::new(
+                creamui_core::layout::Style::default(),
+            ))
+        });
+        harness.state.set_ime_allowed(true);
+        harness.state.set_ime_allowed(false);
+        let (next, until) = harness.state.inset_poll.unwrap();
+        let wake = harness.state.tick(next).unwrap();
+        assert!(wake > next && wake <= next + Duration::from_millis(50));
+        assert!(harness.state.tick(until).is_none());
+        assert!(harness.state.inset_poll.is_none());
+    }
+
+    #[test]
+    fn file_prompt_focus_enables_ime_and_back_keeps_it_dismissed() {
+        let prompt = creamui_widgets::FilePickerController::default();
+        let mut harness = WindowEventHarness::new({
+            let prompt = prompt.clone();
+            move |_| {
+                prompt
+                    .host(|| Box::new(creamui_widgets::FilePicker::new("", |_| {}).prompt(&prompt)))
+            }
+        });
+        harness.send(touch(1, creamui_platform::TouchPhase::Started, 10.0, 10.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Ended, 10.0, 10.0));
+        harness.state.redraw();
+        assert!(prompt.is_open());
+        assert_eq!(harness.state.pipeline.focused.get(), Some(0));
+        assert!(harness.state.ime_allowed);
+        for expected in [1, 2, 0] {
+            harness.key(KeyInput {
+                key: Key::Tab,
+                modifiers: Modifiers::default(),
+            });
+            harness.state.redraw();
+            assert_eq!(harness.state.pipeline.focused.get(), Some(expected));
+        }
+        harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+            key: PlatformKey::Back,
+            pressed: true,
+            synthetic: false,
+        }));
+        harness.state.redraw();
+        assert_eq!(harness.state.pipeline.focused.get(), None);
+        assert!(!harness.state.ime_allowed);
+        assert!(prompt.is_open());
+        harness.key(KeyInput {
+            key: Key::Tab,
+            modifiers: Modifiers::default(),
+        });
+        harness.state.redraw();
+        assert!(harness.state.ime_allowed);
+        harness.key(KeyInput {
+            key: Key::Escape,
+            modifiers: Modifiers::default(),
+        });
+        harness.state.redraw();
+        assert!(!prompt.is_open());
+        assert!(!harness.state.ime_allowed);
     }
 
     #[test]

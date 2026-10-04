@@ -57,6 +57,39 @@ This creates a debug APK signed with the automatic debug keystore at
 `target/debug/apk/main.apk`. It is suitable for local device testing, not
 distribution.
 
+## Android interaction check
+
+Build for an x86_64 emulator with the matching Rust target:
+
+```sh
+rustup target add x86_64-linux-android
+cargo apk build -p creamui-android-demo --target x86_64-linux-android
+adb install --no-incremental -r target/debug/apk/main.apk
+adb shell am start -n dev.creamui.demo/android.app.NativeActivity
+adb logcat -s creamui
+```
+
+On an API 36 emulator with Vulkan enabled, open Menu → Pickers → Choose a file.
+The prompt should focus its path input and remain above the keyboard. Check
+that an empty path and a missing `.png` path show errors, Cancel preserves the
+selection, and Android Back hides the keyboard without reopening it. The
+content viewport should return to its full height after keyboard dismissal.
+Use Ctrl+A to replace the path and Ctrl+C/Ctrl+V to check clipboard shortcuts.
+
+For a readable file owned by the debug application:
+
+```sh
+adb shell run-as dev.creamui.demo mkdir -p files
+adb shell run-as dev.creamui.demo touch files/asset.png
+```
+
+Enter `/data/user/0/dev.creamui.demo/files/asset.png` and press Enter or Open.
+The prompt should close and the showcase should display that path. The
+extension filter checks the filename, not image decoding. Repeat opening and
+cancellation, and use Tab to verify focus stays within the prompt. Logcat
+reports prompt opening, validation, acceptance, and dismissal. Use an explicit
+`adb -s` device selector when more than one device is connected.
+
 ## Android release APK
 
 Android requires APKs to be signed. `cargo-apk` creates a debug keystore only

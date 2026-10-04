@@ -13,6 +13,8 @@ showcase = { path = "../../examples/showcase", default-features = false, feature
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"
 
 [package.metadata.android]
 package = "dev.creamui.demo"

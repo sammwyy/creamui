@@ -274,7 +274,6 @@ impl Default for FrameStats {
 /// Process CPU/RAM sampling, resampled at most every 200ms.
 pub struct ProcessStats {
     last_sample: Instant,
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     last_cpu_time: Duration,
     cpu_percent: Option<f32>,
     ram_mb: Option<f32>,
@@ -287,7 +286,6 @@ impl ProcessStats {
         let (cpu_time, ram_mb) = read_raw();
         Self {
             last_sample: Instant::now(),
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             last_cpu_time: cpu_time.unwrap_or(Duration::ZERO),
             cpu_percent: None,
             ram_mb,
@@ -302,7 +300,6 @@ impl ProcessStats {
         let (cpu_time, ram_mb) = read_raw();
         self.last_sample = Instant::now();
         self.ram_mb = ram_mb;
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         if let Some(cpu_time) = cpu_time {
             let delta = cpu_time.saturating_sub(self.last_cpu_time);
             self.cpu_percent = Some(delta.as_secs_f32() / elapsed.as_secs_f32() * 100.0);

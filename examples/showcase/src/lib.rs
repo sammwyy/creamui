@@ -54,6 +54,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let picker_color = Signal::new(Color::rgb(181, 139, 255));
     let picker_color_popup = ColorPickerController::default();
     let picker_file = Signal::new(String::new());
+    let picker_file_prompt = creamui_widgets::FilePickerController::default();
 
     let clicks = Signal::new(0i32);
     let typography_link_clicks = Signal::new(0i32);
@@ -116,6 +117,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             }
         }),
         Box::new(move |viewport: Size| -> BoxedWidget {
+            creamui_reactive::provide_context(picker_file_prompt.clone());
             // Browser event loops return from `run`, so the build closure owns
             // the theme effect for the lifetime of the window.
             let _theme_sync = &theme_sync;
@@ -410,6 +412,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             } else {
                 Box::new(jsx! { <RawView style={Style::default()} /> })
             };
+            let file_prompt: BoxedWidget =
+                Box::new(creamui_widgets::FilePrompt::new(&picker_file_prompt));
 
             Box::new(jsx! {
                 <RawView style={root_style} background={theme.surface}>
@@ -420,6 +424,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     </RawView>
                     {sidebar_drawer}
                     {dialog}
+                    {file_prompt}
                 </RawView>
             })
         }),

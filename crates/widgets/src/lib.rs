@@ -34,10 +34,12 @@ macro_rules! impl_styled_field {
 
 mod components;
 mod controller;
+mod file_prompt;
 pub use components::{
     Choice, Icon, IconImage, IconSource, NavigationItem, Surface, SurfaceRole, Symbol,
 };
 pub use creamui_core::Styled;
+pub use file_prompt::FilePickerController;
 pub mod layout;
 pub use layout::CUIWindowDragArea;
 pub mod raw;
@@ -59,9 +61,10 @@ pub use raw::{
 pub use themed::{
     nested_sidebar, tab_styles, AlertDialog, Avatar, Badge, Button, ButtonSize, ButtonState,
     ButtonVariant, Card, Checkbox, ColorPicker, ComboBox, DateInput, DateTimePicker, Dialog,
-    FilePicker, Heading, Link, ListBox, ListView, MenuBar, MenuColors, MenuItem, MenuPopup,
-    Overlay, Popover, Pre, ProgressBar, ProgressRing, Quote, Radio, RadioGroup, ScrollView,
-    SegmentedControl, Select, Sidebar, SidebarItem, SidebarNode, SidebarSeparator, Slider, Spinner,
-    Switch, Tab, TabColors, TabSizing, Table, Tabs, Text, TextArea, TextInput, TextSize, TimeInput,
-    TreeNode, TreeView, TypingIndicator, VirtualList, VirtualTable, VirtualTreeView,
+    FilePicker, FilePrompt, Heading, Link, ListBox, ListView, MenuBar, MenuColors, MenuItem,
+    MenuPopup, Overlay, Popover, Pre, ProgressBar, ProgressRing, Quote, Radio, RadioGroup,
+    ScrollView, SegmentedControl, Select, Sidebar, SidebarItem, SidebarNode, SidebarSeparator,
+    Slider, Spinner, Switch, Tab, TabColors, TabSizing, Table, Tabs, Text, TextArea, TextInput,
+    TextSize, TimeInput, TreeNode, TreeView, TypingIndicator, VirtualList, VirtualTable,
+    VirtualTreeView,
 };

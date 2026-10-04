@@ -253,6 +253,7 @@ fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
 
 #[derive(Default)]
 struct PaintOutputs {
+    modal: bool,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -379,6 +380,18 @@ fn paint_instance(
     };
 
     let paint_self = mode == PaintMode::Flow || absolute;
+    if paint_self && instance.widget.is_modal() && rect.overlaps(effective_clip) {
+        out.modal = true;
+        out.hits.clear();
+        out.hits_at.clear();
+        out.focusables.clear();
+        out.draggables.clear();
+        out.drag_starts.clear();
+        out.scrollables.clear();
+        out.cursors.clear();
+        out.hovers.clear();
+        focus.counter = 0;
+    }
     if paint_self
         && rect
             .inflate(instance.paint_overflow)
@@ -641,6 +654,7 @@ fn report_layout(tree: &Tree, instance: &Instance, parent_origin: Point) -> bool
 /// [`Scene::focus_index`] to carry focus between frames. Dynamic sibling
 /// lists need [`Widget::key`](crate::Widget::key) for stable identity.
 pub struct Scene {
+    modal: bool,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -654,6 +668,10 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// Initial focus within the active modal, when it contains controls.
+    pub fn modal_focus(&self) -> Option<usize> {
+        (self.modal && !self.focusables.is_empty()).then_some(0)
+    }
     /// Identity at a position in this scene's tab order.
     pub fn focus_id_at(&self, index: usize) -> Option<FocusId> {
         self.focusables.get(index).map(|(id, _, _, _)| *id)
@@ -1024,6 +1042,7 @@ impl Renderer {
         *self.previous_focus_order.borrow_mut() =
             out.focusables.iter().map(|(id, _, _, _)| *id).collect();
         Some(Scene {
+            modal: out.modal,
             hits: out.hits,
             hits_at: out.hits_at,
             focusables: out.focusables,

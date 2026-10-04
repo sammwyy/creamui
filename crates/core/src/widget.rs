@@ -616,6 +616,12 @@ pub trait Widget {
         false
     }
 
+    /// Excludes previously painted controls from interaction and tab order.
+    /// Modal layers must follow application content in paint order.
+    fn is_modal(&self) -> bool {
+        false
+    }
+
     /// Optional keyboard handler, called with each [`KeyInput`] while this
     /// widget has focus (see [`Widget::focusable`]). Default: `None`.
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
@@ -891,6 +897,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn focusable(&self) -> bool {
         self.widget.focusable()
+    }
+    fn is_modal(&self) -> bool {
+        self.widget.is_modal()
     }
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         self.widget.on_key()

@@ -32,6 +32,8 @@ type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
 pub struct Window {
     inner: winit::window::Window,
     id: WindowId,
+    #[cfg(all(target_os = "android", feature = "android"))]
+    android_app: crate::AndroidApp,
 }
 
 impl fmt::Debug for Window {
@@ -179,7 +181,14 @@ impl PlatformWindow for Window {
             size.height,
             scale,
         )
-        .max(crate::android_insets::window_insets(scale))
+        .max(crate::android_insets::window_insets(
+            &self.android_app,
+            scale,
+        ))
+    }
+    #[cfg(all(target_os = "android", feature = "android"))]
+    fn sync_system_bars(&self, light_background: bool) -> bool {
+        crate::android_insets::sync_system_bars(&self.android_app, light_background)
     }
     #[cfg(target_arch = "wasm32")]
     fn safe_area(&self) -> crate::SafeArea {
@@ -268,7 +277,15 @@ impl ActiveEventLoop<'_> {
                     .lock()
                     .expect("window IDs lock poisoned")
                     .insert(inner.id(), id);
-                Arc::new(Window { inner, id }) as Arc<dyn PlatformWindow>
+                Arc::new(Window {
+                    inner,
+                    id,
+                    #[cfg(all(target_os = "android", feature = "android"))]
+                    android_app: {
+                        use winit::platform::android::ActiveEventLoopExtAndroid;
+                        self.inner.android_app().clone()
+                    },
+                }) as Arc<dyn PlatformWindow>
             })
             .map_err(|error| error.to_string())
     }
@@ -377,6 +394,8 @@ impl<T: 'static> EventLoop<T> {
             .run_app(&mut Adapter {
                 handler,
                 ids: self.ids,
+                #[cfg(target_os = "android")]
+                modifiers: ModifierKeys::default(),
             })
             .map_err(|error| error.to_string())
     }
@@ -433,6 +452,55 @@ impl<T: 'static> EventLoopProxy<T> {
 struct Adapter<H> {
     handler: H,
     ids: WindowIds,
+    #[cfg(target_os = "android")]
+    modifiers: ModifierKeys,
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Default)]
+struct ModifierKeys(u8);
+
+#[cfg(any(target_os = "android", test))]
+impl ModifierKeys {
+    fn update(&mut self, event: &winit::event::WindowEvent) -> Option<Modifiers> {
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        match event {
+            winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                let bit = match event.physical_key {
+                    PhysicalKey::Code(KeyCode::ControlLeft) => 1,
+                    PhysicalKey::Code(KeyCode::ControlRight) => 2,
+                    PhysicalKey::Code(KeyCode::ShiftLeft) => 4,
+                    PhysicalKey::Code(KeyCode::ShiftRight) => 8,
+                    PhysicalKey::Code(KeyCode::AltLeft) => 16,
+                    PhysicalKey::Code(KeyCode::AltRight) => 32,
+                    PhysicalKey::Code(KeyCode::SuperLeft) => 64,
+                    PhysicalKey::Code(KeyCode::SuperRight) => 128,
+                    _ => return None,
+                };
+                self.set(bit, event.state == ElementState::Pressed);
+            }
+            winit::event::WindowEvent::Focused(false) => self.0 = 0,
+            _ => return None,
+        }
+        Some(self.state())
+    }
+
+    fn set(&mut self, bit: u8, pressed: bool) {
+        if pressed {
+            self.0 |= bit;
+        } else {
+            self.0 &= !bit;
+        }
+    }
+
+    fn state(&self) -> Modifiers {
+        Modifiers {
+            ctrl: self.0 & 3 != 0,
+            shift: self.0 & 12 != 0,
+            alt: self.0 & 48 != 0,
+            logo: self.0 & 192 != 0,
+        }
+    }
 }
 
 impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<H> {
@@ -448,6 +516,17 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
         window_id: WinitWindowId,
         event: winit::event::WindowEvent,
     ) {
+        #[cfg(target_os = "android")]
+        if let Some(modifiers) = self.modifiers.update(&event) {
+            self.handler.window_event(
+                &ActiveEventLoop {
+                    inner: event_loop,
+                    ids: &self.ids,
+                },
+                self.ids.lock().expect("window IDs lock poisoned")[&window_id],
+                WindowEvent::ModifiersChanged(modifiers),
+            );
+        }
         self.handler.window_event(
             &ActiveEventLoop {
                 inner: event_loop,
@@ -540,7 +619,13 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
 
 fn from_winit_key(key: &WinitKey) -> Key {
     match key {
-        WinitKey::Character(value) => Key::Character(value.to_string()),
+        WinitKey::Character(value) => match value.as_str() {
+            "\n" | "\r" => Key::Enter,
+            "\t" => Key::Tab,
+            "\u{8}" => Key::Backspace,
+            "\u{1b}" => Key::Escape,
+            _ => Key::Character(value.to_string()),
+        },
         WinitKey::Named(NamedKey::Space) => Key::Space,
         WinitKey::Named(NamedKey::Backspace) => Key::Backspace,
         WinitKey::Named(NamedKey::Delete) => Key::Delete,
@@ -604,5 +689,57 @@ fn to_winit_resize_direction(direction: ResizeDirection) -> WinitResizeDirection
         ResizeDirection::NorthEast => WinitResizeDirection::NorthEast,
         ResizeDirection::SouthWest => WinitResizeDirection::SouthWest,
         ResizeDirection::SouthEast => WinitResizeDirection::SouthEast,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modifier_keys_keep_both_sides_and_clear_on_focus_loss() {
+        let mut keys = ModifierKeys::default();
+        keys.set(1, true);
+        keys.set(2, true);
+        keys.set(1, false);
+        assert!(keys.state().ctrl);
+        keys.set(4, true);
+        keys.set(16, true);
+        keys.set(64, true);
+        assert_eq!(
+            keys.state(),
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: true,
+                logo: true
+            }
+        );
+        assert_eq!(
+            keys.update(&winit::event::WindowEvent::Focused(false)),
+            Some(Modifiers::default())
+        );
+        assert_eq!(keys.update(&winit::event::WindowEvent::Focused(true)), None);
+    }
+
+    #[test]
+    fn unicode_control_keys_keep_navigation_and_activation_semantics() {
+        for (text, expected) in [
+            ("\n", Key::Enter),
+            ("\r", Key::Enter),
+            ("\t", Key::Tab),
+            ("\u{8}", Key::Backspace),
+            ("\u{1b}", Key::Escape),
+        ] {
+            assert_eq!(from_winit_key(&WinitKey::Character(text.into())), expected);
+        }
+        assert_eq!(
+            from_winit_key(&WinitKey::Character("é".into())),
+            Key::Character("é".into())
+        );
+        assert_eq!(
+            from_winit_key(&WinitKey::Named(NamedKey::Enter)),
+            Key::Enter
+        );
     }
 }

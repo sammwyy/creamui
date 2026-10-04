@@ -53,3 +53,44 @@ Controllers are available for controls whose interaction state is larger than on
 ## Keyboard behavior
 
 Buttons, checkboxes, switches, and sliders support focus navigation and keyboard activation. Text inputs support editing, selection, and caret state. Use Tab and Shift+Tab to move through focusable controls.
+
+## File pickers
+
+Desktop `FilePicker` uses a native file dialog. Android uses a themed path
+prompt. Keep one `FilePickerController` per window and build the application's
+content inside its host on every reactive rebuild:
+
+```rust
+use creamui_widgets::{FilePicker, FilePickerController};
+
+let prompt = FilePickerController::new();
+let selected = creamui_reactive::Signal::new(String::new());
+// Inside the window's build closure:
+let set_selected = selected.clone();
+let root = prompt.host(|| {
+    Box::new(
+        FilePicker::new(selected.get(), move |path| {
+            set_selected.set(path.display().to_string());
+        })
+        .title("Open an image")
+        .filter("Images", ["png", "jpg"]),
+    )
+});
+```
+
+Android pickers read the hosted controller from context. `.prompt(&prompt)`
+selects the same modal explicitly on desktop, which is useful for a custom
+workflow or testing. Applications with their own root overlay can instead
+provide the controller in context and place `FilePrompt::new(&prompt)` after
+application content in paint order.
+
+The prompt retains edits across rebuilds, focuses its input when opened,
+confines Tab navigation and pointer input to the modal, and reports validation
+errors without calling `on_change`. Enter or Open accepts a readable regular
+file with an allowed extension; `*` allows any extension. Cancel, Escape, or a
+backdrop click closes it without changing the selection. Android Back dismisses
+the keyboard first. Paths must already be accessible to the application; the
+prompt does not grant storage permissions or resolve document-provider URIs.
+
+Browser file selection still needs an asynchronous host bridge. An unhosted
+WASM `FilePicker` is disabled.

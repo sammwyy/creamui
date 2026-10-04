@@ -109,6 +109,9 @@ impl TextInput {
 }
 
 impl Widget for TextInput {
+    fn accepts_text_input(&self) -> bool {
+        self.inner.accepts_text_input()
+    }
     fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }
@@ -308,6 +311,9 @@ impl TextArea {
 }
 
 impl Widget for TextArea {
+    fn accepts_text_input(&self) -> bool {
+        self.inner.accepts_text_input()
+    }
     fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }

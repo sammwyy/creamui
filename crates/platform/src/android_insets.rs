@@ -9,8 +9,8 @@
 use crate::SafeArea;
 use std::cell::Cell;
 
-pub(crate) fn window_insets(scale: f64) -> SafeArea {
-    match query(scale) {
+pub(crate) fn window_insets(app: &crate::AndroidApp, scale: f64) -> SafeArea {
+    match query(app, scale) {
         Ok(area) => {
             note_insets(area);
             area
@@ -33,24 +33,23 @@ pub(crate) fn window_insets(scale: f64) -> SafeArea {
 
 /// Makes the surface fullscreen and sets status/navigation icon contrast.
 ///
-/// `light_background` asks for dark icons. Returns whether the call reached
-/// the window, so a caller can retry while the activity is still coming up.
-pub(crate) fn sync_system_bars(light_background: bool) -> bool {
-    let context = ndk_context::android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
-    let result: jni::errors::Result<()> = vm.attach_current_thread(|env| {
-        let raw = context.context() as jni::sys::jobject;
-        let activity = activity_ref(env, raw)?;
-        prepare_window(env, &activity)?;
-        set_bar_appearance(env, &activity, light_background)?;
-        Ok(())
-    });
-    result
-        .map_err(|err| {
-            log::debug!("creamui-platform: system bar style unavailable: {err}");
-            err
-        })
-        .is_ok()
+/// `light_background` asks for dark icons. Returns whether the update was
+/// queued on the Activity's Java UI thread.
+pub(crate) fn sync_system_bars(app: &crate::AndroidApp, light_background: bool) -> bool {
+    let activity_app = app.clone();
+    app.run_on_java_main_thread(Box::new(move || {
+        let vm = unsafe { jni::JavaVM::from_raw(activity_app.vm_as_ptr().cast()) };
+        let result: jni::errors::Result<()> = vm.attach_current_thread(|env| {
+            let raw = activity_app.activity_as_ptr() as jni::sys::jobject;
+            let activity = activity_ref(env, raw)?;
+            prepare_window(env, &activity)?;
+            set_bar_appearance(env, &activity, light_background)
+        });
+        if let Err(err) = result {
+            log::warn!("creamui-platform: system bar style unavailable: {err}");
+        }
+    }));
+    true
 }
 
 fn note_insets(area: SafeArea) {
@@ -90,11 +89,12 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-fn query(scale: f64) -> Result<SafeArea, String> {
-    let context = ndk_context::android_context();
-    let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
-    vm.attach_current_thread(|env| read_insets(env, context.context() as jni::sys::jobject, scale))
-        .map_err(|err| err.to_string())
+fn query(app: &crate::AndroidApp, scale: f64) -> Result<SafeArea, String> {
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| {
+        read_insets(env, app.activity_as_ptr() as jni::sys::jobject, scale)
+    })
+    .map_err(|err| err.to_string())
 }
 
 fn read_insets(
@@ -103,7 +103,6 @@ fn read_insets(
     scale: f64,
 ) -> jni::errors::Result<SafeArea> {
     let activity = activity_ref(env, raw_activity)?;
-    let _ = prepare_window(env, &activity);
     let sdk = sdk_int(env)?;
     let decor = decor_edges(env, &activity, sdk).unwrap_or((0, 0, 0, 0));
     let metrics = metrics_edges(env, &activity, sdk).unwrap_or((0, 0, 0, 0));
@@ -140,12 +139,6 @@ fn prepare_window(
     env: &mut jni::Env<'_>,
     activity: &jni::objects::JObject<'_>,
 ) -> jni::errors::Result<()> {
-    thread_local! {
-        static READY: Cell<bool> = const { Cell::new(false) };
-    }
-    if READY.with(|ready| ready.get()) {
-        return Ok(());
-    }
     let window = window(env, activity)?;
     let sdk = sdk_int(env)?;
     if sdk >= 30 {
@@ -181,7 +174,6 @@ fn prepare_window(
             &[jni::objects::JValue::Bool(false)],
         )?;
     }
-    READY.with(|ready| ready.set(true));
     Ok(())
 }
 

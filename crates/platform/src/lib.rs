@@ -1,6 +1,6 @@
 //! Common window-platform types for CreamUI.
 
-#[cfg(target_os = "android")]
+#[cfg(all(feature = "android", target_os = "android"))]
 mod android_insets;
 mod types;
 #[cfg(all(feature = "wayland", target_os = "linux"))]
@@ -26,16 +26,8 @@ pub use ::winit::platform::android::activity::AndroidApp;
 ///
 /// `light_background` requests dark icons. Desktop and web backends ignore
 /// the call. Returns whether the platform accepted it.
-pub fn sync_system_bars(light_background: bool) -> bool {
-    #[cfg(target_os = "android")]
-    {
-        android_insets::sync_system_bars(light_background)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = light_background;
-        true
-    }
+pub fn sync_system_bars(window: &dyn PlatformWindow, light_background: bool) -> bool {
+    window.sync_system_bars(light_background)
 }
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -80,6 +72,11 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     /// `env(safe-area-inset-*)`.
     fn safe_area(&self) -> SafeArea {
         SafeArea::ZERO
+    }
+    /// Sets native system bar appearance. Platforms without system bars accept the call.
+    fn sync_system_bars(&self, light_background: bool) -> bool {
+        let _ = light_background;
+        true
     }
     fn is_ready(&self) -> bool;
     fn set_visible(&self, visible: bool);

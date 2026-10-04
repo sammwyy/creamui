@@ -208,6 +208,9 @@ impl Dialog {
 }
 
 impl Widget for Dialog {
+    fn is_modal(&self) -> bool {
+        true
+    }
     fn style(&self) -> creamui_core::Style {
         Self::overlay_style().into()
     }
@@ -284,6 +287,9 @@ impl AlertDialog {
 }
 
 impl Widget for AlertDialog {
+    fn is_modal(&self) -> bool {
+        self.inner.is_modal()
+    }
     fn style(&self) -> creamui_core::Style {
         self.inner.style()
     }

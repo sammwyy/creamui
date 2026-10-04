@@ -6,6 +6,7 @@ pub struct RawButton {
     pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
     pub on_click: Rc<dyn Fn()>,
+    pub on_key_press: Option<Rc<dyn Fn(KeyInput)>>,
     pub on_click_at: Option<Rc<dyn Fn(Point)>>,
     pub on_drag: Option<Rc<dyn Fn(Point, Rect)>>,
     pub on_drag_start: Option<Rc<dyn Fn(Point, Rect)>>,
@@ -22,6 +23,7 @@ impl RawButton {
             style,
             children: Vec::new(),
             on_click: Rc::new(on_click),
+            on_key_press: None,
             on_click_at: None,
             on_drag: None,
             on_drag_start: None,
@@ -37,6 +39,11 @@ impl RawButton {
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {
         self.children.push(widget);
+        self
+    }
+
+    pub fn on_key_press(mut self, handler: impl Fn(KeyInput) + 'static) -> Self {
+        self.on_key_press = Some(Rc::new(handler));
         self
     }
 
@@ -87,7 +94,11 @@ impl Widget for RawButton {
             return None;
         }
         let click = self.on_click.clone();
+        let on_key_press = self.on_key_press.clone();
         Some(Rc::new(move |input| {
+            if let Some(handler) = &on_key_press {
+                handler(input);
+            }
             if !input.modifiers.ctrl && matches!(input.key, Key::Enter | Key::Char(' ')) {
                 click();
             }

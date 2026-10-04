@@ -89,8 +89,13 @@ fn union_bounds(first: Bounds, second: Bounds) -> Bounds {
 /// Creates the process-wide `wgpu` instance. Enumerating backends is the
 /// slow part of GPU startup, so callers create it off the UI thread.
 pub fn create_instance() -> wgpu::Instance {
+    let flags = wgpu::InstanceFlags::default();
+    // Ranchu's Vulkan debug-name hook dereferences guest object handles.
+    #[cfg(target_os = "android")]
+    let flags = flags | wgpu::InstanceFlags::DISCARD_HAL_LABELS;
     wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
+        flags,
         ..Default::default()
     })
 }

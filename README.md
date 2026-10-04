@@ -114,9 +114,12 @@ cargo apk build -p creamui-android-demo --target aarch64-linux-android
 ```
 
 `ANDROID_HOME` and `ANDROID_NDK_HOME` must point at the installed SDK and NDK.
-The demo is a GPU-only static frame. It does not yet support input, clipboard
-or native file pickers, CPU presentation, multi-window behavior, system
-integration, or Android lifecycle recreation after suspension.
+The demo runs the interactive showcase with GPU presentation, touch and
+keyboard input, text clipboard access, safe-area insets, and a file path modal.
+The modal accepts readable local files with matching extensions; it does not
+request storage access through Android's document provider. CPU presentation,
+multi-window behavior, and surface recreation after suspension remain pending.
+See [file picker integration](docs/components.md#file-pickers) for the modal host.
 
 See [platform builds and Android signing](docs/platform-builds.md) for debug and
 release APK commands, secure keystore handling, and Windows desktop builds.

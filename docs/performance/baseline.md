@@ -820,3 +820,25 @@ for every scene; `CUI_GPU_FALLBACK=1` runs the GPU column on a software
 adapter such as llvmpipe. In a running app, `creamui_devtools::init()`
 plus F3 shows the same stages live, and `CUI_FRAME_LOG=1` prints one line
 per presented frame.
+
+## Glyph atlas pressure (2026-10-04)
+
+The synthetic pressure test fills a 1024 x 1024 atlas with 961 masks of
+32 x 32 pixels, keeps 465 masks active, and inserts one new mask. Shelf
+eviction preserves the active masks and their coordinates.
+
+| Work | Bytes |
+| --- | ---: |
+| Clear one cold shelf and upload the new mask | 34,816 |
+| Look up all 465 retained active masks | 0 |
+| Total coverage of those active masks if reuploaded | 476,160 |
+
+These are upload counters, not frame timings. Reproduce with:
+
+```sh
+CUI_GPU_FALLBACK=1 cargo test -p creamui-render --features perf-metrics \
+  atlas_pressure_uploads_one_cold_shelf_and_keeps_active_masks_resident -- --nocapture
+```
+
+The pixel regression also renders a hot mask, a replacement mask, and an
+evicted mask whose slot was reused, then compares GPU readback with CPU output.

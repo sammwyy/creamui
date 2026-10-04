@@ -192,11 +192,15 @@ struct Shelf {
     y: u32,
     height: u32,
     x: u32,
+    used: u64,
+    slots: Vec<u32>,
 }
 
 struct AtlasSlot {
     rect: [u32; 4],
     used: u64,
+    key: Option<GlyphKey>,
+    shelf: usize,
 }
 
 /// Glyphs remember their slot (see [`GlyphBitmap::atlas_slot`]), so a
@@ -209,6 +213,8 @@ struct GlyphAtlas {
     size: u32,
     shelves: Vec<Shelf>,
     slots: Vec<AtlasSlot>,
+    free_slots: Vec<u32>,
+    clear_scratch: Vec<u8>,
     entries: FxHashMap<GlyphKey, u32>,
     created: u64,
 }
@@ -257,32 +263,103 @@ impl GlyphAtlas {
             size,
             shelves: Vec::new(),
             slots: Vec::new(),
+            free_slots: Vec::new(),
+            clear_scratch: Vec::new(),
             entries: FxHashMap::default(),
             created: frame,
         }
     }
 
-    fn allocate(&mut self, width: u32, height: u32) -> Option<[u32; 2]> {
+    fn allocate(&mut self, width: u32, height: u32) -> Option<([u32; 2], usize)> {
         let (w, h) = (width + 1, height + 1);
         if w > self.size || h > self.size {
             return None;
         }
-        if let Some(shelf) = self
+        if let Some((index, shelf)) = self
             .shelves
             .iter_mut()
-            .filter(|s| s.height >= h && s.height <= h + h / 2 && s.x + w <= self.size)
-            .min_by_key(|s| s.height)
+            .enumerate()
+            .filter(|(_, s)| s.height >= h && s.height <= h + h / 2 && s.x + w <= self.size)
+            .min_by_key(|(_, s)| s.height)
         {
             let at = [shelf.x, shelf.y];
             shelf.x += w;
-            return Some(at);
+            return Some((at, index));
         }
         let y = self.shelves.last().map_or(0, |s| s.y + s.height);
         if y + h > self.size {
             return None;
         }
-        self.shelves.push(Shelf { y, height: h, x: w });
-        Some([0, y])
+        let index = self.shelves.len();
+        self.shelves.push(Shelf {
+            y,
+            height: h,
+            x: w,
+            used: 0,
+            slots: Vec::new(),
+        });
+        Some(([0, y], index))
+    }
+
+    fn reclaim_shelf(
+        &mut self,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        frame: u64,
+    ) -> Option<([u32; 2], usize)> {
+        let (w, h) = (width + 1, height + 1);
+        if w > self.size || h > self.size {
+            return None;
+        }
+        let (index, shelf) = self
+            .shelves
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, shelf)| shelf.height >= h && shelf.used < frame.saturating_sub(1))
+            .min_by_key(|(_, shelf)| (shelf.used, shelf.height))?;
+        let evicted = shelf.slots.len();
+        for slot in shelf.slots.drain(..) {
+            if let Some(key) = self.slots[slot as usize].key.take() {
+                self.entries.remove(&key);
+            }
+            self.free_slots.push(slot);
+        }
+        // Linear filtering must see zero coverage in the reused glyph padding.
+        self.clear_scratch
+            .resize((self.size * shelf.height) as usize, 0);
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: shelf.y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.clear_scratch,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(self.size),
+                rows_per_image: Some(shelf.height),
+            },
+            wgpu::Extent3d {
+                width: self.size,
+                height: shelf.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::record(|m| m.gpu_upload_bytes += self.clear_scratch.len() as u64);
+        log::debug!(
+            "creamui-render: reclaimed glyph shelf {index}, {evicted} glyphs, {} bytes",
+            self.clear_scratch.len()
+        );
+        shelf.x = w;
+        shelf.used = frame;
+        Some(([0, shelf.y], index))
     }
 
     fn get_or_insert(
@@ -291,17 +368,28 @@ impl GlyphAtlas {
         glyph: &GlyphBitmap,
         frame: u64,
     ) -> Option<[u32; 4]> {
-        let index = match glyph.atlas_slot.get() {
-            Some((atlas, index)) if atlas == self.id => Some(index),
-            _ => self.entries.get(&glyph.key).copied(),
-        };
+        let index = glyph
+            .atlas_slot
+            .get()
+            .and_then(|(atlas, index)| {
+                (atlas == self.id
+                    && self
+                        .slots
+                        .get(index as usize)
+                        .is_some_and(|slot| slot.key == Some(glyph.key)))
+                .then_some(index)
+            })
+            .or_else(|| self.entries.get(&glyph.key).copied());
         if let Some(index) = index {
             glyph.atlas_slot.set(Some((self.id, index)));
             let slot = &mut self.slots[index as usize];
             slot.used = frame;
+            self.shelves[slot.shelf].used = frame;
             return Some(slot.rect);
         }
-        let [x, y] = self.allocate(glyph.width, glyph.height)?;
+        let ([x, y], shelf) = self
+            .allocate(glyph.width, glyph.height)
+            .or_else(|| self.reclaim_shelf(queue, glyph.width, glyph.height, frame))?;
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.texture,
@@ -324,22 +412,38 @@ impl GlyphAtlas {
         #[cfg(feature = "perf-metrics")]
         creamui_core::metrics::record(|m| m.gpu_upload_bytes += glyph.coverage.len() as u64);
         let rect = [x, y, glyph.width, glyph.height];
-        let index = self.slots.len() as u32;
-        self.slots.push(AtlasSlot { rect, used: frame });
+        let slot = AtlasSlot {
+            rect,
+            used: frame,
+            key: Some(glyph.key),
+            shelf,
+        };
+        let index = if let Some(index) = self.free_slots.pop() {
+            self.slots[index as usize] = slot;
+            index
+        } else {
+            let index = self.slots.len() as u32;
+            self.slots.push(slot);
+            index
+        };
+        self.shelves[shelf].slots.push(index);
+        self.shelves[shelf].used = frame;
         self.entries.insert(glyph.key, index);
         glyph.atlas_slot.set(Some((self.id, index)));
         Some(rect)
     }
 
     fn has_stale_entries(&self, frame: u64) -> bool {
-        self.slots.iter().any(|slot| slot.used < frame)
+        self.slots
+            .iter()
+            .any(|slot| slot.key.is_some() && slot.used < frame)
     }
 
     /// Texels (padding included) of the glyphs used since `since`.
     fn live_area(&self, since: u64) -> u64 {
         self.slots
             .iter()
-            .filter(|slot| slot.used >= since)
+            .filter(|slot| slot.key.is_some() && slot.used >= since)
             .map(|slot| (slot.rect[2] as u64 + 1) * (slot.rect[3] as u64 + 1))
             .sum()
     }
@@ -2032,6 +2136,147 @@ mod tests {
     }
 
     #[test]
+    fn cold_shelves_are_reclaimed_without_invalidating_hot_glyphs() {
+        let Some(gpu) = headless() else { return };
+        let shared = gpu.renderer().shared.borrow();
+        let mut atlas =
+            GlyphAtlas::new(&shared.device, &shared.atlas_layout, &shared.sampler, 33, 0);
+        let glyphs: Vec<_> = (1..=9).map(|key| bitmap(key, 10)).collect();
+        for glyph in &glyphs {
+            atlas.get_or_insert(&shared.queue, glyph, 0).unwrap();
+        }
+        let hot: Vec<_> = glyphs[..3]
+            .iter()
+            .map(|glyph| atlas.get_or_insert(&shared.queue, glyph, 2).unwrap())
+            .collect();
+        let id = atlas.id;
+        let replacement = bitmap(10, 10);
+        assert_eq!(
+            atlas.get_or_insert(&shared.queue, &replacement, 2),
+            Some([0, 11, 10, 10])
+        );
+        assert_eq!(atlas.id, id);
+        assert_eq!(atlas.size, 33);
+        for (glyph, rect) in glyphs[..3].iter().zip(hot) {
+            assert_eq!(atlas.get_or_insert(&shared.queue, glyph, 2), Some(rect));
+        }
+        assert!(!atlas.entries.contains_key(&glyphs[5].key));
+        assert_eq!(
+            atlas.get_or_insert(&shared.queue, &glyphs[5], 2),
+            Some([11, 11, 10, 10])
+        );
+        assert_eq!(atlas.slots.len(), 9);
+        assert!(atlas
+            .get_or_insert(&shared.queue, &bitmap(11, 10), 2)
+            .is_some());
+        assert_eq!(atlas.free_slots.len(), 0);
+    }
+
+    #[cfg(feature = "perf-metrics")]
+    #[test]
+    fn atlas_pressure_uploads_one_cold_shelf_and_keeps_active_masks_resident() {
+        let Some(gpu) = headless() else { return };
+        let shared = gpu.renderer().shared.borrow();
+        let mut atlas = GlyphAtlas::new(
+            &shared.device,
+            &shared.atlas_layout,
+            &shared.sampler,
+            INITIAL_ATLAS_SIZE,
+            0,
+        );
+        let glyphs: Vec<_> = (0..31 * 31).map(|key| bitmap(key, 32)).collect();
+        for glyph in &glyphs {
+            atlas.get_or_insert(&shared.queue, glyph, 0).unwrap();
+        }
+        for glyph in &glyphs[..31 * 15] {
+            atlas.get_or_insert(&shared.queue, glyph, 2).unwrap();
+        }
+        creamui_core::metrics::reset_frame_metrics();
+        atlas
+            .get_or_insert(&shared.queue, &bitmap(2000, 32), 2)
+            .unwrap();
+        let uploaded = creamui_core::metrics::frame_metrics().gpu_upload_bytes;
+        assert_eq!(uploaded, 1024 * 33 + 32 * 32);
+        assert!(uploaded < (31 * 15 * 32 * 32) / 10);
+        creamui_core::metrics::reset_frame_metrics();
+        for glyph in &glyphs[..31 * 15] {
+            atlas.get_or_insert(&shared.queue, glyph, 2).unwrap();
+        }
+        assert_eq!(creamui_core::metrics::frame_metrics().gpu_upload_bytes, 0);
+    }
+
+    #[test]
+    fn reclaimed_glyphs_and_reused_slot_handles_match_cpu_pixels() {
+        use crate::display_list::{Clip, DrawItem, TextRun};
+        use crate::text::{PlacedGlyph, TextLayout};
+
+        let Some(mut gpu) = headless() else { return };
+        let glyphs: Vec<_> = (1..=9).map(|key| Rc::new(bitmap(key, 10))).collect();
+        let mut replacement = bitmap(10, 8);
+        replacement.coverage.fill(128);
+        let replacement = Rc::new(replacement);
+        {
+            let mut shared = gpu.renderer().shared.borrow_mut();
+            shared.atlas =
+                GlyphAtlas::new(&shared.device, &shared.atlas_layout, &shared.sampler, 33, 0);
+            let queue = shared.queue.clone();
+            for glyph in &glyphs {
+                shared.atlas.get_or_insert(&queue, glyph, 0).unwrap();
+            }
+            for glyph in &glyphs[..3] {
+                shared.atlas.get_or_insert(&queue, glyph, 2).unwrap();
+            }
+            shared.atlas.get_or_insert(&queue, &replacement, 2).unwrap();
+            shared.frame = 2;
+        }
+        let mut list = DisplayList::new(64, 20, Color::rgb(0, 0, 0));
+        let layout = TextLayout {
+            glyphs: vec![
+                PlacedGlyph {
+                    bitmap: glyphs[0].clone(),
+                    x: 2,
+                    y: 2,
+                    byte_offset: 0,
+                },
+                PlacedGlyph {
+                    bitmap: replacement,
+                    x: 22,
+                    y: 2,
+                    byte_offset: 1,
+                },
+                PlacedGlyph {
+                    bitmap: glyphs[5].clone(),
+                    x: 42,
+                    y: 2,
+                    byte_offset: 2,
+                },
+            ],
+            ink: [2, 2, 52, 12],
+            height: 10.0,
+        };
+        list.items.push(DrawItem {
+            primitive: Primitive::Text(TextRun {
+                layout: Rc::new(layout),
+                x: 0,
+                y: 0,
+                color: Color::rgb(255, 255, 255),
+                selection: None,
+                italic: false,
+            }),
+            clip: Clip {
+                bounds: list.viewport(),
+                rounded: None,
+            },
+            layer: 0,
+        });
+        let pixels = gpu.render_to_pixels(&list);
+        let mut cpu = Rasterizer::new(list.width, list.height);
+        cpu.render(&list, &Damage::Full);
+        assert_eq!(pixels, cpu.pixmap().data());
+        assert_eq!(gpu.renderer().shared.borrow().atlas.size, 33);
+    }
+
+    #[test]
     fn glyphs_remember_their_slot_per_atlas() {
         let Some(gpu) = headless() else { return };
         let mut shared = gpu.renderer().shared.borrow_mut();
@@ -2067,11 +2312,11 @@ mod tests {
         let shared = gpu.renderer().shared.borrow();
         let mut atlas =
             GlyphAtlas::new(&shared.device, &shared.atlas_layout, &shared.sampler, 33, 0);
-        assert_eq!(atlas.allocate(10, 10), Some([0, 0]));
-        assert_eq!(atlas.allocate(10, 10), Some([11, 0]));
-        assert_eq!(atlas.allocate(10, 20), Some([0, 11]));
+        assert_eq!(atlas.allocate(10, 10), Some(([0, 0], 0)));
+        assert_eq!(atlas.allocate(10, 10), Some(([11, 0], 0)));
+        assert_eq!(atlas.allocate(10, 20), Some(([0, 11], 1)));
         assert_eq!(atlas.allocate(40, 1), None);
-        assert_eq!(atlas.allocate(10, 10), Some([22, 0]));
+        assert_eq!(atlas.allocate(10, 10), Some(([22, 0], 0)));
         assert_eq!(atlas.allocate(10, 10), None);
     }
 

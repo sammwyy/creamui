@@ -35,5 +35,3 @@ Current limitations and work still to do. Implemented changes belong in
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
   opaque backdrop; otherwise it repaints the layer viewport.
-- Add per-glyph or batched glyph eviction if clearing the entire atlas when
-  full proves costly in real workloads.

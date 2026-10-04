@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- GPU atlas pressure reclaims cold glyph shelves in batches, preserving hot
+  glyph coordinates and uploads. Reused slot handles validate their glyph key,
+  and cleared shelf padding keeps filtered samples isolated.
 - Devtools adds a retained-tree inspector with stable node selection and
   invalidation reasons. F4 toggles the tree, F5 damage, F6 layout rectangles,
   and F7 hit regions; F8 and Shift+F8 browse nodes. Damage reflects content

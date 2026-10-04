@@ -28,10 +28,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Rendering and performance
 
-- Avoid redrawing the full GPU window whenever content changes. The GPU
-  clears and draws the full frame; the CPU uses calculated damage. Partial
-  GPU presentation needs a way to know which previous pixels remain valid
-  in each swapchain buffer.
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
   opaque backdrop; otherwise it repaints the layer viewport.

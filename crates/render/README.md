@@ -4,10 +4,21 @@ Native window hosting and frame presentation for CreamUI.
 
 `run` creates a desktop window, builds a widget tree reactively, lays it out and records it into a display list. Each frame is diffed against the one on screen, so only changed regions are redrawn and presented.
 
-- **GPU** (default): the display list is drawn by one instanced `wgpu` pipeline (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
+- **GPU** (default): an instanced `wgpu` pipeline draws calculated damage into a retained color texture (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
 - **CPU**: `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, other platforms use `softbuffer`.
 
 Force a backend with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`. `CUI_DUMP_FRAME=path.png` writes every presented frame to disk.
+
+GPU damage regions are cleared before their primitives are replayed, preserving
+correct translucent blending. Partial frames cull instance ranges outside the
+damage. Every acquired surface buffer receives the complete retained texture,
+by texture copy when supported or a fullscreen blit otherwise. Presentation
+still transfers the full color texture; content rasterization follows damage.
+Resizing allocates a new retained texture and forces a full draw.
+
+`HeadlessGpu::render_damage_to_pixels` uses the same retained path for testing.
+`GpuRenderer::render_damage` can also draw into a caller-owned target whose
+pixels outside the damage already contain the preceding frame.
 
 ```rust
 creamui_render::run(options, theme.surface, |_| {}, build_ui);

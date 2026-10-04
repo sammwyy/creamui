@@ -30,6 +30,8 @@ pub struct FrameMetrics {
     pub text_layouts: u64,
     pub cpu_pixels_rasterized: u64,
     pub gpu_upload_bytes: u64,
+    pub gpu_pixels_redrawn: u64,
+    pub gpu_instances_drawn: u64,
     pub draw_calls: u64,
 
     pub damaged_rect_count: u64,

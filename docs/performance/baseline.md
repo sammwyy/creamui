@@ -842,3 +842,31 @@ CUI_GPU_FALLBACK=1 cargo test -p creamui-render --features perf-metrics \
 
 The pixel regression also renders a hot mask, a replacement mask, and an
 evicted mask whose slot was reused, then compares GPU readback with CPU output.
+
+## Partial GPU rendering (2026-10-04)
+
+GPU windows retain a color texture, redraw calculated damage with scissored
+clears, and copy or blit the result into each acquired swapchain buffer.
+This uses one additional color texture, typically four bytes per physical
+pixel. Presentation transfers the full texture; primitive rasterization
+follows damage, and partial frames cull unrelated instance ranges.
+
+| Workload | Window pixels | Content pixels redrawn | Instances submitted |
+| --- | ---: | ---: | ---: |
+| Insert a 10 x 10 quad | 10,000 | 144 | 1 |
+| Change one tile in a 1,000-tile scene | 50,000 | 40 | 256 |
+
+These are engine counters rather than timings. The damaged area includes
+antialiasing bounds. Reproduce with:
+
+```sh
+cargo test -p creamui-render --features perf-metrics partial_gpu_frames_redraw_only_damaged_pixels
+cargo test -p creamui-render --features perf-metrics partial_damage_culls_unrelated_instance_ranges_in_a_wide_scene
+```
+
+The native X11 interaction-styles example was also checked on llvmpipe under
+Xvfb. Button state transitions redrew 14,672 pixels in a 201,600-pixel window;
+resizing to 620 x 400 forced all 248,000 pixels to redraw. Pixel regressions
+compare partial and full GPU output through alpha changes, nested rounded
+clips, text and images, fractional scrolling, resize, and alternating
+destination buffers with both copy and fullscreen-blit presentation.

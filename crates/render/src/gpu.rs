@@ -4,7 +4,9 @@
 //! Pipelines, the atlas and image textures live in [`GpuShared`], reused by
 //! every renderer on the same device.
 
-use crate::display_list::{DisplayList, DrawItem, ImagePrimitive, LayerSpace, Primitive};
+use crate::display_list::{
+    Bounds, Damage, DisplayList, DrawItem, ImagePrimitive, LayerSpace, Primitive,
+};
 use crate::text::{GlyphBitmap, GlyphKey};
 use bytemuck::{Pod, Zeroable};
 use creamui_platform::PlatformWindow;
@@ -17,6 +19,10 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
+
+mod fullscreen;
+mod retained;
+use retained::{present_retained, update_retained, RetainedFrame};
 
 const KIND_QUAD: u32 = 0;
 const KIND_LINE: u32 = 1;
@@ -37,6 +43,7 @@ const ATLAS_RESET_COOLDOWN_FRAMES: u64 = 60;
 const ATLAS_SHRINK_EVERY_FRAMES: u64 = 600;
 const IMAGE_CACHE_FRAMES: u64 = 300;
 const MIN_INSTANCE_CAPACITY: u64 = 256;
+const DAMAGE_BATCH_INSTANCES: u32 = 256;
 
 static NEXT_ATLAS_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -62,6 +69,21 @@ struct Globals {
 
 fn rgba(color: Color) -> [u8; 4] {
     [color.r, color.g, color.b, color.a]
+}
+
+fn union_bounds(first: Bounds, second: Bounds) -> Bounds {
+    if first.is_empty() {
+        return second;
+    }
+    if second.is_empty() {
+        return first;
+    }
+    Bounds::new(
+        first.x0.min(second.x0),
+        first.y0.min(second.y0),
+        first.x1.max(second.x1),
+        first.y1.max(second.y1),
+    )
 }
 
 /// Creates the process-wide `wgpu` instance. Enumerating backends is the
@@ -519,6 +541,7 @@ pub struct GpuShared {
     images: HashMap<u64, ImageTexture>,
     frame: u64,
     pipeline_cache: Option<PipelineCacheFile>,
+    fullscreen: Option<fullscreen::Pipelines>,
 }
 
 impl GpuShared {
@@ -621,6 +644,7 @@ impl GpuShared {
             images: HashMap::new(),
             frame: 0,
             pipeline_cache,
+            fullscreen: None,
         }))
     }
 
@@ -866,6 +890,7 @@ fn image_group(
 struct Batch {
     image: Option<u64>,
     instances: std::ops::Range<u32>,
+    bounds: Bounds,
 }
 
 /// Renders display lists into any color target of its format, holding only
@@ -893,9 +918,11 @@ pub struct GpuRenderer {
     last_upload: Vec<std::ops::Range<usize>>,
     viewport: [f32; 2],
     batches: Vec<Batch>,
+    damage_batches: Vec<Batch>,
     instance_buffer: wgpu::Buffer,
     frame_images: Vec<u64>,
     held_images: Vec<u64>,
+    clear_pass: Option<fullscreen::ClearPass>,
 }
 
 impl GpuRenderer {
@@ -936,9 +963,11 @@ impl GpuRenderer {
             last_upload: Vec::new(),
             viewport: [0.0; 2],
             batches: Vec::new(),
+            damage_batches: Vec::new(),
             instance_buffer,
             frame_images: Vec::new(),
             held_images: Vec::new(),
+            clear_pass: None,
         }
     }
 
@@ -1012,6 +1041,7 @@ impl GpuRenderer {
         let spaces = list.spaces();
         let mut batch_image: Option<u64> = None;
         let mut batch_start = 0u32;
+        let mut batch_bounds = Bounds::EMPTY;
         for item in &list.items {
             let image = match &item.primitive {
                 Primitive::Image(image) => Some(image.image.id()),
@@ -1021,10 +1051,14 @@ impl GpuRenderer {
                 self.batches.push(Batch {
                     image: batch_image,
                     instances: batch_start..self.instances.len() as u32,
+                    bounds: batch_bounds,
                 });
                 batch_start = self.instances.len() as u32;
+                batch_bounds = Bounds::EMPTY;
             }
             batch_image = image;
+            let bounds = item.visible_bounds(&spaces).inflate(1.0);
+            batch_bounds = union_bounds(batch_bounds, bounds);
             let clip = self.clip_index(item, &spaces) << KIND_BITS;
             match &item.primitive {
                 Primitive::Quad(quad) => {
@@ -1157,6 +1191,7 @@ impl GpuRenderer {
             self.batches.push(Batch {
                 image: batch_image,
                 instances: batch_start..self.instances.len() as u32,
+                bounds: batch_bounds,
             });
         }
         true
@@ -1306,11 +1341,96 @@ impl GpuRenderer {
         std::mem::swap(&mut self.instances, &mut self.uploaded);
     }
 
+    fn build_damage_batches(&mut self) {
+        self.damage_batches.clear();
+        for batch in &self.batches {
+            let mut start = batch.instances.start;
+            while start < batch.instances.end {
+                let end = (start + DAMAGE_BATCH_INSTANCES).min(batch.instances.end);
+                let mut bounds = Bounds::EMPTY;
+                for instance in &self.uploaded[start as usize..end as usize] {
+                    let index = (instance.tag >> KIND_BITS) as usize * 2;
+                    let clip = self.uploaded_clips[index];
+                    let extra = self.uploaded_clips[index + 1];
+                    let glyph = instance.tag & ((1 << KIND_BITS) - 1) == KIND_GLYPH;
+                    let offset = if glyph {
+                        [extra[0].round(), extra[1].round()]
+                    } else {
+                        [extra[0], extra[1]]
+                    };
+                    let b = instance.bounds;
+                    let shear = if glyph {
+                        (b[3] - b[1]) * instance.shape[2]
+                    } else {
+                        0.0
+                    };
+                    let rect = Bounds::new(b[0], b[1], b[2] + shear, b[3])
+                        .translate(offset)
+                        .inflate(1.0)
+                        .intersect(Bounds::new(clip[0], clip[1], clip[2], clip[3]));
+                    bounds = union_bounds(bounds, rect);
+                }
+                self.damage_batches.push(Batch {
+                    image: batch.image,
+                    instances: start..end,
+                    bounds,
+                });
+                start = end;
+            }
+        }
+    }
+
     /// Renders `list` into `target`, clearing it first.
     pub fn render(&mut self, list: &DisplayList, target: &wgpu::TextureView) {
+        self.render_damage(list, target, &Damage::Full);
+    }
+
+    /// Pixels outside `damage` must already contain the preceding frame.
+    pub fn render_damage(
+        &mut self,
+        list: &DisplayList,
+        target: &wgpu::TextureView,
+        damage: &Damage,
+    ) {
+        let regions: Vec<_> = damage
+            .regions(list.viewport())
+            .into_iter()
+            .map(|region| region.round_out().intersect(list.viewport()))
+            .filter(|region| !region.is_empty())
+            .collect();
+        if regions.is_empty() {
+            return;
+        }
+        let full = matches!(damage, Damage::Full);
+        log::trace!(
+            "creamui-render: GPU redraw {} regions, {} pixels, full={full}",
+            regions.len(),
+            regions
+                .iter()
+                .map(|region| region.width() * region.height())
+                .sum::<f32>()
+        );
         let shared = self.shared.clone();
         let mut shared = shared.borrow_mut();
-        self.prepare(list, &mut shared);
+        let shared = &mut *shared;
+        self.prepare(list, shared);
+        if !full {
+            self.build_damage_batches();
+            if self.clear_pass.is_none() {
+                let cache = shared.pipeline_cache.as_ref().map(|file| &file.cache);
+                let pipelines = shared
+                    .fullscreen
+                    .get_or_insert_with(|| fullscreen::Pipelines::new(&self.device));
+                self.clear_pass = Some(pipelines.clear(&self.device, self.format, cache));
+                if let Some(file) = &mut shared.pipeline_cache {
+                    file.save();
+                }
+            }
+            self.clear_pass
+                .as_mut()
+                .expect("partial rendering has a clear pass")
+                .set_color(&self.queue, list.clear);
+        }
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1319,18 +1439,23 @@ impl GpuRenderer {
         {
             let clear = list.clear;
             let a = clear.a as f64 / 255.0;
+            let load = if full {
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clear.r as f64 / 255.0 * a,
+                    g: clear.g as f64 / 255.0 * a,
+                    b: clear.b as f64 / 255.0 * a,
+                    a,
+                })
+            } else {
+                wgpu::LoadOp::Load
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("creamui-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear.r as f64 / 255.0 * a,
-                            g: clear.g as f64 / 255.0 * a,
-                            b: clear.b as f64 / 255.0 * a,
-                            a,
-                        }),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1338,19 +1463,49 @@ impl GpuRenderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.globals_group, &[]);
-            pass.set_bind_group(1, &shared.atlas.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            for batch in &self.batches {
-                let group = batch
-                    .image
-                    .and_then(|id| shared.images.get(&id))
-                    .map_or(&shared.empty_image, |texture| &texture.bind_group);
-                pass.set_bind_group(2, group, &[]);
-                pass.draw(0..4, batch.instances.clone());
+            for region in regions {
+                let x = region.x0 as u32;
+                let y = region.y0 as u32;
+                let width = region.x1 as u32 - x;
+                let height = region.y1 as u32 - y;
+                pass.set_scissor_rect(x, y, width, height);
+                if !full {
+                    self.clear_pass
+                        .as_ref()
+                        .expect("partial rendering has a clear pass")
+                        .draw(&mut pass);
+                    #[cfg(feature = "perf-metrics")]
+                    creamui_core::metrics::record(|m| m.draw_calls += 1);
+                }
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.globals_group, &[]);
+                pass.set_bind_group(1, &shared.atlas.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                let batches = if full {
+                    &self.batches
+                } else {
+                    &self.damage_batches
+                };
+                for batch in batches {
+                    if batch.bounds.intersect(region).is_empty() {
+                        continue;
+                    }
+                    let group = batch
+                        .image
+                        .and_then(|id| shared.images.get(&id))
+                        .map_or(&shared.empty_image, |texture| &texture.bind_group);
+                    pass.set_bind_group(2, group, &[]);
+                    pass.draw(0..4, batch.instances.clone());
+                    #[cfg(feature = "perf-metrics")]
+                    creamui_core::metrics::record(|m| {
+                        m.draw_calls += 1;
+                        m.gpu_instances_drawn += batch.instances.len() as u64;
+                    });
+                }
                 #[cfg(feature = "perf-metrics")]
-                creamui_core::metrics::record(|m| m.draw_calls += 1);
+                creamui_core::metrics::record(|m| {
+                    m.gpu_pixels_redrawn += width as u64 * height as u64
+                });
             }
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -1489,6 +1644,7 @@ pub struct GpuSurface {
     config: wgpu::SurfaceConfiguration,
     view_format: wgpu::TextureFormat,
     adapter_name: String,
+    retained: Option<RetainedFrame>,
 }
 
 impl GpuSurface {
@@ -1546,8 +1702,9 @@ impl GpuSurface {
                 .find(|mode| caps.alpha_modes.contains(mode))
                 .unwrap_or(caps.alpha_modes[0])
         };
+        let copy_usage = caps.usages & wgpu::TextureUsages::COPY_DST;
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | copy_usage,
             format,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -1563,8 +1720,9 @@ impl GpuSurface {
         surface.configure(device, &config);
         let renderer = GpuRenderer::new(context.shared.clone(), view_format);
         log::debug!(
-            "creamui-render: GPU surface ready on {} as {format:?}/{alpha_mode:?} in {:?}",
+            "creamui-render: GPU surface ready on {} as {format:?}/{alpha_mode:?}, copy={}, in {:?}",
             context.adapter_name,
+            !copy_usage.is_empty(),
             t0.elapsed()
         );
         Ok(GpuSurface {
@@ -1573,6 +1731,7 @@ impl GpuSurface {
             config,
             view_format,
             adapter_name: context.adapter_name.clone(),
+            retained: None,
         })
     }
 
@@ -1582,7 +1741,7 @@ impl GpuSurface {
 
     /// Draws and presents `list`. Returns `false` when the surface was not
     /// ready and the frame must be retried.
-    pub fn present(&mut self, list: &DisplayList) -> bool {
+    pub fn present(&mut self, list: &DisplayList, damage: &Damage) -> bool {
         if (list.width, list.height) != (self.config.width, self.config.height) {
             self.config.width = list.width;
             self.config.height = list.height;
@@ -1603,7 +1762,20 @@ impl GpuSurface {
             format: Some(self.view_format),
             ..Default::default()
         });
-        self.renderer.render(list, &view);
+        let retained = update_retained(
+            &mut self.retained,
+            &mut self.renderer,
+            list,
+            damage,
+            self.config.format,
+        );
+        present_retained(
+            &self.renderer,
+            retained,
+            &frame.texture,
+            &view,
+            self.config.usage.contains(wgpu::TextureUsages::COPY_DST),
+        );
         #[cfg(feature = "perf-metrics")]
         let _span = tracing::info_span!("present").entered();
         frame.present();
@@ -1616,6 +1788,7 @@ impl GpuSurface {
 pub struct HeadlessGpu {
     renderer: GpuRenderer,
     adapter_name: String,
+    retained: Option<RetainedFrame>,
 }
 
 impl HeadlessGpu {
@@ -1639,6 +1812,7 @@ impl HeadlessGpu {
         Ok(HeadlessGpu {
             renderer: GpuRenderer::new(shared, wgpu::TextureFormat::Rgba8Unorm),
             adapter_name: format!("{} ({:?})", info.name, info.backend),
+            retained: None,
         })
     }
 
@@ -1675,53 +1849,73 @@ impl HeadlessGpu {
         texture
     }
 
+    /// Preserves pixels outside `damage`; allocation or resizing forces a full draw.
+    pub fn render_damage(&mut self, list: &DisplayList, damage: &Damage) -> &wgpu::Texture {
+        let format = self.renderer.format;
+        &update_retained(&mut self.retained, &mut self.renderer, list, damage, format).texture
+    }
+
+    pub fn render_damage_to_pixels(&mut self, list: &DisplayList, damage: &Damage) -> Vec<u8> {
+        self.render_damage(list, damage);
+        read_pixels(
+            &self.renderer,
+            &self
+                .retained
+                .as_ref()
+                .expect("retained frame is allocated")
+                .texture,
+        )
+    }
+
     /// Renders `list` and reads back premultiplied RGBA8 pixels.
     pub fn render_to_pixels(&mut self, list: &DisplayList) -> Vec<u8> {
         let texture = self.render(list);
-        let (width, height) = (list.width, list.height);
-        let padded = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let device = &self.renderer.device;
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("creamui-readback"),
-            contents: &vec![0; (padded * height) as usize],
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("creamui-readback"),
-        });
-        encoder.copy_texture_to_buffer(
-            texture.as_image_copy(),
-            wgpu::ImageCopyBuffer {
-                buffer: &buffer,
-                layout: wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.renderer
-            .queue
-            .submit(std::iter::once(encoder.finish()));
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            if let Err(err) = result {
-                log::error!("creamui-render: readback failed: {err}");
-            }
-        });
-        device.poll(wgpu::Maintain::Wait);
-        let mapped = slice.get_mapped_range();
-        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-        for row in mapped.chunks_exact(padded as usize) {
-            pixels.extend_from_slice(&row[..(width * 4) as usize]);
-        }
-        pixels
+        read_pixels(&self.renderer, &texture)
     }
+}
+
+fn read_pixels(renderer: &GpuRenderer, texture: &wgpu::Texture) -> Vec<u8> {
+    let (width, height) = (texture.width(), texture.height());
+    let padded = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let device = &renderer.device;
+    let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("creamui-readback"),
+        contents: &vec![0; (padded * height) as usize],
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("creamui-readback"),
+    });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::ImageCopyBuffer {
+            buffer: &buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    renderer.queue.submit(std::iter::once(encoder.finish()));
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |result| {
+        if let Err(err) = result {
+            log::error!("creamui-render: readback failed: {err}");
+        }
+    });
+    device.poll(wgpu::Maintain::Wait);
+    let mapped = slice.get_mapped_range();
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for row in mapped.chunks_exact(padded as usize) {
+        pixels.extend_from_slice(&row[..(width * 4) as usize]);
+    }
+    pixels
 }
 
 #[cfg(test)]
@@ -2133,6 +2327,267 @@ mod tests {
             .unwrap();
         assert!(shared.make_atlas_room());
         assert_eq!(shared.atlas.size, INITIAL_ATLAS_SIZE * 2);
+    }
+
+    #[test]
+    fn partial_damage_culls_unrelated_instance_ranges_in_a_wide_scene() {
+        let Some(mut gpu) = headless() else { return };
+        let record = |changed| {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(100, 500, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+            for index in 0..1000 {
+                let color = if changed && index == 300 {
+                    Color::rgb(240, 60, 30)
+                } else {
+                    Color::rgb(50, 60, 80)
+                };
+                recorder.fill_rect(
+                    rect(
+                        (index % 20) as f32 * 5.0,
+                        (index / 20) as f32 * 10.0,
+                        4.0,
+                        6.0,
+                    ),
+                    color,
+                    0.0,
+                );
+            }
+            recorder.finish()
+        };
+        let initial = record(false);
+        gpu.render_damage(&initial, &Damage::Full);
+        let next = record(true);
+        let damage = crate::display_list::damage(Some(&initial), &next);
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::reset_frame_metrics();
+        let pixels = gpu.render_damage_to_pixels(&next, &damage);
+        #[cfg(feature = "perf-metrics")]
+        {
+            let metrics = creamui_core::metrics::frame_metrics();
+            assert_eq!(metrics.gpu_instances_drawn, 256);
+            assert_eq!(metrics.gpu_pixels_redrawn, 40);
+        }
+        assert_eq!(pixels, gpu.render_to_pixels(&next));
+    }
+
+    #[test]
+    fn retained_damage_matches_full_gpu_frames_with_alpha_and_clips() {
+        let Some(mut gpu) = headless() else { return };
+        let mut previous = None;
+        let image = RgbaImage::new(
+            2,
+            2,
+            vec![
+                255, 0, 0, 128, 0, 255, 0, 200, 0, 0, 255, 128, 255, 255, 255, 240,
+            ],
+        )
+        .unwrap();
+        for phase in 0..4 {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(
+                160,
+                100,
+                1.0,
+                Color::rgba(20, 30, 40, 80),
+                ColorScheme::default(),
+            );
+            recorder.fill_rect(rect(0.0, 0.0, 25.0, 100.0), Color::rgb(20, 80, 140), 0.0);
+            recorder.push_clip_rounded(rect(40.0, 8.0, 75.0, 75.0), 12.0);
+            recorder.push_clip_rounded(rect(45.0, 12.0, 65.0, 65.0), 8.0);
+            if phase < 3 {
+                recorder.fill_rect(
+                    rect(50.0 + phase as f32 * 8.0, 20.0, 28.0, 28.0),
+                    Color::rgba(220, 30, 100, 120),
+                    6.0,
+                );
+                recorder.draw_image(
+                    rect(55.0, 36.0 + phase as f32 * 4.0, 30.0, 24.0),
+                    &image,
+                    None,
+                );
+            }
+            recorder.fill_text(
+                rect(46.0, 60.0, 60.0, 18.0),
+                if phase % 2 == 0 { "alpha" } else { "beta" },
+                Color::rgba(240, 240, 240, 160),
+                12.0,
+                TextAlign::Start,
+            );
+            recorder.pop_clip();
+            recorder.pop_clip();
+            let list = recorder.finish();
+            assert!(list.items.iter().any(|item| matches!(&item.primitive, Primitive::Text(run) if !run.layout.glyphs.is_empty())));
+            let damage = crate::display_list::damage(previous.as_ref(), &list);
+            if phase > 0 {
+                assert!(matches!(damage, Damage::Partial(_)));
+            }
+            let partial = gpu.render_damage_to_pixels(&list, &damage);
+            let full = gpu.render_to_pixels(&list);
+            assert_eq!(partial, full, "phase {phase}");
+            previous = Some(list);
+        }
+    }
+
+    #[test]
+    fn partial_gpu_frames_preserve_fractionally_scrolled_rounded_layers() {
+        let Some(mut gpu) = headless() else { return };
+        let mut previous = None;
+        for offset in [0.0, 2.5, 6.25, 1.0] {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(
+                240,
+                140,
+                2.0,
+                Color::rgba(10, 20, 30, 120),
+                ColorScheme::default(),
+            );
+            recorder.push_clip_rounded(rect(18.0, 12.0, 85.0, 38.0), 8.0);
+            recorder.push_scroll_layer(
+                rect(20.0, 15.0, 80.0, 30.0),
+                6.0,
+                Point { x: 0.0, y: offset },
+            );
+            for row in 0..4 {
+                recorder.fill_rect(
+                    rect(22.0, 15.0 + row as f32 * 12.0, 70.0, 10.0),
+                    Color::rgba(50, 80 + row * 30, 220, 150),
+                    3.0,
+                );
+            }
+            recorder.pop_scroll_layer();
+            recorder.pop_clip();
+            let list = recorder.finish();
+            let damage = crate::display_list::damage(previous.as_ref(), &list);
+            if previous.is_some() {
+                assert!(matches!(damage, Damage::Partial(_)));
+            }
+            assert_eq!(
+                gpu.render_damage_to_pixels(&list, &damage),
+                gpu.render_to_pixels(&list)
+            );
+            previous = Some(list);
+        }
+    }
+
+    #[test]
+    fn retained_damage_handles_fractional_regions_idle_frames_and_resize() {
+        let Some(mut gpu) = headless() else { return };
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(40, 40, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        let initial = recorder.finish();
+        gpu.render_damage(&initial, &Damage::None);
+        recorder.begin(40, 40, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        recorder.fill_rect(
+            rect(0.0, 0.0, 20.0, 20.0),
+            Color::rgba(240, 80, 50, 128),
+            0.0,
+        );
+        let list = recorder.finish();
+        let damage = Damage::Partial(vec![Bounds::new(-2.2, -3.6, 20.4, 20.5)]);
+        let partial = gpu.render_damage_to_pixels(&list, &damage);
+        assert_eq!(partial, gpu.render_to_pixels(&list));
+        #[cfg(feature = "perf-metrics")]
+        creamui_core::metrics::reset_frame_metrics();
+        assert_eq!(partial, gpu.render_damage_to_pixels(&list, &Damage::None));
+        #[cfg(feature = "perf-metrics")]
+        assert_eq!(creamui_core::metrics::frame_metrics().gpu_pixels_redrawn, 0);
+        recorder.begin(
+            55,
+            25,
+            1.0,
+            Color::rgba(10, 20, 30, 100),
+            ColorScheme::default(),
+        );
+        recorder.fill_rect(rect(30.0, 5.0, 20.0, 10.0), Color::rgb(0, 255, 0), 0.0);
+        let resized = recorder.finish();
+        assert_eq!(
+            gpu.render_damage_to_pixels(&resized, &Damage::None),
+            gpu.render_to_pixels(&resized)
+        );
+    }
+
+    #[cfg(feature = "perf-metrics")]
+    #[test]
+    fn partial_gpu_frames_redraw_only_damaged_pixels() {
+        let Some(mut gpu) = headless() else { return };
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(100, 100, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        let initial = recorder.finish();
+        gpu.render_damage(&initial, &Damage::Full);
+        recorder.begin(100, 100, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        recorder.fill_rect(rect(10.0, 10.0, 10.0, 10.0), Color::rgb(255, 0, 0), 0.0);
+        let next = recorder.finish();
+        let damage = crate::display_list::damage(Some(&initial), &next);
+        creamui_core::metrics::reset_frame_metrics();
+        gpu.render_damage(&next, &damage);
+        assert_eq!(
+            creamui_core::metrics::frame_metrics().gpu_pixels_redrawn,
+            144
+        );
+    }
+
+    #[test]
+    fn alternating_gpu_destinations_receive_complete_retained_frames() {
+        let Some(mut gpu) = headless() else { return };
+        let device = gpu.renderer.device.clone();
+        let targets: Vec<_> = (0..3)
+            .map(|_| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("creamui-test-present-target"),
+                    size: wgpu::Extent3d {
+                        width: 80,
+                        height: 40,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+                })
+            })
+            .collect();
+        let mut retained = None;
+        let mut previous = None;
+        for phase in 0..9 {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(
+                80,
+                40,
+                1.0,
+                Color::rgba(10, 20, 30, 70),
+                ColorScheme::default(),
+            );
+            recorder.fill_rect(
+                rect(5.0 + phase as f32 * 3.0, 10.0, 15.0, 15.0),
+                Color::rgba(220, 100, 30, 120),
+                3.0,
+            );
+            let list = recorder.finish();
+            let damage = crate::display_list::damage(previous.as_ref(), &list);
+            let frame = update_retained(
+                &mut retained,
+                &mut gpu.renderer,
+                &list,
+                &damage,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            );
+            let target = &targets[phase % targets.len()];
+            let view = target.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(wgpu::TextureFormat::Rgba8Unorm),
+                ..Default::default()
+            });
+            present_retained(&gpu.renderer, frame, target, &view, phase % 2 == 0);
+            assert_eq!(
+                read_pixels(&gpu.renderer, target),
+                gpu.render_to_pixels(&list),
+                "phase {phase}"
+            );
+            previous = Some(list);
+        }
     }
 
     #[test]

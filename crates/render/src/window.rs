@@ -980,7 +980,7 @@ impl Pipeline {
             frame.report.backend = presenter.name();
             let presented = match presenter {
                 #[cfg(not(target_arch = "wasm32"))]
-                Presenter::Gpu(surface) => surface.present(&list),
+                Presenter::Gpu(surface) => surface.present(&list, &damage),
                 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 Presenter::Software(surface) => {
                     let raster = frame

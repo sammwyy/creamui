@@ -4,6 +4,12 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- GPU windows retain a color texture and redraw calculated damage, clearing
+  translucent regions before replay and culling unrelated instance ranges.
+  Each swapchain buffer receives the complete retained frame by texture copy
+  or fullscreen blit, without relying on buffer age. Resize forces a full draw.
+  Devtools reports GPU pixel and instance counts; headless rendering exposes
+  the same retained path for pixel checks.
 - GPU atlas pressure reclaims cold glyph shelves in batches, preserving hot
   glyph coordinates and uploads. Reused slot handles validate their glyph key,
   and cleared shelf padding keeps filtered samples isolated.

@@ -84,6 +84,8 @@ impl<'a> RuntimeTransaction<'a> {
         }
         if flags.contains(DirtyFlags::STRUCTURE) {
             self.runtime.paint_order_dirty = true;
+            self.runtime.hit_order_dirty = true;
+            self.runtime.focus_order_dirty = true;
         }
     }
 
@@ -206,6 +208,9 @@ impl<'a> RuntimeTransaction<'a> {
         for child in children {
             self.remove_subtree(child);
         }
+        if self.runtime.root == Some(root) {
+            self.runtime.set_root(None);
+        }
         self.runtime.nodes.remove(root);
         let _ = self.runtime.taffy.remove(taffy_node);
         if let Some(parent) = parent {
@@ -233,6 +238,7 @@ impl<'a> RuntimeTransaction<'a> {
                         self.touch(parent, DirtyFlags::LAYOUT);
                     }
                     self.runtime.paint_order_dirty = true;
+                    self.runtime.hit_order_dirty = true;
                 }
                 if changed {
                     if let Some(taffy_node) =
@@ -356,6 +362,7 @@ impl<'a> RuntimeTransaction<'a> {
                 {
                     self.touch(node, DirtyFlags::HIT_TEST);
                     self.runtime.paint_order_dirty = true;
+                    self.runtime.hit_order_dirty = true;
                     self.damage_subtree(node);
                 }
             }
@@ -418,8 +425,15 @@ impl<'a> RuntimeTransaction<'a> {
                 if let Some(n) = self.runtime.nodes.get_mut(node) {
                     let listed = (n.events.is_interactive(), n.events.focusable);
                     n.events = handlers;
-                    if listed != (n.events.is_interactive(), n.events.focusable) {
+                    let updated = (n.events.is_interactive(), n.events.focusable);
+                    if listed != updated {
                         self.touch(node, DirtyFlags::HIT_TEST);
+                        if listed.0 != updated.0 {
+                            self.runtime.hit_membership.push(node);
+                        }
+                        if listed.1 != updated.1 {
+                            self.runtime.focus_order_dirty = true;
+                        }
                     }
                 }
             }

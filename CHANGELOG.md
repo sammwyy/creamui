@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Runtime handler changes update hit membership directly. Paint-order changes
+  update ranks while preserving spatial entries, and focus changes rebuild
+  only focus order. Removing the runtime root clears retained hit and focus state.
 - ABI-v2 retained trees can run in native windows through `cui_run_window` or
   `RuntimeTree::run_window`. C mutations schedule frames in the same runtime
   used for layout, painting, and input.

@@ -14,8 +14,7 @@ Current limitations and work still to do. Implemented changes belong in
   and transformed hit regions for those shapes. Runtime windows currently
   apply translation, per-primitive opacity, and rectangular ancestor clips.
 - Revisit wide-tree costs: layout-rect sync still visits every direct flow
-  child of a wide container on a changed path; changes to hit-list membership or
-  order rebuild the full hit list.
+  child of a wide container on a changed path.
 - After runtime integration, add a tree inspector, invalidation reasons,
   and damage/layout/hit-region overlays to devtools. F3 and
   `CUI_FRAME_LOG=1` already report per-frame timings and metrics.

@@ -164,9 +164,6 @@ fn bench_compute_layout_after_single_leaf_style_change(c: &mut Criterion) {
     group.finish();
 }
 
-/// `rebuild_hit_test` cost as a function of total tree size, with a single
-/// interactive leaf — walks every node to find interactive ones, so this
-/// is expected to scale with tree size rather than interactive-node count.
 fn bench_rebuild_hit_test(c: &mut Criterion) {
     let mut group = c.benchmark_group("runtime/rebuild_hit_test");
     for &count in &[1_000usize, 10_000, 50_000] {
@@ -180,17 +177,18 @@ fn bench_rebuild_hit_test(c: &mut Criterion) {
             .expect("mount_legacy_widget touches every node it creates");
         drop(tx);
         runtime.set_root(Some(root));
+        runtime.rebuild_hit_test();
+        let mut interactive = false;
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.iter(|| {
-                // `SetEventHandlers` always marks HIT_TEST dirty (handlers
-                // aren't diffable), so this re-dirties the list each
-                // iteration instead of measuring an already-fresh no-op.
+                interactive = !interactive;
                 let mut tx = runtime.transaction();
                 tx.apply(Mutation::SetEventHandlers {
                     node: leaf,
                     handlers: creamui_core::runtime::EventState {
-                        on_click: Some(std::rc::Rc::new(|| {})),
+                        on_click: interactive
+                            .then(|| std::rc::Rc::new(|| {}) as std::rc::Rc<dyn Fn()>),
                         ..Default::default()
                     },
                 });

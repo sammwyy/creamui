@@ -137,7 +137,9 @@ struct SystemBarsProvider {
 /// Only callable while a window is building its widget tree. The tree
 /// rebuilds when the mode changes.
 pub fn use_system_bars() -> SystemBars {
-    creamui_reactive::use_context::<SystemBarsProvider>().mode.get()
+    creamui_reactive::use_context::<SystemBarsProvider>()
+        .mode
+        .get()
 }
 
 /// Width classes for adaptive layouts.

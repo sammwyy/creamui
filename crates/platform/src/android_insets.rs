@@ -46,11 +46,11 @@ pub(crate) fn sync_system_bars(light_background: bool) -> bool {
         Ok(())
     });
     result
-    .map_err(|err| {
-        log::debug!("creamui-platform: system bar style unavailable: {err}");
-        err
-    })
-    .is_ok()
+        .map_err(|err| {
+            log::debug!("creamui-platform: system bar style unavailable: {err}");
+            err
+        })
+        .is_ok()
 }
 
 fn note_insets(area: SafeArea) {

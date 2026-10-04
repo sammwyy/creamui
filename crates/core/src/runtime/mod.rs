@@ -70,15 +70,18 @@ pub struct Runtime {
     layout_roots: Vec<RuntimeNodeId>,
     /// Makes the next rect sync visit every node, e.g. after the root moved.
     full_layout_sync: bool,
-    /// Set when the hit-test list's membership or order may have changed
-    /// (structure, interactivity, focusability, positioning); lets
-    /// [`Runtime::rebuild_hit_test`] skip the tree walk otherwise.
+    /// Set when hit membership, order, or focus order may have changed.
     hit_test_dirty: bool,
+    hit_order_dirty: bool,
+    focus_order_dirty: bool,
+    hit_membership: Vec<RuntimeNodeId>,
     /// Listed nodes whose rect moved, patched in place when the list's
     /// membership is otherwise unchanged.
     hit_rects: Vec<RuntimeNodeId>,
     hit_entries: Vec<HitEntry>,
+    hit_ranks: Vec<usize>,
     hit_index: events::HitIndex,
+    paint_ranks: HashMap<RuntimeNodeId, usize>,
     focus_order: Vec<RuntimeNodeId>,
     pointer: PointerState,
     /// Nodes with a pending fragment regeneration — appended to whenever a
@@ -109,9 +112,14 @@ impl Runtime {
             layout_roots: Vec::new(),
             full_layout_sync: false,
             hit_test_dirty: false,
+            hit_order_dirty: false,
+            focus_order_dirty: false,
+            hit_membership: Vec::new(),
             hit_rects: Vec::new(),
             hit_entries: Vec::new(),
+            hit_ranks: Vec::new(),
             hit_index: events::HitIndex::default(),
+            paint_ranks: HashMap::new(),
             focus_order: Vec::new(),
             pointer: PointerState::default(),
             paint_queue: Vec::new(),
@@ -140,6 +148,8 @@ impl Runtime {
         if self.root != id {
             self.full_layout_sync = true;
             self.hit_test_dirty = true;
+            self.hit_order_dirty = true;
+            self.focus_order_dirty = true;
             self.paint_order_dirty = true;
         }
         self.root = id;

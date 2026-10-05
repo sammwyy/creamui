@@ -114,6 +114,7 @@ pub struct TextController {
     cursor: Signal<usize>,
     selection: Signal<TextSelection>,
     guard: Rc<std::cell::RefCell<Option<Box<ChangeGuard>>>>,
+    revision: Rc<Cell<u64>>,
 }
 
 impl TextController {
@@ -130,6 +131,7 @@ impl TextController {
                 focus: end,
             }),
             guard: Rc::new(std::cell::RefCell::new(None)),
+            revision: Rc::new(Cell::new(0)),
         }
     }
 
@@ -157,18 +159,25 @@ impl TextController {
     /// past either end of the text) must not re-notify subscribers each
     /// time — see [`Signal::set_if_changed`].
     pub fn set_cursor(&self, cursor: usize) {
-        self.cursor
-            .set_if_changed(cursor.min(self.value.peek().len()));
+        let cursor = text_boundary(&self.value.peek(), cursor);
+        if self.cursor.peek() != cursor {
+            self.advance_revision();
+        }
+        self.cursor.set_if_changed(cursor);
     }
 
     /// Like [`TextController::set_cursor`], called just as often while
     /// dragging a selection.
     pub fn set_selection(&self, selection: TextSelection) {
-        let len = self.value.peek().len();
-        self.selection.set_if_changed(TextSelection {
-            anchor: selection.anchor.min(len),
-            focus: selection.focus.min(len),
-        });
+        let value = self.value.peek();
+        let selection = TextSelection {
+            anchor: text_boundary(&value, selection.anchor),
+            focus: text_boundary(&value, selection.focus),
+        };
+        if self.selection.peek() != selection {
+            self.advance_revision();
+        }
+        self.selection.set_if_changed(selection);
     }
 
     /// Proposes `next` as the new value. If a guard is installed (see
@@ -179,25 +188,72 @@ impl TextController {
     /// may rewrite it (e.g. truncate, strip characters). With no guard
     /// installed, `next` is always accepted as-is.
     pub fn set_value(&self, next: impl Into<String>) {
-        let next = next.into();
+        self.apply_value(next.into());
+    }
+
+    fn apply_value(&self, next: String) -> bool {
         let current = self.value.peek();
         let accepted = match self.guard.borrow().as_ref() {
             Some(guard) => guard(&current, &next),
             None => Some(next),
         };
-        let Some(text) = accepted else { return };
-        let len = text.len();
-        self.value.set(text);
-        if self.cursor.peek() > len {
-            self.cursor.set(len);
-        }
+        let Some(text) = accepted else {
+            return false;
+        };
+        let cursor = text_boundary(&text, self.cursor.peek());
         let selection = self.selection.peek();
-        if selection.anchor > len || selection.focus > len {
-            self.selection.set(TextSelection {
-                anchor: selection.anchor.min(len),
-                focus: selection.focus.min(len),
+        let selection = TextSelection {
+            anchor: text_boundary(&text, selection.anchor),
+            focus: text_boundary(&text, selection.focus),
+        };
+        self.advance_revision();
+        self.value.set(text);
+        self.cursor.set_if_changed(cursor);
+        self.selection.set_if_changed(selection);
+        true
+    }
+
+    fn advance_revision(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+    }
+
+    fn paste_completion(&self) -> impl FnOnce(String) + 'static {
+        self.advance_revision();
+        let controller = self.clone();
+        let revision = self.revision.get();
+        move |text| {
+            if controller.revision.get() != revision {
+                return;
+            }
+            let mut value = controller.peek();
+            let selected = controller.selection.peek().range();
+            let range = if selected.is_empty() {
+                let cursor = controller.cursor.peek();
+                cursor..cursor
+            } else {
+                selected
+            };
+            if value.get(range.clone()).is_none() {
+                log::warn!("creamui-widgets: clipboard selection has invalid UTF-8 boundaries");
+                return;
+            }
+            let cursor = range.start + text.len();
+            value.replace_range(range, &text);
+            creamui_reactive::batch(|| {
+                if controller.apply_value(value) {
+                    controller.set_cursor(cursor);
+                    let cursor = controller.cursor.peek();
+                    controller.set_selection(TextSelection {
+                        anchor: cursor,
+                        focus: cursor,
+                    });
+                }
             });
         }
+    }
+
+    pub fn paste(&self) {
+        crate::clipboard::read(self.paste_completion());
     }
 
     /// Installs a hook run before every [`TextController::set_value`] call
@@ -214,6 +270,14 @@ impl TextController {
     pub fn clear_guard(&self) {
         *self.guard.borrow_mut() = None;
     }
+}
+
+fn text_boundary(value: &str, index: usize) -> usize {
+    let mut index = index.min(value.len());
+    while !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 impl Default for TextController {
@@ -598,6 +662,77 @@ impl<T: Clone + PartialEq + 'static> Default for SidebarNavController<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_paste_replaces_unicode_selection_and_respects_change_guards() {
+        let controller = TextController::new("héllo");
+        controller.set_selection(TextSelection {
+            anchor: 1,
+            focus: 3,
+        });
+        controller.paste_completion()("🌱".into());
+        assert_eq!(controller.peek(), "h🌱llo");
+        assert_eq!(controller.cursor(), 5);
+        assert_eq!(
+            controller.selection(),
+            TextSelection {
+                anchor: 5,
+                focus: 5
+            }
+        );
+        controller.on_change(|_, _| None);
+        controller.paste_completion()("blocked".into());
+        assert_eq!(controller.peek(), "h🌱llo");
+        assert_eq!(controller.cursor(), 5);
+    }
+
+    #[test]
+    fn pasted_text_guards_keep_cursor_and_selection_at_valid_boundaries() {
+        let controller = TextController::new("a");
+        controller.on_change(|_, _| Some("🌱".into()));
+        controller.paste_completion()("x".into());
+        assert_eq!(controller.peek(), "🌱");
+        assert_eq!(controller.cursor(), 0);
+        assert_eq!(
+            controller.selection(),
+            TextSelection {
+                anchor: 0,
+                focus: 0
+            }
+        );
+        controller.set_cursor(3);
+        assert_eq!(controller.cursor(), 0);
+        controller.set_selection(TextSelection {
+            anchor: 1,
+            focus: 9,
+        });
+        assert_eq!(
+            controller.selection(),
+            TextSelection {
+                anchor: 0,
+                focus: 4
+            }
+        );
+    }
+
+    #[test]
+    fn delayed_paste_discards_replies_after_edits_navigation_or_newer_requests() {
+        let controller = TextController::new("abc");
+        let stale = controller.paste_completion();
+        controller.set_value("abcd");
+        controller.set_value("abc");
+        stale("stale".into());
+        assert_eq!(controller.peek(), "abc");
+        let stale = controller.paste_completion();
+        controller.set_cursor(0);
+        stale("stale".into());
+        assert_eq!(controller.peek(), "abc");
+        let stale = controller.paste_completion();
+        let latest = controller.paste_completion();
+        stale("stale".into());
+        latest("new".into());
+        assert_eq!(controller.peek(), "newabc");
+    }
 
     #[test]
     fn set_value_updates_cursor_and_selection_when_they_fall_out_of_range() {

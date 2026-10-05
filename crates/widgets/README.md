@@ -18,8 +18,17 @@ let save = Button::new("Save", || save_document());
 
 See the [component guide](https://github.com/sammwyy/creamui/blob/main/docs/components.md) for the full component map.
 
-`FilePicker` uses native desktop dialogs and a hosted Android path prompt.
+`FilePicker` uses native desktop and browser dialogs and a hosted Android
+path prompt. Selection callbacks receive `SelectedFile`: `name()` returns
+its filename, `path()` returns a native path when available, and
+`read_bytes().await` reads data without blocking the UI thread.
 Keep a `FilePickerController` per window and wrap application content with
 `controller.host(...)` in the reactive build closure. See the
 [file picker guide](../../docs/components.md#file-pickers) for context,
 validation, and browser support.
+
+Browser text inputs and text areas support asynchronous clipboard shortcuts.
+`TextInput::controlled` and `TextArea::controlled` retain paste targets across
+rebuilds through their `TextController`, discarding a pending result when
+editing state changes. Clipboard access requires HTTPS or localhost and the
+browser's permission or activation policy.

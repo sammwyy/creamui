@@ -17,6 +17,7 @@ creamui-theme = { workspace = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 log = "0.4"
+futures-channel = "0.3"
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 arboard = { workspace = true }
@@ -25,3 +26,12 @@ rfd = { workspace = true }
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
 ndk-context = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Blob", "Clipboard", "Document", "Element", "Event", "EventTarget", "File", "FileList", "HtmlElement", "HtmlInputElement", "Navigator", "Node", "Window"] }
+
+[dev-dependencies]
+pollster = { workspace = true }

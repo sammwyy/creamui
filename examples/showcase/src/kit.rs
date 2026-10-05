@@ -312,7 +312,7 @@ pub fn AlertDialog(
 #[component]
 pub fn FilePicker(
     value: String,
-    on_change: Box<dyn Fn(std::path::PathBuf)>,
+    on_change: Box<dyn Fn(creamui_widgets::SelectedFile)>,
     title: String,
     filter_label: String,
     filter_extensions: Vec<String>,

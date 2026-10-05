@@ -32,14 +32,19 @@ macro_rules! impl_styled_field {
     };
 }
 
+#[cfg(target_arch = "wasm32")]
+mod browser;
+mod clipboard;
 mod components;
 mod controller;
 mod file_prompt;
+mod selected_file;
 pub use components::{
     Choice, Icon, IconImage, IconSource, NavigationItem, Surface, SurfaceRole, Symbol,
 };
 pub use creamui_core::Styled;
 pub use file_prompt::FilePickerController;
+pub use selected_file::SelectedFile;
 pub mod layout;
 pub use layout::CUIWindowDragArea;
 pub mod raw;

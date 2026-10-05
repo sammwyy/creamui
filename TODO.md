@@ -16,8 +16,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## ABI and platforms
 
-- Add asynchronous browser file selection and clipboard bridges. FilePicker
-  is disabled on WASM unless an application hosts a local path prompt.
 - Extend Android support beyond GPU presentation: add CPU presentation and
   surface recreation after suspension, and define multi-window behavior.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland

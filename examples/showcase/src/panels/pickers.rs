@@ -28,7 +28,7 @@ pub fn PickersPanel(
         <RawView style={column(theme.spacing_small)}>
             <FilePicker
                 value={file_label}
-                on_change={Box::new(move |path: std::path::PathBuf| set_file.set(path.display().to_string())) as Box<dyn Fn(std::path::PathBuf)>}
+                on_change={Box::new(move |file: creamui_widgets::SelectedFile| set_file.set(file.path().map_or_else(|| file.name().to_owned(), |path| path.display().to_string()))) as Box<dyn Fn(creamui_widgets::SelectedFile)>}
                 title={"Choose an asset".to_owned()}
                 filter_label={"Images".to_owned()}
                 filter_extensions={vec!["png".to_owned(), "jpg".to_owned(), "jpeg".to_owned(), "webp".to_owned()]}

@@ -98,8 +98,8 @@ demo/serve.sh          # serves demo/ statically at http://localhost:8080
 
 Open <http://localhost:8080/showcase/>. Its canvas fills the whole page and
 takes mouse/keyboard input like a native window. See
-[`demo/showcase`](demo/showcase) for the browser-specific limitations of
-native file dialogs and clipboard access, and `demo/build.sh --dev` for a
+[`demo/showcase`](demo/showcase) for asynchronous file selection and clipboard
+access, and `demo/build.sh --dev` for a
 faster, unoptimized build while iterating.
 
 ## Android MVP

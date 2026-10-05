@@ -30,3 +30,31 @@ jobs:
       - name: Test workspace
         if: runner.os != 'Linux'
         run: cargo test --workspace
+
+  browser:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check browser fixture formatting
+        run: cargo fmt --manifest-path crates/widgets/tests/browser/Cargo.toml --check
+      - name: Install browser test tools
+        run: |
+          cargo install wasm-pack --version 0.13.1 --locked
+          npm ci --prefix crates/widgets/tests/browser
+          cd crates/widgets/tests/browser
+          npx playwright install --with-deps chromium
+      - name: Build browser bridge fixture
+        run: wasm-pack build crates/widgets/tests/browser --target web --dev --out-dir pkg --out-name bridges
+      - name: Test browser bridges
+        run: npm test --prefix crates/widgets/tests/browser
+      - name: Check browser examples
+        run: cargo check -p showcase -p pickers -p creamui-showcase-web --target wasm32-unknown-unknown

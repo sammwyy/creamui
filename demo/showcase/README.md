@@ -10,13 +10,13 @@ Build every demo under `demo/` (this one included) and serve them statically:
 Then open <http://localhost:8080/showcase/>. The page gets a canvas from
 `winit`, sized to fill the whole browser window via CSS; it
 uses CreamUI's normal widget tree and interactions, so theme, navigation,
-inputs, sliders, tabs, scrolling and pickers that do not require host APIs
-work in the browser.
+inputs, sliders, tabs, scrolling and file selection work in the browser.
 
 The web bundle includes Liberation Sans under the SIL Open Font License
 (`assets/OFL-LiberationSans.txt`). Browser WASM cannot load system font files,
 so the demo registers this face before building its first widget tree.
 
-The native file dialog and synchronous clipboard integration are intentionally
-unavailable on WASM. A browser file/clipboard bridge needs asynchronous web
-APIs and is outside this small standalone demo.
+File pickers return browser-backed `SelectedFile` handles whose bytes can be
+read asynchronously. Text inputs and text areas use asynchronous browser
+clipboard APIs. Serve through localhost or HTTPS; clipboard access follows
+the browser's permission and user-activation policy.

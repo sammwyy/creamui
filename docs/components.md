@@ -56,8 +56,8 @@ Buttons, checkboxes, switches, and sliders support focus navigation and keyboard
 
 ## File pickers
 
-Desktop `FilePicker` uses a native file dialog. Android uses a themed path
-prompt. Keep one `FilePickerController` per window and build the application's
+Desktop and browser `FilePicker` use native selection dialogs. Android uses
+a themed path prompt. Keep one `FilePickerController` per window and build the application's
 content inside its host on every reactive rebuild:
 
 ```rust
@@ -65,12 +65,14 @@ use creamui_widgets::{FilePicker, FilePickerController};
 
 let prompt = FilePickerController::new();
 let selected = creamui_reactive::Signal::new(String::new());
-// Inside the window's build closure:
 let set_selected = selected.clone();
 let root = prompt.host(|| {
     Box::new(
-        FilePicker::new(selected.get(), move |path| {
-            set_selected.set(path.display().to_string());
+        FilePicker::new(selected.get(), move |file| {
+            set_selected.set(file.path().map_or_else(
+                || file.name().to_owned(),
+                |path| path.display().to_string(),
+            ));
         })
         .title("Open an image")
         .filter("Images", ["png", "jpg"]),
@@ -92,5 +94,15 @@ backdrop click closes it without changing the selection. Android Back dismisses
 the keyboard first. Paths must already be accessible to the application; the
 prompt does not grant storage permissions or resolve document-provider URIs.
 
-Browser file selection still needs an asynchronous host bridge. An unhosted
-WASM `FilePicker` is disabled.
+Selection callbacks receive `SelectedFile`. `name()` returns the filename;
+`path()` is `Some` for desktop/Android selections and `None` for browser files.
+`read_bytes().await` reads data asynchronously on every platform, preserving
+I/O errors. Browser selections keep the file handle without loading its
+contents until requested. Canceling the dialog preserves the current value.
+
+Browser text editors use the asynchronous clipboard API. Use controlled
+editors with `TextController` when edits must survive reactive rebuilds.
+Pending pastes are discarded after a new edit, selection/cursor change, or
+newer paste request. Paste respects the controller's change guard. Clipboard
+access requires a secure context and the browser's permission or activation
+policy.

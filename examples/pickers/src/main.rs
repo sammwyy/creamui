@@ -81,7 +81,7 @@ fn main() {
                     <TimeInput controller={&time} minute_step={15} popup_width={250.} />
                     <ColorPicker controller={&color_picker} value={selected_color} on_change={move |next| color_set.set(next)} popup_width={292.} />
                     {Box::new(
-                        FilePicker::new(file_name, move |path| file_set.set(path.display().to_string()))
+                        FilePicker::new(file_name, move |file| file_set.set(file.path().map_or_else(|| file.name().to_owned(), |path| path.display().to_string())))
                             .title("Select an image")
                             .filter("Images", ["png", "jpg", "jpeg", "webp"]),
                     ) as BoxedWidget}

@@ -118,8 +118,8 @@ fn file_prompt_validates_paths_and_preserves_edits_across_rebuilds() {
             let chosen = chosen.clone();
             prompt.host(|| {
                 Box::new(
-                    FilePicker::new("", move |path| {
-                        chosen.update(|paths| paths.push(path));
+                    FilePicker::new("", move |file| {
+                        chosen.update(|paths| paths.push(file.path().unwrap().to_path_buf()));
                     })
                     .prompt(&prompt)
                     .filter("Rust manifests", ["toml"]),

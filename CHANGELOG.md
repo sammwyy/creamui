@@ -4,6 +4,19 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Browser file pickers open asynchronous native selection dialogs, apply
+  extension filters, and release their DOM handlers on selection or cancel.
+  `FilePicker::new` callbacks now receive `SelectedFile`, with a display name,
+  an optional native path, and deferred asynchronous `read_bytes()` on every
+  platform. Native reads run off the UI thread.
+- Browser text inputs and text areas use the asynchronous clipboard API.
+  Controlled editors preserve pending pastes across rebuilds and discard
+  results after newer edits, navigation, or paste requests. Change guards
+  apply to pasted text, and caret/selection indices stay on UTF-8 boundaries.
+- Text areas preserve queued keyboard edits before the next reactive rebuild.
+  Browser integration tests cover file dialogs, cleanup, clipboard access,
+  denied reads, and delayed paste responses.
+
 - Legacy runtime mounting batches each container's child attachment, avoiding
   repeated writes of growing sibling lists while preserving child order.
 
@@ -19,8 +32,7 @@ All notable changes to CreamUI will be documented in this file.
   pointer and focus navigation. Dialogs share that isolation. Themed text
   inputs forward IME eligibility, and opening a modal enables the keyboard.
 - File pickers expose their themed box styles to the scene painter and retain
-  common style overrides. Narrow showcase cards stack vertically. Unhosted
-  browser file pickers are disabled while the asynchronous bridge is pending.
+  common style overrides. Narrow showcase cards stack vertically.
 - Android inset and system-bar calls use the window's actual Activity;
   system-bar mutations run on the Java UI thread. The platform
   `sync_system_bars` function now requires a `PlatformWindow` argument.

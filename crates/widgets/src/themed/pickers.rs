@@ -1,9 +1,9 @@
 use super::*;
 use crate::layout::{column, fixed, padding, row};
 use crate::raw::{DateTime, RawColorPicker, RawFilePicker};
+use crate::SelectedFile;
 use creamui_core::layout::{AlignItems, Dimension, LengthPercentageAuto, Position};
 use creamui_core::Key;
-use std::path::PathBuf;
 
 fn popup_style(width: f32, top: f32, gap: f32, padding_amount: f32) -> Style {
     padding(
@@ -792,7 +792,7 @@ impl creamui_core::Styled for ColorPicker {
     }
 }
 
-/// A native desktop file dialog or an Android file path prompt.
+/// A desktop or browser file dialog, or an Android file path prompt.
 /// Android requires a surrounding `FilePickerController::host`.
 pub struct FilePicker {
     theme: Theme,
@@ -802,7 +802,7 @@ pub struct FilePicker {
     title: String,
     filters: Vec<(String, Vec<String>)>,
     prompt: Option<crate::FilePickerController>,
-    on_change: Rc<dyn Fn(PathBuf)>,
+    on_change: Rc<dyn Fn(SelectedFile)>,
     disabled: bool,
     raw: std::cell::OnceCell<RawFilePicker>,
 }
@@ -814,13 +814,13 @@ impl FilePicker {
             ..Default::default()
         }
     }
-    pub fn new(value: impl Into<String>, on_change: impl Fn(PathBuf) + 'static) -> Self {
+    pub fn new(value: impl Into<String>, on_change: impl Fn(SelectedFile) + 'static) -> Self {
         Self::from_layout(Self::default_style(), value, on_change)
     }
     fn from_layout(
         style: Style,
         value: impl Into<String>,
-        on_change: impl Fn(PathBuf) + 'static,
+        on_change: impl Fn(SelectedFile) + 'static,
     ) -> Self {
         let theme = use_theme();
         Self {
@@ -901,11 +901,16 @@ impl FilePicker {
                         crate::file_prompt::FileRequest {
                             title: title.clone(),
                             filters: filters.clone(),
-                            on_change: callback.clone(),
+                            on_change: {
+                                let callback = callback.clone();
+                                Rc::new(move |path| callback(SelectedFile::from_path(path)))
+                            },
                         },
                     );
                     return;
                 }
+                #[cfg(target_arch = "wasm32")]
+                crate::browser::pick_file(&filters, callback.clone());
                 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
                 {
                     let mut dialog = rfd::FileDialog::new().set_title(&title);
@@ -913,14 +918,14 @@ impl FilePicker {
                         dialog = dialog.add_filter(name, extensions);
                     }
                     if let Some(path) = dialog.pick_file() {
-                        callback(path);
+                        callback(SelectedFile::from_path(path));
                     }
                 }
             },
         )
         .placeholder(self.placeholder.clone())
         .with_style(self.style.clone())
-        .disabled(self.disabled || (cfg!(target_arch = "wasm32") && self.prompt.is_none()))
+        .disabled(self.disabled)
     }
 }
 impl Widget for FilePicker {

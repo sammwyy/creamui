@@ -65,6 +65,12 @@ impl TextInput {
         self
     }
 
+    fn with_paste_controller(mut self, controller: &crate::TextController) -> Self {
+        let controller = controller.clone();
+        self.inner = self.inner.paste_handler(move || controller.paste());
+        self
+    }
+
     pub fn clipboard_enabled(mut self, enabled: bool) -> Self {
         self.inner = self.inner.clipboard_enabled(enabled);
         self
@@ -92,6 +98,7 @@ impl TextInput {
                 let set = controller.clone();
                 move |selection| set.set_selection(selection)
             })
+            .with_paste_controller(controller)
     }
 
     pub fn cursor(mut self, cursor: usize, on_change: impl Fn(usize) + 'static) -> Self {
@@ -272,6 +279,12 @@ impl TextArea {
         self
     }
 
+    fn with_paste_controller(mut self, controller: &crate::TextController) -> Self {
+        let controller = controller.clone();
+        self.inner = self.inner.paste_handler(move || controller.paste());
+        self
+    }
+
     pub fn clipboard_enabled(mut self, enabled: bool) -> Self {
         self.inner = self.inner.clipboard_enabled(enabled);
         self
@@ -307,6 +320,7 @@ impl TextArea {
         .selection(controller.selection(), move |next| {
             selection_set.set_selection(next)
         })
+        .with_paste_controller(controller)
     }
 }
 

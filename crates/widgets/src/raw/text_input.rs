@@ -1,9 +1,5 @@
 use super::*;
-/// An unstyled single-line text input. The caller owns the current text
-/// (typically a `String` `Signal`) and updates it from `on_change`, fired
-/// on every keystroke — same "no internal state" pattern as every other
-/// widget. Supports appending characters and backspace; cursor
-/// positioning/selection is not implemented yet (see ROADMAP.md).
+/// An unstyled single-line input with application-owned text and selection.
 pub struct RawTextInput {
     pub style: creamui_core::Style,
     pub value: String,
@@ -19,6 +15,9 @@ pub struct RawTextInput {
     pub on_submit: Rc<dyn Fn()>,
     pub on_key_press: Rc<dyn Fn(KeyInput)>,
     pub clipboard_enabled: bool,
+    paste_handler: Option<Rc<dyn Fn()>>,
+    lifetime: Rc<()>,
+    keyboard_revision: Rc<Cell<u64>>,
     keyboard_value: Rc<RefCell<String>>,
     keyboard_cursor: Rc<Cell<usize>>,
     keyboard_selection: Rc<Cell<TextSelection>>,
@@ -44,6 +43,9 @@ pub struct RawTextArea {
     pub on_selection_change: Rc<dyn Fn(TextSelection)>,
     pub on_ctrl_o: Rc<dyn Fn()>,
     pub clipboard_enabled: bool,
+    paste_handler: Option<Rc<dyn Fn()>>,
+    lifetime: Rc<()>,
+    keyboard_revision: Rc<Cell<u64>>,
     pub wrap: bool,
     // Pointer interaction can outlive a reactive frame when renders are
     // coalesced. This tiny ephemeral cell keeps drag selection anchored
@@ -51,6 +53,8 @@ pub struct RawTextArea {
     drag_anchor: Rc<Cell<usize>>,
     drag_focus: Rc<Cell<usize>>,
     keyboard_selection: Rc<Cell<TextSelection>>,
+    keyboard_value: Rc<RefCell<String>>,
+    keyboard_cursor: Rc<Cell<usize>>,
 }
 
 impl RawTextArea {
@@ -63,6 +67,7 @@ impl RawTextArea {
     ) -> Self {
         let value = value.into();
         let cursor = value.len();
+        let keyboard_value = Rc::new(RefCell::new(value.clone()));
         Self {
             style: creamui_core::Style::from(style)
                 .color(text_color)
@@ -84,7 +89,12 @@ impl RawTextArea {
             on_selection_change: Rc::new(|_| {}),
             on_ctrl_o: Rc::new(|| {}),
             clipboard_enabled: true,
+            paste_handler: None,
+            lifetime: Rc::new(()),
+            keyboard_revision: Rc::new(Cell::new(0)),
             wrap: false,
+            keyboard_value,
+            keyboard_cursor: Rc::new(Cell::new(cursor)),
             drag_anchor: Rc::new(Cell::new(cursor)),
             drag_focus: Rc::new(Cell::new(cursor)),
             keyboard_selection: Rc::new(Cell::new(TextSelection {
@@ -98,6 +108,7 @@ impl RawTextArea {
     /// keyboard navigation or pointer placement.
     pub fn cursor(mut self, cursor: usize, on_change: impl Fn(usize) + 'static) -> Self {
         self.cursor = cursor.min(self.value.len());
+        self.keyboard_cursor.set(self.cursor);
         self.drag_anchor.set(self.cursor);
         self.drag_focus.set(self.cursor);
         self.keyboard_selection.set(TextSelection {
@@ -146,6 +157,11 @@ impl RawTextArea {
     /// focus. The app decides what opening a document means.
     pub fn on_ctrl_o(mut self, callback: impl Fn() + 'static) -> Self {
         self.on_ctrl_o = Rc::new(callback);
+        self
+    }
+
+    pub(crate) fn paste_handler(mut self, handler: impl Fn() + 'static) -> Self {
+        self.paste_handler = Some(Rc::new(handler));
         self
     }
 
@@ -527,15 +543,21 @@ impl Widget for RawTextArea {
     }
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
-        let value = self.value.clone();
+        let keyboard_value = self.keyboard_value.clone();
         let on_change = self.on_change.clone();
-        let cursor = self.cursor;
+        let keyboard_cursor = self.keyboard_cursor.clone();
         let on_cursor_change = self.on_cursor_change.clone();
         let keyboard_selection = self.keyboard_selection.clone();
         let on_selection_change = self.on_selection_change.clone();
         let on_ctrl_o = self.on_ctrl_o.clone();
         let clipboard_enabled = self.clipboard_enabled;
+        let paste_handler = self.paste_handler.clone();
+        let lifetime = Rc::downgrade(&self.lifetime);
+        let revision = self.keyboard_revision.clone();
         Some(Rc::new(move |input| {
+            revision.set(revision.get().wrapping_add(1));
+            let value = keyboard_value.borrow().clone();
+            let cursor = keyboard_cursor.get();
             let selection = keyboard_selection.get();
             if clipboard_enabled && input.modifiers.ctrl {
                 match input.key {
@@ -545,6 +567,7 @@ impl Widget for RawTextArea {
                             focus: value.len(),
                         };
                         keyboard_selection.set(all);
+                        keyboard_cursor.set(value.len());
                         creamui_reactive::batch(|| {
                             on_cursor_change(value.len());
                             on_selection_change(all);
@@ -561,6 +584,12 @@ impl Widget for RawTextArea {
                         let mut next = value.clone();
                         next.replace_range(range.clone(), "");
                         let next_cursor = range.start;
+                        *keyboard_value.borrow_mut() = next.clone();
+                        keyboard_cursor.set(next_cursor);
+                        keyboard_selection.set(TextSelection {
+                            anchor: next_cursor,
+                            focus: next_cursor,
+                        });
                         creamui_reactive::batch(|| {
                             on_change(next);
                             on_cursor_change(next_cursor);
@@ -572,28 +601,20 @@ impl Widget for RawTextArea {
                         return;
                     }
                     Key::Char('v') | Key::Char('V') => {
-                        if let Some(pasted) = clipboard_read() {
-                            let mut next = value.clone();
-                            let range = selection.range();
-                            let next_cursor = if range.is_empty() {
-                                next.insert_str(cursor.min(next.len()), &pasted);
-                                cursor.min(value.len()) + pasted.len()
-                            } else {
-                                next.replace_range(range.clone(), &pasted);
-                                range.start + pasted.len()
-                            };
-                            keyboard_selection.set(TextSelection {
-                                anchor: next_cursor,
-                                focus: next_cursor,
-                            });
-                            creamui_reactive::batch(|| {
-                                on_change(next);
-                                on_cursor_change(next_cursor);
-                                on_selection_change(TextSelection {
-                                    anchor: next_cursor,
-                                    focus: next_cursor,
-                                });
-                            });
+                        if let Some(handler) = &paste_handler {
+                            handler();
+                        } else {
+                            PasteRequest {
+                                value: keyboard_value.clone(),
+                                cursor: keyboard_cursor.clone(),
+                                selection: keyboard_selection.clone(),
+                                revision: revision.clone(),
+                                lifetime: lifetime.clone(),
+                                on_change: on_change.clone(),
+                                on_cursor_change: on_cursor_change.clone(),
+                                on_selection_change: on_selection_change.clone(),
+                            }
+                            .read();
                         }
                         return;
                     }
@@ -602,6 +623,9 @@ impl Widget for RawTextArea {
             }
             if input.modifiers.ctrl && matches!(input.key, Key::Char('o') | Key::Char('O')) {
                 on_ctrl_o();
+                return;
+            }
+            if input.modifiers.ctrl && matches!(input.key, Key::Char(_)) {
                 return;
             }
             let mut next = value.clone();
@@ -709,6 +733,10 @@ impl Widget for RawTextArea {
                 }
             };
             keyboard_selection.set(next_selection);
+            keyboard_cursor.set(next_cursor);
+            if edited {
+                *keyboard_value.borrow_mut() = next.clone();
+            }
             creamui_reactive::batch(|| {
                 if edited {
                     on_change(next);
@@ -803,6 +831,9 @@ impl RawTextInput {
             on_submit: Rc::new(|| {}),
             on_key_press: Rc::new(|_| {}),
             clipboard_enabled: true,
+            paste_handler: None,
+            lifetime: Rc::new(()),
+            keyboard_revision: Rc::new(Cell::new(0)),
             keyboard_value,
             keyboard_cursor: Rc::new(Cell::new(cursor)),
             keyboard_selection: Rc::new(Cell::new(TextSelection {
@@ -833,6 +864,11 @@ impl RawTextInput {
             .color
             .map(|color| color.resolve(&painter.color_scheme()))
             .unwrap_or(Color::rgb(0, 0, 0))
+    }
+
+    pub(crate) fn paste_handler(mut self, handler: impl Fn() + 'static) -> Self {
+        self.paste_handler = Some(Rc::new(handler));
+        self
     }
 
     /// Enables Ctrl/Cmd+V for this field. Text inputs expose the same opt-out
@@ -891,8 +927,6 @@ impl RawTextInput {
         self
     }
 
-    /// How far to shift the value left so its end (editing is append-only)
-    /// stays inside `visible_width` instead of running off the edge.
     fn horizontal_scroll(&self, visible_width: f32) -> f32 {
         let (text_width, _) = crate::text_metrics::measure_family(
             &self.value,
@@ -1074,7 +1108,11 @@ impl Widget for RawTextInput {
         let clipboard_enabled = self.clipboard_enabled;
         let on_submit = self.on_submit.clone();
         let on_key_press = self.on_key_press.clone();
+        let paste_handler = self.paste_handler.clone();
+        let lifetime = Rc::downgrade(&self.lifetime);
+        let revision = self.keyboard_revision.clone();
         Some(Rc::new(move |input: KeyInput| {
+            revision.set(revision.get().wrapping_add(1));
             on_key_press(input);
             if matches!(input.key, Key::Enter) {
                 on_submit();
@@ -1123,36 +1161,28 @@ impl Widget for RawTextInput {
                         return;
                     }
                     Key::Char('v') | Key::Char('V') => {
-                        if let Some(paste) = clipboard_read() {
-                            let range = selected.range();
-                            let mut next = value.clone();
-                            let at = if range.is_empty() {
-                                cursor.min(next.len())
-                            } else {
-                                range.start
-                            };
-                            next.replace_range(
-                                if range.is_empty() { at..at } else { range },
-                                &paste,
-                            );
-                            let at = at + paste.len();
-                            let collapsed = TextSelection {
-                                anchor: at,
-                                focus: at,
-                            };
-                            selection.set(collapsed);
-                            *keyboard_value.borrow_mut() = next.clone();
-                            keyboard_cursor.set(at);
-                            creamui_reactive::batch(|| {
-                                on_change(next);
-                                on_cursor_change(at);
-                                on_selection_change(collapsed);
-                            });
+                        if let Some(handler) = &paste_handler {
+                            handler();
+                        } else {
+                            PasteRequest {
+                                value: keyboard_value.clone(),
+                                cursor: keyboard_cursor.clone(),
+                                selection: selection.clone(),
+                                revision: revision.clone(),
+                                lifetime: lifetime.clone(),
+                                on_change: on_change.clone(),
+                                on_cursor_change: on_cursor_change.clone(),
+                                on_selection_change: on_selection_change.clone(),
+                            }
+                            .read();
                         }
                         return;
                     }
                     _ => {}
                 }
+            }
+            if input.modifiers.ctrl && matches!(input.key, Key::Char(_)) {
+                return;
             }
             let mut next = value.clone();
             let mut at = cursor.min(next.len());
@@ -1257,5 +1287,161 @@ impl Widget for RawTextInput {
 
     fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
         Some(self.drag_handler(Some(content), false))
+    }
+}
+
+struct PasteRequest {
+    value: Rc<RefCell<String>>,
+    cursor: Rc<Cell<usize>>,
+    selection: Rc<Cell<TextSelection>>,
+    revision: Rc<Cell<u64>>,
+    lifetime: std::rc::Weak<()>,
+    on_change: Rc<dyn Fn(String)>,
+    on_cursor_change: Rc<dyn Fn(usize)>,
+    on_selection_change: Rc<dyn Fn(TextSelection)>,
+}
+
+impl PasteRequest {
+    fn read(self) {
+        crate::clipboard::read(self.completion());
+    }
+
+    fn completion(self) -> impl FnOnce(String) {
+        let stamp = self.revision.get();
+        let selected = self.selection.get();
+        let position = self.cursor.get();
+        move |paste| {
+            if self.lifetime.upgrade().is_none()
+                || self.revision.get() != stamp
+                || self.selection.get() != selected
+                || self.cursor.get() != position
+            {
+                return;
+            }
+            let mut next = self.value.borrow().clone();
+            let range = selected.range();
+            let range = if range.is_empty() {
+                position..position
+            } else {
+                range
+            };
+            if next.get(range.clone()).is_none() {
+                return;
+            }
+            let position = range.start + paste.len();
+            next.replace_range(range, &paste);
+            let collapsed = TextSelection {
+                anchor: position,
+                focus: position,
+            };
+            *self.value.borrow_mut() = next.clone();
+            self.cursor.set(position);
+            self.selection.set(collapsed);
+            creamui_reactive::batch(|| {
+                (self.on_change)(next);
+                (self.on_cursor_change)(position);
+                (self.on_selection_change)(collapsed);
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod paste_tests {
+    use super::*;
+
+    fn request(input: &RawTextInput) -> PasteRequest {
+        PasteRequest {
+            value: input.keyboard_value.clone(),
+            cursor: input.keyboard_cursor.clone(),
+            selection: input.keyboard_selection.clone(),
+            revision: input.keyboard_revision.clone(),
+            lifetime: Rc::downgrade(&input.lifetime),
+            on_change: input.on_change.clone(),
+            on_cursor_change: input.on_cursor_change.clone(),
+            on_selection_change: input.on_selection_change.clone(),
+        }
+    }
+
+    #[test]
+    fn raw_paste_discards_results_after_edits_pointer_selection_and_disposal() {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let recorded = changes.clone();
+        let input = RawTextInput::new(
+            Style::default(),
+            "abc",
+            14.0,
+            Color::rgb(0, 0, 0),
+            move |text| recorded.borrow_mut().push(text),
+        );
+        let stale = request(&input).completion();
+        let key = input.on_key().unwrap();
+        key(KeyInput {
+            key: Key::Char('x'),
+            modifiers: Default::default(),
+        });
+        key(KeyInput {
+            key: Key::Backspace,
+            modifiers: Default::default(),
+        });
+        stale("stale".into());
+        assert_eq!(&*changes.borrow(), &["abcx", "abc"]);
+        let stale = request(&input).completion();
+        input.keyboard_selection.set(TextSelection {
+            anchor: 0,
+            focus: 1,
+        });
+        stale("stale".into());
+        assert_eq!(changes.borrow().len(), 2);
+        let stale = request(&input).completion();
+        drop(input);
+        stale("stale".into());
+        assert_eq!(changes.borrow().len(), 2);
+    }
+
+    #[test]
+    fn disabled_clipboard_shortcuts_do_not_insert_command_characters() {
+        let input = RawTextInput::new(Style::default(), "abc", 14.0, Color::rgb(0, 0, 0), |_| {})
+            .clipboard_enabled(false);
+        let area = RawTextArea::new(Style::default(), "abc", 14.0, Color::rgb(0, 0, 0), |_| {})
+            .clipboard_enabled(false);
+        for key in [input.on_key().unwrap(), area.on_key().unwrap()] {
+            for ch in ['a', 'c', 'x', 'v'] {
+                key(KeyInput {
+                    key: Key::Char(ch),
+                    modifiers: creamui_core::Modifiers {
+                        ctrl: true,
+                        ..Default::default()
+                    },
+                });
+            }
+            key(KeyInput {
+                key: Key::Char('x'),
+                modifiers: Default::default(),
+            });
+        }
+        assert_eq!(&*input.keyboard_value.borrow(), "abcx");
+        assert_eq!(&*area.keyboard_value.borrow(), "abcx");
+    }
+
+    #[test]
+    fn text_area_keeps_queued_keyboard_edits_before_a_rebuild() {
+        let value = Rc::new(RefCell::new(String::new()));
+        let recorded = value.clone();
+        let area = RawTextArea::new(
+            Style::default(),
+            "abc",
+            14.0,
+            Color::rgb(0, 0, 0),
+            move |text| *recorded.borrow_mut() = text,
+        );
+        let key = area.on_key().unwrap();
+        for ch in ['x', 'y'] {
+            key(KeyInput {
+                key: Key::Char(ch),
+                modifiers: Default::default(),
+            });
+        }
+        assert_eq!(&*value.borrow(), "abcxy");
     }
 }

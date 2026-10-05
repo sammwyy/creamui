@@ -4,6 +4,21 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- `View::new` defers mounting until a `MountCx` is available. `MountedView`
+  owns a stable runtime root and binding scope, releases both on disposal or
+  drop, and cleans up a partially mounted view after a panic. Deferred and
+  compatible widget views respect detached root mounting. Removing roots or
+  detached subtrees now notifies runtime observers.
+- Normal window, popup, and dynamic-window builders accept retained `View`
+  results alongside widget results. Retained views mount once inside the
+  window's hook context, react directly to signals, theme, and viewport, and
+  dispose on close even when handles retain the pipeline or runtime. Surface
+  suspension keeps the mounted view. Failed mounts use the registered panic
+  handler and release partial nodes before displaying an empty fallback.
+- `CREAMUI_DUMP_JSX` emits generated Rust for native JSX, ABI JSX, and component
+  declarations. Cargo tracks changes to the setting; empty and `0` values
+  disable output.
+
 - Retained branches and keyed lists preserve their position among static
   siblings with hidden anchors, without introducing layout wrappers or gaps.
   Derived conditions and list sources are supported. Surviving keyed rows receive

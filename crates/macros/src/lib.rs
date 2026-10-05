@@ -95,6 +95,12 @@ macro_rules! jsx_common_style_methods {
     };
 }
 
+fn dump_expansion(name: &str, tokens: &TokenStream2) {
+    if std::env::var_os("CREAMUI_DUMP_JSX").is_some_and(|value| !value.is_empty() && value != "0") {
+        eprintln!("[creamui-macros::{name}]\n{tokens}");
+    }
+}
+
 /// Builds a CreamUI widget using JSX-like syntax.
 ///
 /// See the workspace README for the supported component and prop mapping.
@@ -102,7 +108,10 @@ macro_rules! jsx_common_style_methods {
 pub fn jsx(input: TokenStream) -> TokenStream {
     let element = parse_macro_input!(input as Element);
     match element.expand() {
-        Ok(tokens) => tokens.into(),
+        Ok(tokens) => {
+            dump_expansion("jsx", &tokens);
+            tokens.into()
+        }
         Err(error) => error.into_compile_error().into(),
     }
 }
@@ -114,7 +123,10 @@ pub fn jsx(input: TokenStream) -> TokenStream {
 pub fn abi_jsx(input: TokenStream) -> TokenStream {
     let element = parse_macro_input!(input as Element);
     match element.expand_dynamic() {
-        Ok(tokens) => tokens.into(),
+        Ok(tokens) => {
+            dump_expansion("abi_jsx", &tokens);
+            tokens.into()
+        }
         Err(error) => error.into_compile_error().into(),
     }
 }
@@ -127,7 +139,10 @@ pub fn abi_jsx(input: TokenStream) -> TokenStream {
 pub fn component(_attribute: TokenStream, input: TokenStream) -> TokenStream {
     let function = parse_macro_input!(input as ItemFn);
     match expand_component(function) {
-        Ok(tokens) => tokens.into(),
+        Ok(tokens) => {
+            dump_expansion("component", &tokens);
+            tokens.into()
+        }
         Err(error) => error.into_compile_error().into(),
     }
 }

@@ -21,7 +21,7 @@ use crate::raster::Rasterizer;
 use crate::recorder::SceneRecorder;
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
-use creamui_core::runtime::{Mutation, SharedRuntime};
+use creamui_core::runtime::{IntoView, MountedView, Mutation, SharedRuntime, View};
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
     WindowDragHandle,
@@ -676,10 +676,92 @@ struct Pipeline {
     dump_frame_path: Option<String>,
 }
 
+/// Content returned by a window builder. Views mount once; widgets rebuild.
+pub trait WindowContent: IntoView + 'static {
+    const RETAINED: bool;
+}
+
+impl WindowContent for View {
+    const RETAINED: bool = true;
+}
+
+impl WindowContent for BoxedWidget {
+    const RETAINED: bool = false;
+}
+
+impl<W: creamui_core::Widget + 'static> WindowContent for Box<W> {
+    const RETAINED: bool = false;
+}
+
 #[derive(Clone)]
 enum UiSource {
     Legacy(Rc<dyn Fn(Size) -> BoxedWidget>),
-    Runtime(SharedRuntime),
+    Runtime(RuntimeSource),
+}
+
+#[derive(Clone)]
+struct RuntimeSource {
+    runtime: SharedRuntime,
+    owned: Option<Rc<OwnedWindowView>>,
+}
+
+struct OwnedWindowView {
+    build: RefCell<Option<Box<dyn FnOnce(Size) -> View>>>,
+    mounted: RefCell<Option<MountedView>>,
+}
+
+impl RuntimeSource {
+    fn mount(&self, size: Size) {
+        let Some(owned) = &self.owned else {
+            return;
+        };
+        let Some(build) = owned.build.borrow_mut().take() else {
+            return;
+        };
+        let mount = || MountedView::mount_into(self.runtime.clone(), build(size));
+        let mounted = if PANIC_HANDLER.with(|handler| handler.borrow().is_some()) {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(mount)) {
+                Ok(mounted) => mounted,
+                Err(_) => MountedView::mount_into(self.runtime.clone(), Box::new(BlankWidget)),
+            }
+        } else {
+            mount()
+        };
+        *owned.mounted.borrow_mut() = Some(mounted);
+    }
+
+    fn dispose(&self) {
+        if let Some(owned) = &self.owned {
+            let mounted = owned.mounted.borrow_mut().take();
+            drop(mounted);
+        }
+    }
+}
+
+impl UiSource {
+    fn runtime(runtime: SharedRuntime) -> Self {
+        Self::Runtime(RuntimeSource {
+            runtime,
+            owned: None,
+        })
+    }
+
+    fn from_builder<V: WindowContent>(build: impl Fn(Size) -> V + 'static) -> Self {
+        if V::RETAINED {
+            Self::Runtime(RuntimeSource {
+                runtime: SharedRuntime::new(creamui_core::runtime::Runtime::new()),
+                owned: Some(Rc::new(OwnedWindowView {
+                    build: RefCell::new(Some(Box::new(move |size| build(size).into_view()))),
+                    mounted: RefCell::new(None),
+                })),
+            })
+        } else {
+            Self::Legacy(Rc::new(move |size| match build(size).into_view() {
+                View::Legacy(widget) => widget,
+                _ => panic!("rebuilding window content must return a legacy widget"),
+            }))
+        }
+    }
 }
 
 impl Pipeline {
@@ -1088,19 +1170,19 @@ impl AppHandle {
     /// created as soon as [`AppBuilder::run`] starts. Android supports one
     /// activity window; additional requests log a warning without invoking
     /// `on_window_ready`.
-    pub fn append_window(
+    pub fn append_window<V: WindowContent>(
         &self,
         options: WindowOptions,
         clear_color: Color,
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
-        build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+        build_ui: impl Fn(Size) -> V + 'static,
     ) {
         self.commands.borrow_mut().windows.push(PendingWindow {
             options,
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            source: UiSource::Legacy(Rc::new(build_ui)),
+            source: UiSource::from_builder(build_ui),
         });
     }
 
@@ -1116,27 +1198,27 @@ impl AppHandle {
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            source: UiSource::Runtime(runtime),
+            source: UiSource::runtime(runtime),
         });
     }
 
     /// Queues a popup relative to a rectangle in its parent window. Its
     /// requested size remains subject to platform negotiation. Android rejects
     /// native popups; use hosted overlays instead.
-    pub fn append_popup(
+    pub fn append_popup<V: WindowContent>(
         &self,
         options: WindowOptions,
         popup: PopupOptions,
         clear_color: Color,
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
-        build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+        build_ui: impl Fn(Size) -> V + 'static,
     ) {
         self.commands.borrow_mut().windows.push(PendingWindow {
             options,
             popup: Some(popup),
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            source: UiSource::Legacy(Rc::new(build_ui)),
+            source: UiSource::from_builder(build_ui),
         });
     }
 
@@ -1669,12 +1751,12 @@ impl AppBuilder {
 
     /// Queues a window to be opened when [`run`](AppBuilder::run) starts the
     /// shared event loop. See [`crate::run`] for what each argument does.
-    pub fn window(
+    pub fn window<V: WindowContent>(
         mut self,
         mut options: WindowOptions,
         clear_color: Color,
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
-        build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+        build_ui: impl Fn(Size) -> V + 'static,
     ) -> Self {
         if let Some(theme) = self.system_theme {
             options.theme = theme;
@@ -1684,7 +1766,7 @@ impl AppBuilder {
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            source: UiSource::Legacy(Rc::new(build_ui)),
+            source: UiSource::from_builder(build_ui),
         });
         self
     }
@@ -1706,7 +1788,7 @@ impl AppBuilder {
             popup: None,
             clear_color,
             on_window_ready: Box::new(on_window_ready),
-            source: UiSource::Runtime(runtime),
+            source: UiSource::runtime(runtime),
         });
         self
     }
@@ -1814,10 +1896,18 @@ struct TouchGesture {
     scrolling: bool,
 }
 
+impl Drop for WindowState {
+    fn drop(&mut self) {
+        if let UiSource::Runtime(source) = &self.pipeline.source {
+            source.dispose();
+        }
+    }
+}
+
 impl WindowState {
     fn runtime(&self) -> Option<SharedRuntime> {
         match &self.pipeline.source {
-            UiSource::Runtime(runtime) => Some(runtime.clone()),
+            UiSource::Runtime(source) => Some(source.runtime.clone()),
             UiSource::Legacy(_) => None,
         }
     }
@@ -2957,7 +3047,7 @@ impl AppHandler {
         );
 
         let runtime = match &pipeline.source {
-            UiSource::Runtime(runtime) => Some(runtime.clone()),
+            UiSource::Runtime(source) => Some(source.runtime.clone()),
             UiSource::Legacy(_) => None,
         };
 
@@ -3218,10 +3308,9 @@ impl AppHandler {
 
 /// Opens a window and runs the reactive render loop until it is closed.
 ///
-/// `build_ui` is called once up front and again whenever a signal it reads
-/// changes; it must construct a fresh widget tree covering `viewport` each
-/// time (widgets are cheap, immutable descriptions — see
-/// `creamui_core::Widget`). `clear_color` is the color the window is wiped
+/// Builders returning [`View`] mount once inside the window's hook context;
+/// the window disposes the view on close. Builders returning widgets rerun
+/// whenever a signal they read changes. `clear_color` is the color the window is wiped
 /// to before `build_ui`'s tree is painted. `on_window_ready` is called once,
 /// as soon as the window exists, with a [`WindowHandle`] for issuing
 /// window-level operations (resize, move, always-on-top) later — e.g. from
@@ -3229,11 +3318,11 @@ impl AppHandler {
 ///
 /// To open several windows sharing one process and event loop (e.g. a
 /// desktop-shell dock), use [`AppBuilder`] instead.
-pub fn run(
+pub fn run<V: WindowContent>(
     options: WindowOptions,
     clear_color: Color,
     on_window_ready: impl FnOnce(WindowHandle) + 'static,
-    build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+    build_ui: impl Fn(Size) -> V + 'static,
 ) {
     AppBuilder::new()
         .window(options, clear_color, on_window_ready, build_ui)
@@ -3241,12 +3330,12 @@ pub fn run(
 }
 
 #[cfg(all(feature = "platform-android", target_os = "android"))]
-pub fn run_android(
+pub fn run_android<V: WindowContent>(
     app: AndroidApp,
     options: WindowOptions,
     clear_color: Color,
     on_window_ready: impl FnOnce(WindowHandle) + 'static,
-    build_ui: impl Fn(Size) -> BoxedWidget + 'static,
+    build_ui: impl Fn(Size) -> V + 'static,
 ) {
     AppBuilder::new()
         .window(options, clear_color, on_window_ready, build_ui)
@@ -3426,7 +3515,7 @@ fn build_window_spec(
             recorder: SceneRecorder::new(),
             renderer: match &source {
                 UiSource::Legacy(_) => Renderer::new(),
-                UiSource::Runtime(runtime) => Renderer::with_runtime(runtime.clone()),
+                UiSource::Runtime(source) => Renderer::with_runtime(source.runtime.clone()),
             },
             scene: None,
             pending: None,
@@ -3470,7 +3559,10 @@ fn build_window_spec(
         let pipeline = pipeline.clone();
         move || match &pipeline.source {
             UiSource::Legacy(_) => pipeline.build(),
-            UiSource::Runtime(_) => {
+            UiSource::Runtime(source) => {
+                creamui_reactive::untrack(|| {
+                    pipeline.with_scope(|| source.mount(pipeline.viewport.peek()))
+                });
                 pipeline.theme.get();
                 pipeline.chrome.mode.get();
                 pipeline.viewport.get();
@@ -3486,7 +3578,7 @@ fn build_window_spec(
                 pipeline.invalidate_layout();
             }
         });
-        runtime.subscribe(&listener);
+        runtime.runtime.subscribe(&listener);
         Some(listener)
     } else {
         None
@@ -3522,8 +3614,12 @@ mod tests {
             Self::from_source(UiSource::Legacy(Rc::new(build_ui)))
         }
 
+        fn view(build: impl Fn(Size) -> View + 'static) -> Self {
+            Self::from_source(UiSource::from_builder(build))
+        }
+
         fn retained(runtime: SharedRuntime) -> Self {
-            Self::from_source(UiSource::Runtime(runtime))
+            Self::from_source(UiSource::runtime(runtime))
         }
 
         fn from_source(source: UiSource) -> Self {
@@ -3676,7 +3772,7 @@ mod tests {
                 end_calls: Rc::new(Cell::new(0)),
             })
         });
-        let pipeline = harness.state.pipeline;
+        let pipeline = harness.state.pipeline.clone();
         {
             let mut frame = pipeline.frame.borrow_mut();
             frame.presented = Some(previous);
@@ -4000,6 +4096,301 @@ mod tests {
         assert!(runtime
             .with_mut(|runtime| runtime.take_inspection())
             .is_none());
+    }
+
+    #[test]
+    fn owned_view_mounts_once_and_keeps_context_bindings_events_and_pixels() {
+        let mounts = Rc::new(Cell::new(0));
+        let ticks = Signal::new(0u8);
+        let paints = Rc::new(Cell::new(0));
+        let runtime = Rc::new(RefCell::new(None));
+        let mut harness = WindowEventHarness::view({
+            let mounts = mounts.clone();
+            let ticks = ticks.clone();
+            let paints = paints.clone();
+            let runtime = runtime.clone();
+            move |_| {
+                mounts.set(mounts.get() + 1);
+                let ticks = ticks.clone();
+                let paints = paints.clone();
+                let runtime = runtime.clone();
+                View::new(move |cx| {
+                    assert_eq!(
+                        use_viewport(),
+                        Size {
+                            width: 100.0,
+                            height: 100.0
+                        }
+                    );
+                    *runtime.borrow_mut() = Some(cx.runtime().clone());
+                    let node = cx.container();
+                    cx.set_events(
+                        node,
+                        EventState {
+                            on_click: Some({
+                                let ticks = ticks.clone();
+                                Rc::new(move || ticks.update(|tick| *tick += 1))
+                            }),
+                            ..Default::default()
+                        },
+                    );
+                    cx.bind(move |tx| {
+                        paints.set(paints.get() + 1);
+                        let viewport = use_viewport();
+                        let theme = creamui_theme::use_theme();
+                        let tick = ticks.get();
+                        tx.apply(Mutation::SetLayoutStyle {
+                            node,
+                            style: creamui_core::Style::new()
+                                .width(viewport.width)
+                                .height(viewport.height)
+                                .layout,
+                        });
+                        tx.apply(Mutation::SetPaintStyle {
+                            node,
+                            style: creamui_core::PaintStyle {
+                                background: Some(
+                                    if tick == 0 {
+                                        theme.colors.accent
+                                    } else {
+                                        Color::rgb(0, 255, 0)
+                                    }
+                                    .into(),
+                                ),
+                                ..Default::default()
+                            },
+                        });
+                    });
+                    node
+                })
+            }
+        });
+        let first_runs = paints.get();
+        let runtime = runtime.borrow().as_ref().unwrap().clone();
+        let root = runtime.with(Runtime::root).unwrap();
+        let node = runtime.with(|runtime| runtime.get(root).unwrap().children.as_slice()[0]);
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        for pressed in [true, false] {
+            harness.send(WindowEvent::MouseInput {
+                pressed,
+                button: creamui_platform::MouseButton::Left,
+                serial: None,
+            });
+        }
+        harness.state.redraw();
+        assert_eq!(ticks.peek(), 1);
+        let pixel = harness
+            .state
+            .pipeline
+            .frame
+            .borrow()
+            .raster
+            .as_ref()
+            .unwrap()
+            .pixmap()
+            .pixel(10, 10)
+            .unwrap();
+        assert_eq!((pixel.red(), pixel.green(), pixel.blue()), (0, 255, 0));
+        harness.state.pipeline.surface.set(Size {
+            width: 120.0,
+            height: 140.0,
+        });
+        harness.state.pipeline.sync_frame();
+        harness.state.redraw();
+        assert_eq!(
+            runtime.with(|runtime| runtime.get(node).unwrap().layout.rect.width),
+            120.0
+        );
+        harness.state.pipeline.theme.set(Theme::light());
+        harness.state.redraw();
+        assert!(paints.get() > first_runs);
+        assert_eq!(mounts.get(), 1);
+        assert_eq!(runtime.with(Runtime::root), Some(root));
+        assert_eq!(runtime.with(Runtime::len), 2);
+        runtime.with(Runtime::check_invariants);
+    }
+
+    #[test]
+    fn suspension_keeps_owned_views_and_their_bindings_alive() {
+        let signal = Signal::new(0u32);
+        let mounts = Rc::new(Cell::new(0));
+        let cleaned = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::view({
+            let signal = signal.clone();
+            let mounts = mounts.clone();
+            let cleaned = cleaned.clone();
+            move |_| {
+                mounts.set(mounts.get() + 1);
+                View::new({
+                    let signal = signal.clone();
+                    let cleaned = cleaned.clone();
+                    move |cx| {
+                        cx.on_cleanup(move || cleaned.set(cleaned.get() + 1));
+                        let node = cx.text("");
+                        cx.bind(move |tx| {
+                            tx.apply(Mutation::SetText {
+                                node,
+                                text: signal.get().to_string().into(),
+                            })
+                        });
+                        node
+                    }
+                })
+            }
+        });
+        let runtime = harness.state.runtime().unwrap();
+        let root = runtime.with(Runtime::root).unwrap();
+        let node = runtime.with(|runtime| runtime.get(root).unwrap().children.as_slice()[0]);
+        harness.state.suspend();
+        signal.set(1);
+        harness.state.redraw();
+        assert_eq!(cleaned.get(), 0);
+        assert_eq!(mounts.get(), 1);
+        assert_eq!(runtime.with(Runtime::root), Some(root));
+        assert!(runtime.with(|runtime| matches!(&runtime.get(node).unwrap().kind, NodeKind::Text(text) if &*text.text == "1")));
+        drop(harness);
+        assert_eq!(cleaned.get(), 1);
+        assert!(runtime.with(Runtime::is_empty));
+    }
+
+    #[test]
+    fn closing_owned_view_disposes_it_even_while_the_pipeline_and_runtime_are_retained() {
+        let ticks = Signal::new(0u8);
+        let cleaned = Rc::new(Cell::new(0));
+        let runs = Rc::new(Cell::new(0));
+        let harness = WindowEventHarness::view({
+            let ticks = ticks.clone();
+            let cleaned = cleaned.clone();
+            let runs = runs.clone();
+            move |_| {
+                View::new({
+                    let ticks = ticks.clone();
+                    let cleaned = cleaned.clone();
+                    let runs = runs.clone();
+                    move |cx| {
+                        cx.on_cleanup(move || cleaned.set(cleaned.get() + 1));
+                        let node = cx.container();
+                        cx.bind(move |_| {
+                            ticks.get();
+                            runs.set(runs.get() + 1);
+                        });
+                        node
+                    }
+                })
+            }
+        });
+        let pipeline = harness.state.pipeline.clone();
+        let runtime = harness.state.runtime().unwrap();
+        let before = runs.get();
+        drop(harness);
+        assert_eq!(cleaned.get(), 1);
+        assert!(runtime.with(Runtime::is_empty));
+        ticks.set(1);
+        pipeline.theme.set(Theme::light());
+        assert_eq!(runs.get(), before);
+        runtime.with(Runtime::check_invariants);
+    }
+
+    #[test]
+    fn failed_owned_mount_recovers_without_retaining_partial_bindings() {
+        install_panic_dispatch();
+        let handled = Rc::new(Cell::new(0));
+        PANIC_HANDLER.with(|handler| {
+            let handled = handled.clone();
+            *handler.borrow_mut() = Some(Rc::new(move |_| handled.set(handled.get() + 1)));
+        });
+        let cleaned = Rc::new(Cell::new(0));
+        let signal = Signal::new(0u32);
+        let runs = Rc::new(Cell::new(0));
+        let harness = WindowEventHarness::view({
+            let cleaned = cleaned.clone();
+            let signal = signal.clone();
+            let runs = runs.clone();
+            move |_| {
+                View::new({
+                    let cleaned = cleaned.clone();
+                    let signal = signal.clone();
+                    let runs = runs.clone();
+                    move |cx| {
+                        cx.on_cleanup(move || cleaned.set(cleaned.get() + 1));
+                        cx.container();
+                        cx.bind(move |_| {
+                            signal.get();
+                            runs.set(runs.get() + 1);
+                        });
+                        panic!("owned mount failed");
+                    }
+                })
+            }
+        });
+        PANIC_HANDLER.with(|handler| *handler.borrow_mut() = None);
+        assert_eq!(handled.get(), 1);
+        assert_eq!(cleaned.get(), 1);
+        signal.set(1);
+        assert_eq!(runs.get(), 1);
+        let runtime = harness.state.runtime().unwrap();
+        assert_eq!(runtime.with(Runtime::len), 2);
+        runtime.with(Runtime::check_invariants);
+        drop(harness);
+        assert!(runtime.with(Runtime::is_empty));
+    }
+
+    #[test]
+    fn app_builder_routes_view_results_through_owned_runtime_startup() {
+        let mounts = Rc::new(Cell::new(0));
+        let mut app =
+            AppBuilder::new().window(WindowOptions::default(), Color::rgb(0, 0, 0), |_| {}, {
+                let mounts = mounts.clone();
+                move |_| {
+                    mounts.set(mounts.get() + 1);
+                    View::new(|cx| cx.container())
+                }
+            });
+        assert_eq!(mounts.get(), 0);
+        let source = app.specs.pop().unwrap().source;
+        assert!(matches!(source, UiSource::Runtime(_)));
+        let harness = WindowEventHarness::from_source(source);
+        assert_eq!(mounts.get(), 1);
+        let runtime = harness.state.runtime().unwrap();
+        drop(harness);
+        assert!(runtime.with(Runtime::is_empty));
+    }
+
+    #[test]
+    fn owned_views_are_isolated_between_windows() {
+        let a = Signal::new(0u8);
+        let b = Signal::new(0u8);
+        let make = |signal: Signal<u8>| {
+            WindowEventHarness::view(move |_| {
+                View::new({
+                    let signal = signal.clone();
+                    move |cx| {
+                        let node = cx.text("");
+                        cx.bind(move |tx| {
+                            tx.apply(Mutation::SetText {
+                                node,
+                                text: signal.get().to_string().into(),
+                            })
+                        });
+                        node
+                    }
+                })
+            })
+        };
+        let left = make(a.clone());
+        let right = make(b.clone());
+        let right_runtime = right.state.runtime().unwrap();
+        right.state.pipeline.needs_paint.set(false);
+        a.set(1);
+        assert!(!right.state.pipeline.needs_paint.get());
+        drop(left);
+        b.set(2);
+        assert!(!right_runtime.with(Runtime::is_empty));
+        assert!(right.state.pipeline.needs_paint.get());
+        drop(right);
+        assert!(right_runtime.with(Runtime::is_empty));
     }
 
     #[test]

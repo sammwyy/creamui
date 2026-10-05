@@ -219,11 +219,22 @@ impl<'a> RuntimeTransaction<'a> {
                 stack.extend_from_slice(node.children.as_slice());
             }
         }
-        let parents: HashSet<_> = ordered
-            .iter()
-            .filter_map(|&id| self.runtime.nodes.get(id)?.parent)
-            .filter(|parent| !removed.contains(parent))
-            .collect();
+        let mut parents = HashSet::new();
+        for &id in &ordered {
+            match self
+                .runtime
+                .nodes
+                .get(id)
+                .expect("collected runtime node exists")
+                .parent
+            {
+                Some(parent) if !removed.contains(&parent) => {
+                    parents.insert(parent);
+                }
+                None => self.touch(id, DirtyFlags::STRUCTURE),
+                _ => {}
+            }
+        }
         for parent in parents {
             let retained: Vec<_> = self
                 .runtime

@@ -154,3 +154,56 @@ anchors. Dropping an owner stops its effects but does not run explicit cleanup.
 `WeakOwner` upgrades only while its scope is active. Effects queued by nested
 writes run after the current effect finishes; writes outside an effect or batch
 finish their notifications synchronously.
+
+### Owned window views
+
+`View::new` stores a mount callback until the window provides its `MountCx`
+and hook context. Return a `View` from the normal `run`, `AppBuilder::window`,
+`AppHandle::append_window`, or popup builder to mount once. Widget results keep
+their reactive rebuild behavior.
+
+```rust
+use creamui_core::runtime::{Mutation, View};
+use creamui_render::{AppBuilder, WindowOptions, use_viewport};
+use creamui_theme::{Color, use_theme};
+
+let app = AppBuilder::new().window(
+    WindowOptions::default(),
+    Color::rgb(0, 0, 0),
+    |_| {},
+    |_| View::new(|cx| {
+        let root = cx.container();
+        cx.bind(move |tx| {
+            let viewport = use_viewport();
+            let theme = use_theme();
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new()
+                    .width(viewport.width).height(viewport.height).layout,
+            });
+            tx.apply(Mutation::SetPaintStyle {
+                node: root,
+                style: creamui_core::PaintStyle {
+                    background: Some(theme.colors.surface.into()),
+                    ..Default::default()
+                },
+            });
+        });
+        root
+    }),
+);
+```
+
+The window owns the binding scope, preserves it while native surfaces are
+suspended, and disposes it on close. Keeping a window handle or runtime clone
+does not keep the view's bindings active after closing. Dynamic root branches
+and lists share a stable host root. Mount failures release partial nodes and
+bindings; an application's registered panic handler permits an empty fallback.
+
+For a view without a window, `MountedView::new(view)` creates its runtime and
+scope. `runtime()`, `owner()`, and `root()` expose the retained state. Dispose
+or drop the `MountedView` to release its nodes and bindings. An externally
+supplied `AppBuilder::runtime_window` continues to use application-owned state.
+
+Set `CREAMUI_DUMP_JSX=1` while compiling to inspect expanded Rust for `jsx!`,
+`abi_jsx!`, and `#[component]`. Empty and `0` values disable the dump.

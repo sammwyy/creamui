@@ -35,7 +35,8 @@ pub use recorder::SceneRecorder;
 pub use window::run_android;
 pub use window::{
     run, use_safe_area, use_screen_class, use_system_bars, use_viewport, AppBuilder, AppHandle,
-    CloseBehavior, PanicDetails, PopupOptions, SafeArea, ScreenClass, WindowHandle, WindowOptions,
+    CloseBehavior, PanicDetails, PopupOptions, SafeArea, ScreenClass, WindowContent, WindowHandle,
+    WindowOptions,
 };
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use window::{TrayBuilder, TrayIcon};

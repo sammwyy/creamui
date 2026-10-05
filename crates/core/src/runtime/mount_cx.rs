@@ -73,6 +73,20 @@ impl MountCx {
         })
     }
 
+    pub fn attach(&self, node: RuntimeNodeId) {
+        if self.detached
+            || self.runtime.with(|runtime| {
+                runtime
+                    .get(node)
+                    .is_some_and(|node| node.parent == Some(self.parent))
+            })
+        {
+            return;
+        }
+        self.runtime
+            .transaction(|tx| tx.insert_child(self.parent, node, None));
+    }
+
     pub fn container(&self) -> RuntimeNodeId {
         self.create_and_append(NodeKind::Container)
     }

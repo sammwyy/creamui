@@ -37,7 +37,7 @@ pub use paint::{
     QuadPrimitive, RadialGradientPrimitive, RecordingPainter, TextPrimitive,
 };
 pub use transaction::RuntimeTransaction;
-pub use view::{IntoView, View};
+pub use view::{IntoView, MountedView, View};
 
 use arena::Arena;
 use layout::LayoutTree;

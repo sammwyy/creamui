@@ -4,6 +4,23 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Android supports CPU presentation with direct premultiplied RGBA copies into
+  native buffers, including the expanded damage returned by the platform.
+  GPU startup can fall back to the CPU presenter.
+- Platform suspension reaches the render loop. CPU and GPU windows release
+  native surfaces, cancel pointer gestures, and stop frame timers while
+  suspended. Resume recreates the presenter, refreshes scale and viewport,
+  preserves reactive state, and forces a full frame without repeating the
+  window-ready callback.
+- Android supports one activity window. Extra window and native popup requests
+  log a warning without calling their ready callbacks; hosted overlays provide
+  secondary views. Closing a window releases its platform ID so an application
+  that keeps running can create a replacement.
+- Failed presentation retries repaint the complete frame, preventing repeated
+  CPU scroll shifts. Android lifecycle fixtures check both backends, partial
+  damage, repeated suspension, rotation, retained state, input, and window
+  rejection. CI checks Android examples and fixture compilation.
+
 - Browser file pickers open asynchronous native selection dialogs, apply
   extension filters, and release their DOM handlers on selection or cancel.
   `FilePicker::new` callbacks now receive `SelectedFile`, with a display name,

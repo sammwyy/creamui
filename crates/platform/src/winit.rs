@@ -31,9 +31,21 @@ type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
 
 pub struct Window {
     inner: winit::window::Window,
+    #[cfg(target_os = "android")]
+    ids: WindowIds,
     id: WindowId,
     #[cfg(all(target_os = "android", feature = "android"))]
     android_app: crate::AndroidApp,
+}
+
+#[cfg(target_os = "android")]
+impl Drop for Window {
+    fn drop(&mut self) {
+        self.ids
+            .lock()
+            .expect("window IDs lock poisoned")
+            .remove(&self.inner.id());
+    }
 }
 
 impl fmt::Debug for Window {
@@ -252,6 +264,18 @@ impl ActiveEventLoop<'_> {
         &self,
         attributes: WindowAttributes,
     ) -> Result<Arc<dyn PlatformWindow>, String> {
+        #[cfg(target_os = "android")]
+        if !self
+            .ids
+            .lock()
+            .expect("window IDs lock poisoned")
+            .is_empty()
+        {
+            return Err(
+                "Android supports one activity window; use hosted overlays for dialogs and popups"
+                    .to_owned(),
+            );
+        }
         let mut inner = WinitWindowAttributes::default()
             .with_title(attributes.title)
             .with_inner_size(winit::dpi::LogicalSize::new(
@@ -279,6 +303,8 @@ impl ActiveEventLoop<'_> {
                     .insert(inner.id(), id);
                 Arc::new(Window {
                     inner,
+                    #[cfg(target_os = "android")]
+                    ids: self.ids.clone(),
                     id,
                     #[cfg(all(target_os = "android", feature = "android"))]
                     android_app: {
@@ -294,8 +320,16 @@ impl ActiveEventLoop<'_> {
         attributes: WindowAttributes,
         popup: PopupOptions,
     ) -> Result<Arc<dyn PlatformWindow>, String> {
-        let _ = popup;
-        self.create_window(attributes)
+        #[cfg(target_os = "android")]
+        {
+            let _ = (attributes, popup);
+            Err("Android does not support native popups; use hosted overlays".to_owned())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = popup;
+            self.create_window(attributes)
+        }
     }
     pub fn exit(&self) {
         self.inner.exit();
@@ -331,6 +365,7 @@ impl PlatformBackend for ActiveEventLoop<'_> {
 
 pub trait ApplicationHandler<T: 'static> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>);
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop<'_>) {}
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop<'_>,
@@ -344,6 +379,9 @@ pub trait ApplicationHandler<T: 'static> {
 impl<T: 'static, H: ApplicationHandler<T> + ?Sized> ApplicationHandler<T> for &mut H {
     fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
         (**self).resumed(event_loop);
+    }
+    fn suspended(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        (**self).suspended(event_loop);
     }
     fn window_event(
         &mut self,
@@ -510,12 +548,27 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
             ids: &self.ids,
         });
     }
+    fn suspended(&mut self, event_loop: &WinitActiveEventLoop) {
+        self.handler.suspended(&ActiveEventLoop {
+            inner: event_loop,
+            ids: &self.ids,
+        });
+    }
     fn window_event(
         &mut self,
         event_loop: &WinitActiveEventLoop,
         window_id: WinitWindowId,
         event: winit::event::WindowEvent,
     ) {
+        let Some(id) = self
+            .ids
+            .lock()
+            .expect("window IDs lock poisoned")
+            .get(&window_id)
+            .copied()
+        else {
+            return;
+        };
         #[cfg(target_os = "android")]
         if let Some(modifiers) = self.modifiers.update(&event) {
             self.handler.window_event(
@@ -523,7 +576,7 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
                     inner: event_loop,
                     ids: &self.ids,
                 },
-                self.ids.lock().expect("window IDs lock poisoned")[&window_id],
+                id,
                 WindowEvent::ModifiersChanged(modifiers),
             );
         }
@@ -532,7 +585,7 @@ impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapte
                 inner: event_loop,
                 ids: &self.ids,
             },
-            self.ids.lock().expect("window IDs lock poisoned")[&window_id],
+            id,
             from_winit_window_event(event),
         );
     }

@@ -73,6 +73,7 @@ const USER_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 pub trait ApplicationHandler<T: 'static> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>);
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop<'_>) {}
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop<'_>,

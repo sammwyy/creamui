@@ -16,14 +16,12 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## ABI and platforms
 
-- Extend Android support beyond GPU presentation: add CPU presentation and
-  surface recreation after suspension, and define multi-window behavior.
 - Extend `WindowOptions::blur` beyond the optional KWin and blair Wayland
   protocols if X11, Windows, or macOS support is wanted.
 - Verify composited per-pixel transparency for the CPU presenter on each
-  platform. The code uses ARGB `wl_shm` on Wayland and passes alpha to
-  `softbuffer` elsewhere; Windows and macOS behavior still needs a
-  reproducible visual check.
+  platform. Wayland uses ARGB `wl_shm`, Android uses native RGBA buffers,
+  and other targets pass alpha to `softbuffer`. Windows and macOS behavior
+  still needs a reproducible visual check.
 
 ## Rendering and performance
 

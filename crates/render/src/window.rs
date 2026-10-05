@@ -11,7 +11,7 @@
 //! only the changed regions to its presenter.
 
 use crate::backend::RenderBackend;
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_arch = "wasm32"))]
 use crate::cpu::SoftwareSurface;
 use crate::devtools::{devtools_for_new_window, DevtoolsCommand, FrameReport, WindowDevtools};
 use crate::display_list::{self, DisplayList};
@@ -557,14 +557,14 @@ fn init_logging() {
 enum Presenter {
     #[cfg(not(target_arch = "wasm32"))]
     Gpu(GpuSurface),
-    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    #[cfg(not(target_arch = "wasm32"))]
     Software(SoftwareSurface),
     #[cfg(target_arch = "wasm32")]
     Web(WebState),
 }
 
 impl Presenter {
-    #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+    #[cfg(not(target_arch = "wasm32"))]
     fn new(
         window: &Arc<dyn PlatformWindow>,
         backend: RenderBackend,
@@ -583,21 +583,6 @@ impl Presenter {
         SoftwareSurface::new(window.clone()).map(Presenter::Software)
     }
 
-    #[cfg(target_os = "android")]
-    fn new(
-        window: &Arc<dyn PlatformWindow>,
-        backend: RenderBackend,
-        transparent: bool,
-        gpu_instance: Option<&wgpu::Instance>,
-        gpu_context: &mut Option<crate::gpu::GpuContext>,
-    ) -> Result<Self, String> {
-        if backend == RenderBackend::Cpu {
-            return Err("CPU presentation is not supported on Android".to_owned());
-        }
-        let instance = gpu_instance.ok_or("GPU instance is unavailable")?;
-        GpuSurface::new(window.clone(), instance, transparent, gpu_context).map(Presenter::Gpu)
-    }
-
     #[cfg(target_arch = "wasm32")]
     fn new(window: &Arc<dyn PlatformWindow>) -> Self {
         Presenter::Web(WebState::new(window.clone()))
@@ -607,20 +592,13 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => "gpu",
-            #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+            #[cfg(not(target_arch = "wasm32"))]
             Presenter::Software(_) => "cpu",
             #[cfg(target_arch = "wasm32")]
             Presenter::Web(_) => "web",
         }
     }
 
-    #[cfg(target_os = "android")]
-    fn adapter(&self) -> Option<Rc<str>> {
-        let Presenter::Gpu(surface) = self;
-        Some(surface.adapter_name().into())
-    }
-
-    #[cfg(not(target_os = "android"))]
     fn adapter(&self) -> Option<Rc<str>> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -634,7 +612,6 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => true,
-            #[cfg(not(target_os = "android"))]
             _ => false,
         }
     }
@@ -643,7 +620,6 @@ impl Presenter {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Gpu(_) => false,
-            #[cfg(not(target_os = "android"))]
             _ => true,
         }
     }
@@ -663,6 +639,16 @@ struct FrameState {
     last_report: FrameReport,
     inspected_content: Option<DisplayList>,
     adapter: Option<Rc<str>>,
+}
+
+impl FrameState {
+    fn retry_frame(&mut self, list: DisplayList) {
+        // A failed frame may already have shifted raster pixels for scrolling.
+        if let Some(previous) = self.presented.take() {
+            self.recorder.recycle(previous);
+        }
+        self.pending = Some(list);
+    }
 }
 
 /// Coalesces invalidations into at most one build, layout, record and
@@ -990,14 +976,13 @@ impl Pipeline {
             let presented = match presenter {
                 #[cfg(not(target_arch = "wasm32"))]
                 Presenter::Gpu(surface) => surface.present(&list, &damage),
-                #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+                #[cfg(not(target_arch = "wasm32"))]
                 Presenter::Software(surface) => {
                     let raster = frame
                         .raster
                         .as_ref()
                         .expect("software frames are rasterized");
-                    surface.present(raster.pixmap(), &regions);
-                    true
+                    surface.present(raster.pixmap(), &regions)
                 }
                 #[cfg(target_arch = "wasm32")]
                 Presenter::Web(web) => {
@@ -1007,7 +992,7 @@ impl Pipeline {
                 }
             };
             if !presented {
-                frame.pending = Some(list);
+                frame.retry_frame(list);
                 drop(frame);
                 self.request_redraw();
                 return false;
@@ -1100,7 +1085,9 @@ struct AppCommands {
 impl AppHandle {
     /// Queues a new top-level window. If the event loop is already running,
     /// it is created at the end of the current event turn; otherwise it is
-    /// created as soon as [`AppBuilder::run`] starts.
+    /// created as soon as [`AppBuilder::run`] starts. Android supports one
+    /// activity window; additional requests log a warning without invoking
+    /// `on_window_ready`.
     pub fn append_window(
         &self,
         options: WindowOptions,
@@ -1134,7 +1121,8 @@ impl AppHandle {
     }
 
     /// Queues a popup relative to a rectangle in its parent window. Its
-    /// requested size remains subject to platform negotiation.
+    /// requested size remains subject to platform negotiation. Android rejects
+    /// native popups; use hosted overlays instead.
     pub fn append_popup(
         &self,
         options: WindowOptions,
@@ -1769,6 +1757,9 @@ struct WindowState {
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
     presenter: Option<Presenter>,
+    backend: RenderBackend,
+    transparent: bool,
+    suspended: bool,
     pointer_pos: Point,
     modifiers: PlatformModifiers,
     next_blink: Instant,
@@ -2648,7 +2639,49 @@ impl WindowState {
         }
     }
 
+    fn suspend(&mut self) {
+        if self.suspended {
+            return;
+        }
+        self.suspended = true;
+        self.presenter = None;
+        self.paced_present = false;
+        self.touch = None;
+        self.modifiers = PlatformModifiers::default();
+        self.cancel_pointer_interaction();
+        self.set_ime_allowed(false);
+        let mut frame = self.pipeline.frame.borrow_mut();
+        if let Some(list) = frame.presented.take() {
+            frame.recorder.recycle(list);
+        }
+        frame.adapter = None;
+        log::debug!("creamui-render: window presenter suspended");
+    }
+
+    fn resume(&mut self, presenter: Presenter) {
+        if !self.suspended {
+            return;
+        }
+        self.pipeline.frame.borrow_mut().adapter = presenter.adapter();
+        log::debug!("creamui-render: {} presenter resumed", presenter.name());
+        self.presenter = Some(presenter);
+        self.suspended = false;
+        self.frame_interval_checked = None;
+        let now = Instant::now();
+        self.next_blink = now + CARET_BLINK_INTERVAL;
+        self.next_animation = now;
+        self.next_devtools_refresh = now;
+        if let Some(window) = self.pipeline.window.borrow().as_ref() {
+            set_if_changed(&self.pipeline.scale_factor, window.scale_factor());
+        }
+        self.queue_viewport(self.viewport_from_window());
+        self.pipeline.invalidate_layout();
+    }
+
     fn redraw(&mut self) {
+        if self.suspended {
+            return;
+        }
         if let Some((local, rect, handler)) = self.pending_drag.take() {
             handler(local, rect);
             // Drag handlers may write plain `Cell`s rather than signals.
@@ -2710,6 +2743,9 @@ impl WindowState {
     /// Fires time-driven repaints that are due and returns when the next one
     /// is.
     fn tick(&mut self, now: Instant) -> Option<Instant> {
+        if self.suspended {
+            return None;
+        }
         let mut next_wake: Option<Instant> = None;
         let mut wake_at = |at: Instant| {
             next_wake = Some(next_wake.map_or(at, |t: Instant| t.min(at)));
@@ -2766,6 +2802,7 @@ struct AppHandler {
     app: AppHandle,
     on_started: Option<Box<dyn FnOnce(AppHandle)>>,
     started: bool,
+    suspended: bool,
     exit_when_last_window_closes: bool,
     dump_frame_path: Option<String>,
     next_window_index: usize,
@@ -2791,7 +2828,53 @@ struct AppHandler {
 }
 
 impl AppHandler {
+    fn create_presenter(
+        &mut self,
+        window: &Arc<dyn PlatformWindow>,
+        backend: RenderBackend,
+        transparent: bool,
+    ) -> Presenter {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if backend == RenderBackend::Gpu && self.gpu_instance.is_none() {
+                let prepared = match self.gpu_prepare.take() {
+                    Some(handle) => handle.join().expect("GPU preparation thread panicked"),
+                    None => crate::gpu::PreparedGpu::instance_only(),
+                };
+                let (instance, context) = prepared.into_parts();
+                self.gpu_instance = Some(Rc::new(instance));
+                if self.gpu_context.is_none() {
+                    self.gpu_context = context;
+                }
+            }
+            Presenter::new(
+                window,
+                backend,
+                transparent,
+                self.gpu_instance.as_deref(),
+                &mut self.gpu_context,
+            )
+            .unwrap_or_else(|err| {
+                panic!("creamui-render: no usable presenter for the window: {err}")
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (backend, transparent);
+            Presenter::new(window)
+        }
+    }
+
     fn create_window(&mut self, event_loop: &ActiveEventLoop<'_>, spec: WindowSpec) {
+        if self.suspended {
+            self.pending.push(spec);
+            return;
+        }
+        #[cfg(target_os = "android")]
+        if !self.windows.is_empty() || spec.popup.is_some() {
+            log::warn!("creamui-render: Android window request rejected; one activity window is supported, use hosted overlays for dialogs and popups");
+            return;
+        }
         let t0 = Instant::now();
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
@@ -2864,33 +2947,8 @@ impl AppHandler {
             pipeline.sync_frame();
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let presenter = {
-            if spec.options.backend == RenderBackend::Gpu && self.gpu_instance.is_none() {
-                let prepared = match self.gpu_prepare.take() {
-                    Some(handle) => handle.join().expect("GPU preparation thread panicked"),
-                    None => crate::gpu::PreparedGpu::instance_only(),
-                };
-                log::debug!("creamui-render: GPU instance ready: {:?}", t0.elapsed());
-                let (instance, context) = prepared.into_parts();
-                self.gpu_instance = Some(Rc::new(instance));
-                if self.gpu_context.is_none() {
-                    self.gpu_context = context;
-                }
-            }
-            match Presenter::new(
-                &window,
-                spec.options.backend,
-                spec.options.transparent,
-                self.gpu_instance.as_deref(),
-                &mut self.gpu_context,
-            ) {
-                Ok(presenter) => presenter,
-                Err(err) => panic!("creamui-render: no usable presenter for the window: {err}"),
-            }
-        };
-        #[cfg(target_arch = "wasm32")]
-        let presenter = Presenter::new(&window);
+        let presenter =
+            self.create_presenter(&window, spec.options.backend, spec.options.transparent);
         pipeline.frame.borrow_mut().adapter = presenter.adapter();
         log::debug!(
             "creamui-render: {} presenter ready: {:?}",
@@ -2931,6 +2989,9 @@ impl AppHandler {
             close_behavior: spec.options.close_behavior,
             frameless_resizable: !spec.options.decorations && spec.options.resizable,
             presenter: Some(presenter),
+            backend: spec.options.backend,
+            transparent: spec.options.transparent,
+            suspended: false,
             pointer_pos: Point::default(),
             modifiers: PlatformModifiers::default(),
             next_blink: now + CARET_BLINK_INTERVAL,
@@ -2972,6 +3033,24 @@ enum AppEvent {
 
 impl ApplicationHandler<AppEvent> for AppHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        self.suspended = false;
+        self.close_requested_windows(event_loop);
+        let suspended: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter_map(|(id, state)| state.suspended.then_some(*id))
+            .collect();
+        for id in suspended {
+            let state = &self.windows[&id];
+            let Some(window) = state.pipeline.window.borrow().as_ref().cloned() else {
+                continue;
+            };
+            let presenter = self.create_presenter(&window, state.backend, state.transparent);
+            self.windows
+                .get_mut(&id)
+                .expect("window exists during resume")
+                .resume(presenter);
+        }
         #[cfg(all(feature = "tray", target_os = "linux"))]
         if self.trays.is_empty() {
             self.trays = std::mem::take(&mut self.pending_trays)
@@ -2994,6 +3073,13 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             self.create_window(event_loop, spec);
         }
         self.drain_app_commands(event_loop);
+    }
+
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop<'_>) {
+        self.suspended = true;
+        for state in self.windows.values_mut() {
+            state.suspend();
+        }
     }
 
     fn window_event(
@@ -3050,14 +3136,7 @@ impl ApplicationHandler<AppEvent> for AppHandler {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
         // Closes before creates: a replacement popup must not be requested
         // while the one it's replacing is still alive server-side.
-        let close_requests: Vec<WindowId> = self
-            .windows
-            .iter()
-            .filter_map(|(id, state)| state.close_requested.get().then_some(*id))
-            .collect();
-        for window_id in close_requests {
-            self.close_window(event_loop, window_id);
-        }
+        self.close_requested_windows(event_loop);
 
         self.drain_app_commands(event_loop);
         if self.commands.borrow().exit_requested {
@@ -3079,6 +3158,17 @@ impl ApplicationHandler<AppEvent> for AppHandler {
 }
 
 impl AppHandler {
+    fn close_requested_windows(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        let close_requests: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter_map(|(id, state)| state.close_requested.get().then_some(*id))
+            .collect();
+        for window_id in close_requests {
+            self.close_window(event_loop, window_id);
+        }
+    }
+
     fn drain_app_commands(&mut self, event_loop: &ActiveEventLoop<'_>) {
         let (windows, exit_requested) = {
             let mut commands = self.commands.borrow_mut();
@@ -3267,6 +3357,7 @@ fn run_windows(
         app,
         on_started,
         started: false,
+        suspended: true,
         exit_when_last_window_closes,
         dump_frame_path,
         // Dynamic windows continue after the initially queued specs.
@@ -3461,6 +3552,9 @@ mod tests {
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
                 presenter: None,
+                backend: RenderBackend::Cpu,
+                transparent: false,
+                suspended: false,
                 pointer_pos: Point::default(),
                 modifiers: PlatformModifiers::default(),
                 next_blink: now + CARET_BLINK_INTERVAL,
@@ -3497,6 +3591,106 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn suspension_cancels_drag_and_retains_pending_state_without_drawing() {
+        let count = Signal::new(0);
+        let builds = Rc::new(Cell::new(0));
+        let ends = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let count = count.clone();
+            let builds = builds.clone();
+            let ends = ends.clone();
+            move |_| {
+                count.get();
+                builds.set(builds.get() + 1);
+                Box::new(DraggableWidget {
+                    calls: Rc::new(RefCell::new(Vec::new())),
+                    end_calls: ends.clone(),
+                })
+            }
+        });
+        harness.send(touch(1, creamui_platform::TouchPhase::Started, 10.0, 10.0));
+        harness.send(touch(1, creamui_platform::TouchPhase::Moved, 20.0, 10.0));
+        assert!(harness.state.pending_drag.is_some());
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+        harness.state.suspend();
+        harness.state.suspend();
+        assert_eq!(ends.get(), 1);
+        assert!(harness.state.touch.is_none());
+        assert!(harness.state.drag_click.is_none());
+        assert!(harness.state.pending_drag.is_none());
+        assert!(harness.state.pipeline.frame.borrow().presented.is_none());
+        count.set(7);
+        let before = builds.get();
+        harness.state.redraw();
+        assert_eq!(builds.get(), before);
+        assert!(harness.state.pipeline.frame.borrow().presented.is_none());
+        assert!(harness
+            .state
+            .tick(Instant::now() + Duration::from_secs(10))
+            .is_none());
+        assert_eq!(count.peek(), 7);
+    }
+
+    #[test]
+    fn failed_scroll_presentation_retries_from_a_full_frame() {
+        use creamui_core::Painter;
+
+        let record = |offset| {
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(100, 100, 1.0, Color::rgb(255, 255, 255), Default::default());
+            let rect = Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            };
+            recorder.fill_rect(rect, Color::rgb(255, 255, 255), 0.0);
+            recorder.push_scroll_layer(rect, 0.0, Point { x: 0.0, y: offset });
+            for row in 0..20 {
+                recorder.fill_rect(
+                    Rect {
+                        y: row as f32 * 10.0 - offset,
+                        height: 10.0,
+                        ..rect
+                    },
+                    Color::rgb(row * 10, 40, 80),
+                    0.0,
+                );
+            }
+            recorder.pop_scroll_layer();
+            recorder.finish()
+        };
+        let previous = record(0.0);
+        let next = record(10.0);
+        let diff = display_list::diff(Some(&previous), &next);
+        assert!(diff.scroll.is_some());
+        let mut raster = Rasterizer::new(100, 100);
+        raster.render(&previous, &crate::Damage::Full);
+        raster.apply(&next, &diff);
+        let harness = WindowEventHarness::new(|_| {
+            Box::new(DraggableWidget {
+                calls: Rc::new(RefCell::new(Vec::new())),
+                end_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        let pipeline = harness.state.pipeline;
+        {
+            let mut frame = pipeline.frame.borrow_mut();
+            frame.presented = Some(previous);
+            frame.raster = Some(raster);
+            frame.retry_frame(next);
+        }
+        pipeline.present(None);
+        let frame = pipeline.frame.borrow();
+        let mut expected = Rasterizer::new(100, 100);
+        expected.render(frame.presented.as_ref().unwrap(), &crate::Damage::Full);
+        assert_eq!(
+            frame.raster.as_ref().unwrap().pixmap().data(),
+            expected.pixmap().data()
+        );
     }
 
     struct TouchTextWidget {

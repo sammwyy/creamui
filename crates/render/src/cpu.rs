@@ -2,16 +2,21 @@
 //! damaged regions.
 //!
 //! Wayland goes through [`wayland_shm`], which uses an `Argb8888` buffer so
-//! transparent windows keep per-pixel alpha. Other platforms use
+//! transparent windows keep per-pixel alpha. Android copies RGBA directly
+//! into its native window buffer. Other platforms use
 //! `softbuffer`, fed premultiplied `0xAARRGGBB` pixels (X11 honors the alpha
 //! byte on 32-bit visuals).
 
+#[cfg(any(target_os = "android", test))]
+mod android;
 #[cfg(target_os = "linux")]
 mod wayland_shm;
 
 use crate::display_list::Bounds;
 use creamui_platform::PlatformWindow;
+#[cfg(not(target_os = "android"))]
 use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+#[cfg(not(target_os = "android"))]
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use tiny_skia::Pixmap;
@@ -19,10 +24,14 @@ use tiny_skia::Pixmap;
 pub enum SoftwareSurface {
     #[cfg(target_os = "linux")]
     Wayland(wayland_shm::ShmSurface),
+    #[cfg(not(target_os = "android"))]
     Softbuffer(SoftbufferSurface),
+    #[cfg(target_os = "android")]
+    Android(android::AndroidSurface),
 }
 
 impl SoftwareSurface {
+    #[cfg(not(target_os = "android"))]
     pub fn new(window: Arc<dyn PlatformWindow>) -> Result<Self, String> {
         let is_wayland = matches!(
             window.display_handle().map(|h| h.as_raw()),
@@ -36,18 +45,33 @@ impl SoftwareSurface {
         SoftbufferSurface::new(window).map(SoftwareSurface::Softbuffer)
     }
 
+    #[cfg(target_os = "android")]
+    pub fn new(window: Arc<dyn PlatformWindow>) -> Result<Self, String> {
+        android::AndroidSurface::new(window).map(SoftwareSurface::Android)
+    }
+
     /// Presents `frame`, copying only `regions` when the platform buffer
     /// already holds the rest of it.
-    pub fn present(&mut self, frame: &Pixmap, regions: &[Bounds]) {
+    pub fn present(&mut self, frame: &Pixmap, regions: &[Bounds]) -> bool {
         match self {
             #[cfg(target_os = "linux")]
-            SoftwareSurface::Wayland(surface) => surface.present(frame, regions),
-            SoftwareSurface::Softbuffer(surface) => surface.present(frame, regions),
+            SoftwareSurface::Wayland(surface) => {
+                surface.present(frame, regions);
+                true
+            }
+            #[cfg(not(target_os = "android"))]
+            SoftwareSurface::Softbuffer(surface) => {
+                surface.present(frame, regions);
+                true
+            }
+            #[cfg(target_os = "android")]
+            SoftwareSurface::Android(surface) => surface.present(frame, regions),
         }
     }
 }
 
 /// Converts premultiplied RGBA bytes into native-endian `0xAARRGGBB`.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn argb(rgba: &[u8]) -> u32 {
     u32::from_be_bytes([rgba[3], rgba[0], rgba[1], rgba[2]])
 }
@@ -63,10 +87,12 @@ pub(crate) fn span(region: &Bounds, width: u32, height: u32) -> (usize, usize, u
 }
 
 /// Tracks which frame regions each swapchain buffer is missing.
+#[cfg(not(target_os = "android"))]
 pub(crate) struct BufferHistory {
     previous: Vec<Bounds>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl BufferHistory {
     pub fn new() -> Self {
         BufferHistory {
@@ -87,6 +113,7 @@ impl BufferHistory {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub struct SoftbufferSurface {
     surface: softbuffer::Surface<Arc<dyn PlatformWindow>, Arc<dyn PlatformWindow>>,
     width: u32,
@@ -94,6 +121,7 @@ pub struct SoftbufferSurface {
     history: BufferHistory,
 }
 
+#[cfg(not(target_os = "android"))]
 impl SoftbufferSurface {
     fn new(window: Arc<dyn PlatformWindow>) -> Result<Self, String> {
         let context = softbuffer::Context::new(window.clone()).map_err(|e| e.to_string())?;
@@ -166,11 +194,13 @@ impl SoftbufferSurface {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn argb_keeps_alpha() {
         assert_eq!(argb(&[0x11, 0x22, 0x33, 0x80]), 0x8011_2233);
     }
 
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn buffer_age_selects_the_regions_to_copy() {
         let a = [Bounds::new(0.0, 0.0, 1.0, 1.0)];

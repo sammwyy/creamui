@@ -7,7 +7,7 @@
 //! damaged regions with `tiny-skia` and presents just those pixels.
 
 mod backend;
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 mod devtools;
 mod display_list;

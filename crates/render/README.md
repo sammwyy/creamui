@@ -5,7 +5,7 @@ Native window hosting and frame presentation for CreamUI.
 `run` creates a desktop window, builds a widget tree reactively, lays it out and records it into a display list. Each frame is diffed against the one on screen, so only changed regions are redrawn and presented.
 
 - **GPU** (default): an instanced `wgpu` pipeline draws calculated damage into a retained color texture (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
-- **CPU**: `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, other platforms use `softbuffer`.
+- **CPU**: `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, Android copies premultiplied RGBA directly into its native buffer and honors the expanded damage returned by the platform; other platforms use `softbuffer`.
 
 Force a backend with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`. `CUI_DUMP_FRAME=path.png` writes every presented frame to disk.
 
@@ -53,3 +53,11 @@ Run the workspace's complete example with:
 ```sh
 cargo run -p tray
 ```
+
+Android releases CPU and GPU surfaces during suspension, preserves the window's
+reactive state, and recreates its presenter on resume. The first resumed frame
+repaints the entire surface, including after orientation or density changes.
+One activity window is supported. Additional window and native popup requests
+log a warning and do not invoke their ready callbacks; use hosted overlays for
+secondary views. A closed window can be replaced when the application uses
+`AppBuilder::keep_running()`.

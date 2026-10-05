@@ -58,3 +58,22 @@ jobs:
         run: npm test --prefix crates/widgets/tests/browser
       - name: Check browser examples
         run: cargo check -p showcase -p pickers -p creamui-showcase-web --target wasm32-unknown-unknown
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+          components: rustfmt
+      - name: Check Android demo
+        run: cargo check -p creamui-android-demo --target aarch64-linux-android
+      - name: Check Android render tests
+        run: cargo check -p creamui-render --tests --no-default-features --features platform-android --target aarch64-linux-android
+      - name: Check Android lifecycle fixture
+        run: |
+          cargo fmt --manifest-path crates/render/tests/android/Cargo.toml --check
+          cargo check --manifest-path crates/render/tests/android/Cargo.toml --target aarch64-linux-android --all-features

@@ -1,0 +1,36 @@
+[package]
+name = "creamui-android-lifecycle-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+name = "main"
+crate-type = ["cdylib"]
+
+[features]
+cpu = []
+
+[dependencies]
+creamui-render = { path = "../..", default-features = false, features = ["platform-android"] }
+creamui-core = { path = "../../../core" }
+creamui-reactive = { path = "../../../reactive" }
+creamui-theme = { path = "../../../theme" }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"
+
+[package.metadata.android]
+package = "dev.creamui.lifecycle"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "CreamUI Lifecycle Check"
+
+[profile.dev]
+strip = "debuginfo"

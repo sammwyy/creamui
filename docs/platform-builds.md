@@ -90,6 +90,22 @@ cancellation, and use Tab to verify focus stays within the prompt. Logcat
 reports prompt opening, validation, acceptance, and dismissal. Use an explicit
 `adb -s` device selector when more than one device is connected.
 
+## Android presentation and lifecycle checks
+
+The [Android lifecycle fixture](../crates/render/tests/android/README.md)
+checks CPU and GPU output, partial frame updates, repeated suspension,
+orientation changes, preserved application state, input after resume, and
+rejection of additional windows. It runs independently of the interactive
+showcase and includes reproducible APK and pixel-check commands.
+
+Both renderers drop their native surfaces on suspension. Resume keeps the
+reactive tree and window handle, recreates the presenter, refreshes the scale
+and viewport, and forces a full frame. Android provides one activity surface:
+additional top-level window and native popup requests log a warning without
+calling their ready callbacks. Use hosted overlays for secondary views.
+Closing the activity window exits by default. With `AppBuilder::keep_running()`,
+a later window request can create a replacement after the old window closes.
+
 ## Android release APK
 
 Android requires APKs to be signed. `cargo-apk` creates a debug keystore only

@@ -102,7 +102,7 @@ takes mouse/keyboard input like a native window. See
 access, and `demo/build.sh --dev` for a
 faster, unoptimized build while iterating.
 
-## Android MVP
+## Android
 
 Install the Rust target, Android SDK/NDK, and `cargo-apk`, then build the
 NativeActivity demo:
@@ -114,11 +114,16 @@ cargo apk build -p creamui-android-demo --target aarch64-linux-android
 ```
 
 `ANDROID_HOME` and `ANDROID_NDK_HOME` must point at the installed SDK and NDK.
-The demo runs the interactive showcase with GPU presentation, touch and
+The demo runs the interactive showcase with GPU or CPU presentation, touch and
 keyboard input, text clipboard access, safe-area insets, and a file path modal.
 The modal accepts readable local files with matching extensions; it does not
-request storage access through Android's document provider. CPU presentation,
-multi-window behavior, and surface recreation after suspension remain pending.
+request storage access through Android's document provider. Both presenters
+release their native surfaces during suspension and recreate them on resume,
+keeping reactive state and forcing a complete first frame. Android supports
+one activity window: additional window and native popup requests are rejected
+with a warning, and their ready callbacks do not run. Use hosted overlays for
+secondary views. Closing the activity window exits by default; `keep_running()`
+allows creating a replacement after it closes.
 See [file picker integration](docs/components.md#file-pickers) for the modal host.
 
 See [platform builds and Android signing](docs/platform-builds.md) for debug and

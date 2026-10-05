@@ -4,6 +4,12 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Retained layout records changed Taffy outputs and rounds only affected
+  paths and descendants whose cumulative position changed. Rectangle sync
+  skips unchanged flow siblings in wide containers, while preserving layout,
+  clipping, and hit regions after resizing, hiding, or reparenting nodes.
+  Devtools exposes the number of nodes rounded per frame.
+
 - Android `FilePicker` opens a themed local path modal through a persistent
   `FilePickerController` host. It preserves edits, validates readable regular
   files and extension filters, and keeps background controls outside modal

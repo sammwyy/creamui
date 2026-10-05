@@ -164,6 +164,69 @@ fn bench_compute_layout_after_single_leaf_style_change(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_nested_flow_leaf_layout(c: &mut Criterion) {
+    use creamui_core::layout::{Dimension, Size as LayoutSize, Style};
+    let sized = |width, height| Style {
+        size: LayoutSize {
+            width: Dimension::Length(width),
+            height: Dimension::Length(height),
+        },
+        flex_shrink: 0.0,
+        ..Default::default()
+    };
+    let mut group = c.benchmark_group("runtime/nested_flow_leaf_layout");
+    for count in [1_000usize, 10_000, 50_000] {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(count as f32 * 2.0, 100.0),
+        });
+        let mut rows = Vec::with_capacity(count);
+        let mut changed_leaf = None;
+        for index in 0..count {
+            let row = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: row,
+                style: sized(2.0, 50.0),
+            });
+            let leaf = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: leaf,
+                style: sized(1.0, 10.0),
+            });
+            tx.insert_child(row, leaf, None);
+            rows.push(row);
+            if index == count / 2 {
+                changed_leaf = Some(leaf);
+            }
+        }
+        tx.reorder_children(root, &rows);
+        drop(tx);
+        runtime.set_root(Some(root));
+        let viewport = creamui_core::Size {
+            width: count as f32 * 2.0,
+            height: 100.0,
+        };
+        runtime.compute_layout(viewport);
+        let node = changed_leaf.unwrap();
+        let mut taller = false;
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                taller = !taller;
+                runtime.transaction().apply(Mutation::SetLayoutStyle {
+                    node,
+                    style: sized(1.0, if taller { 20.0 } else { 10.0 }),
+                });
+                runtime.compute_layout(viewport);
+                runtime.rebuild_paint(&creamui_theme::ColorScheme::default());
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_rebuild_hit_test(c: &mut Criterion) {
     let mut group = c.benchmark_group("runtime/rebuild_hit_test");
     for &count in &[1_000usize, 10_000, 50_000] {
@@ -301,6 +364,7 @@ criterion_group!(
     bench_direct_leaf_mutation,
     bench_signal_driven_leaf_update,
     bench_compute_layout_after_single_leaf_style_change,
+    bench_nested_flow_leaf_layout,
     bench_rebuild_hit_test,
     bench_rebuild_paint_after_single_leaf_paint_change,
     bench_rebuild_composite_after_single_leaf_transform_change,

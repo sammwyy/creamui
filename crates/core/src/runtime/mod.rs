@@ -9,6 +9,7 @@ mod dirty;
 mod events;
 mod inspection;
 mod keyed;
+mod layout;
 mod mount;
 mod mount_cx;
 mod mutation;
@@ -38,8 +39,8 @@ pub use transaction::RuntimeTransaction;
 pub use view::{IntoView, View};
 
 use arena::Arena;
+use layout::LayoutTree;
 use std::collections::HashMap;
-use taffy::TaffyTree;
 
 /// Intersects `rect` into `ambient` (or takes `rect` as-is if there's no
 /// ambient clip yet). A non-overlapping intersection yields a zero-area
@@ -60,7 +61,7 @@ fn clip_to(ambient: Option<crate::Rect>, rect: crate::Rect) -> crate::Rect {
 pub struct Runtime {
     nodes: Arena<RuntimeNode>,
     root: Option<RuntimeNodeId>,
-    taffy: TaffyTree<crate::MeasureFn>,
+    taffy: LayoutTree,
     /// Set when a mutation marks any node's LAYOUT/STRUCTURE dirty; lets
     /// [`Runtime::compute_layout`] skip `taffy` entirely otherwise.
     layout_dirty: bool,
@@ -68,7 +69,7 @@ pub struct Runtime {
     layout_epoch: u64,
     last_viewport: Option<crate::Size>,
     last_origin: crate::Point,
-    /// Nodes whose layout inputs changed since the last layout.
+    /// Nodes with changed layout inputs or outputs.
     layout_roots: Vec<RuntimeNodeId>,
     /// Makes the next rect sync visit every node, e.g. after the root moved.
     full_layout_sync: bool,
@@ -107,7 +108,7 @@ impl Runtime {
         Runtime {
             nodes: Arena::new(),
             root: None,
-            taffy: TaffyTree::new(),
+            taffy: LayoutTree::new(),
             layout_dirty: false,
             layout_epoch: 0,
             last_viewport: None,
@@ -219,23 +220,14 @@ impl Runtime {
             .expect("root exists in this runtime")
             .layout
             .taffy_node;
-        self.taffy
-            .compute_layout_with_measure(
-                root_taffy,
-                taffy::geometry::Size {
-                    width: taffy::style::AvailableSpace::Definite(viewport.width),
-                    height: taffy::style::AvailableSpace::Definite(viewport.height),
-                },
-                |known_dimensions, available_space, _node_id, measure, _style| match measure {
-                    Some(measure) => {
-                        #[cfg(feature = "perf-metrics")]
-                        crate::metrics::record(|m| m.measure_calls += 1);
-                        measure(known_dimensions, available_space)
-                    }
-                    None => taffy::geometry::Size::ZERO,
-                },
-            )
-            .expect("layout computation should not fail for a well-formed tree");
+        let changed = self.taffy.compute_layout(
+            root_taffy,
+            taffy::geometry::Size {
+                width: taffy::style::AvailableSpace::Definite(viewport.width),
+                height: taffy::style::AvailableSpace::Definite(viewport.height),
+            },
+        );
+        self.layout_roots.extend(changed);
 
         self.layout_dirty = false;
         self.layout_epoch += 1;
@@ -246,9 +238,6 @@ impl Runtime {
     fn mark_layout_paths(&mut self) -> HashMap<RuntimeNodeId, Children> {
         let mut path_children: HashMap<RuntimeNodeId, Children> = HashMap::new();
         for id in std::mem::take(&mut self.layout_roots) {
-            if let Some(node) = self.nodes.get_mut(id) {
-                node.layout_input_changed = true;
-            }
             let mut current = Some(id);
             while let Some(current_id) = current {
                 let Some(node) = self.nodes.get_mut(current_id) else {
@@ -260,10 +249,7 @@ impl Runtime {
                 node.on_layout_path = true;
                 current = node.parent;
                 if let Some(parent) = current {
-                    path_children
-                        .entry(parent)
-                        .or_default()
-                        .append_unique(current_id);
+                    path_children.entry(parent).or_default().append(current_id);
                 }
             }
         }
@@ -316,10 +302,10 @@ impl Runtime {
                     - layout.padding.bottom)
                     .max(0.0),
             };
-            let (on_path, moved, clips_children, layout_input_changed) = {
+            let (on_path, moved, clips_children, origin_moved) = {
                 let node = self.nodes.get_mut(id).expect("checked above");
                 let on_path = std::mem::take(&mut node.on_layout_path);
-                let layout_input_changed = std::mem::take(&mut node.layout_input_changed);
+                let origin_moved = node.layout.rect.x != rect.x || node.layout.rect.y != rect.y;
                 let moved = node.layout.rect != rect || node.layout.content_rect != content_rect;
                 if moved {
                     damage.push(node.layout.rect);
@@ -334,7 +320,7 @@ impl Runtime {
                     }
                     self.paint_queue.push(id);
                 }
-                (on_path, moved, node.clips_children, layout_input_changed)
+                (on_path, moved, node.clips_children, origin_moved)
             };
             if moved {
                 self.record_invalidation(id, DirtyFlags::LAYOUT);
@@ -362,16 +348,7 @@ impl Runtime {
                     x: rect.x,
                     y: rect.y,
                 };
-                let only_absolute_paths = !full
-                    && !moved
-                    && !layout_input_changed
-                    && !changed_children.is_empty()
-                    && changed_children.as_slice().iter().all(|&child| {
-                        self.nodes.get(child).is_some_and(|node| {
-                            node.layout_style.position == taffy::style::Position::Absolute
-                        })
-                    });
-                if only_absolute_paths {
+                if !full && !origin_moved {
                     stack.extend(
                         changed_children
                             .as_slice()
@@ -748,6 +725,115 @@ mod tests {
         }
         #[cfg(feature = "perf-metrics")]
         assert_eq!(crate::metrics::frame_metrics().layout_rects_checked, 2);
+    }
+
+    #[test]
+    fn changing_a_nested_flow_leaf_skips_a_wide_containers_unchanged_children() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(1600.0, 100.0),
+        });
+        let mut rows = Vec::new();
+        let mut leaves = Vec::new();
+        for _ in 0..512 {
+            let row = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: row,
+                style: sized(2.0, 50.0),
+            });
+            tx.insert_child(root, row, None);
+            let leaf = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: leaf,
+                style: sized(1.0, 10.0),
+            });
+            tx.insert_child(row, leaf, None);
+            rows.push(row);
+            leaves.push(leaf);
+        }
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        let before: Vec<_> = rows
+            .iter()
+            .map(|&id| runtime.get(id).unwrap().layout.rect)
+            .collect();
+        runtime.transaction().apply(Mutation::SetLayoutStyle {
+            node: leaves[250],
+            style: sized(1.0, 20.0),
+        });
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::reset_frame_metrics();
+        runtime.compute_layout(VIEWPORT);
+        assert_eq!(runtime.get(leaves[250]).unwrap().layout.rect.height, 20.0);
+        for (&id, &rect) in rows.iter().zip(&before) {
+            assert_eq!(runtime.get(id).unwrap().layout.rect, rect);
+        }
+        #[cfg(feature = "perf-metrics")]
+        {
+            let metrics = crate::metrics::frame_metrics();
+            assert_eq!(metrics.layout_rects_checked, 3);
+            assert_eq!(metrics.layout_nodes_rounded, 3);
+        }
+        runtime.full_layout_sync = true;
+        runtime.layout_dirty = true;
+        assert!(runtime.compute_layout(VIEWPORT).is_empty());
+    }
+
+    #[test]
+    fn reparenting_cached_flow_content_updates_window_rects_and_hits() {
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let root = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: root,
+            style: sized(200.0, 100.0),
+        });
+        let first = tx.create_node(NodeKind::Container);
+        let second = tx.create_node(NodeKind::Container);
+        for node in [first, second] {
+            tx.apply(Mutation::SetLayoutStyle {
+                node,
+                style: sized(50.0, 50.0),
+            });
+            tx.insert_child(root, node, None);
+        }
+        let content = tx.create_node(NodeKind::Container);
+        tx.apply(Mutation::SetLayoutStyle {
+            node: content,
+            style: sized(10.0, 10.0),
+        });
+        tx.apply(Mutation::SetEventHandlers {
+            node: content,
+            handlers: EventState {
+                on_click: Some(std::rc::Rc::new(|| {})),
+                ..Default::default()
+            },
+        });
+        tx.insert_child(first, content, None);
+        drop(tx);
+        runtime.set_root(Some(root));
+        runtime.compute_layout(VIEWPORT);
+        runtime.rebuild_hit_test();
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }),
+            Some(content)
+        );
+        runtime.transaction().insert_child(second, content, None);
+        runtime.compute_layout(VIEWPORT);
+        runtime.rebuild_hit_test();
+        assert_eq!(runtime.get(content).unwrap().layout.rect.x, 50.0);
+        assert_eq!(runtime.hit_test(crate::Point { x: 5.0, y: 5.0 }), None);
+        assert_eq!(
+            runtime.hit_test(crate::Point { x: 55.0, y: 5.0 }),
+            Some(content)
+        );
+        runtime.full_layout_sync = true;
+        runtime.layout_dirty = true;
+        assert!(runtime.compute_layout(VIEWPORT).is_empty());
     }
 
     #[test]

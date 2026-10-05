@@ -138,6 +138,7 @@ impl<'a> RuntimeTransaction<'a> {
             .runtime
             .nodes
             .insert_with(|id| RuntimeNode::new(id, kind, taffy_node));
+        self.runtime.taffy.set_runtime_id(taffy_node, id);
         self.runtime
             .nodes
             .get_mut(id)

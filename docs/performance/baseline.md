@@ -870,3 +870,43 @@ resizing to 620 x 400 forced all 248,000 pixels to redraw. Pixel regressions
 compare partial and full GPU output through alpha changes, nested rounded
 clips, text and images, fractional scrolling, resize, and alternating
 destination buffers with both copy and fullscreen-blit presentation.
+
+## Retained flow-layout synchronization — 2026-10-04
+
+The retained layout tree records changed outputs from Taffy's low-level
+algorithms. Rounding follows those ancestor paths and propagates through a
+subtree when its cumulative position changes. Rectangle synchronization
+follows changed outputs and propagates window-origin changes, so a layout
+input change does not require checking every unchanged flow sibling.
+
+A regression scene contains 512 fixed-size flow containers, each containing
+one leaf. Changing one leaf's height while its container keeps its dimensions
+rounds three nodes and checks three rectangles: the root, its container, and
+the changed leaf. A subsequent full rectangle sync produces no extra damage.
+Reparenting checks also verify pointer hits at the new window coordinates.
+
+Reproduce the counters and Taffy comparison checks with:
+
+```sh
+cargo test -p creamui-core --features perf-metrics runtime::
+```
+
+The `layout_nodes_rounded` and `layout_rects_checked` counters are visible in
+devtools. The timed benchmark includes layout and paint regeneration for the
+same shape at 1,000, 10,000, and 50,000 containers:
+
+```sh
+cargo bench -p creamui-bench --bench runtime -- nested_flow_leaf_layout --quick
+```
+
+The release-profile quick run measured the full layout-and-paint operation:
+
+| Flow containers | Time |
+|---|---|
+| 1,000 | 146.32–150.93 µs |
+| 10,000 | 2.6306–2.6954 ms |
+| 50,000 | 21.422–22.385 ms |
+
+Taffy's flex and grid algorithms can still inspect direct children to compute
+flow placement. These counters describe rounding and rectangle sync, rather
+than a constant-time guarantee for the complete layout algorithm.

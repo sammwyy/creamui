@@ -5,6 +5,9 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Persistent runtime
 
+- Batch legacy runtime child mounting; it currently rewrites a growing child
+  list for each sibling.
+
 - Rewrite `jsx!` and `#[component]` to mount through `MountCx`, including
   reactive expressions, conditional branches, keyed lists, and events.
   The macro currently expands to widget builders. Add
@@ -13,8 +16,6 @@ Current limitations and work still to do. Implemented changes belong in
   transforms, group opacity with layer promotion, rounded inherited clips,
   and transformed hit regions for those shapes. Runtime windows currently
   apply translation, per-primitive opacity, and rectangular ancestor clips.
-- Revisit wide-tree costs: layout-rect sync still visits every direct flow
-  child of a wide container on a changed path.
 
 ## ABI and platforms
 

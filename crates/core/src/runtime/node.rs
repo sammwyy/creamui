@@ -31,14 +31,13 @@ impl Children {
         matches!(self, Children::None)
     }
 
-    pub(super) fn append_unique(&mut self, id: RuntimeNodeId) {
+    pub(super) fn append(&mut self, id: RuntimeNodeId) {
         match self {
             Children::None => *self = Children::One(id),
-            Children::One(existing) if *existing != id => {
+            Children::One(existing) => {
                 *self = Children::Many(vec![*existing, id]);
             }
-            Children::Many(ids) if !ids.contains(&id) => ids.push(id),
-            _ => {}
+            Children::Many(ids) => ids.push(id),
         }
     }
 
@@ -261,11 +260,8 @@ pub struct RuntimeNode {
     /// stamp (stamps start at `1`), so a freshly created node is correctly
     /// "not yet touched".
     pub(super) touched_stamp: u64,
-    /// Set on every ancestor of a node whose layout inputs changed since the
-    /// last layout, so the rect sync only walks those paths and the
-    /// subtrees that actually moved.
+    /// Set on ancestor paths with changed layout inputs or outputs.
     pub(super) on_layout_path: bool,
-    pub(super) layout_input_changed: bool,
     /// This node's index in [`super::Runtime`]'s hit-test list, if listed.
     pub(super) hit_slot: Option<u32>,
 }
@@ -300,7 +296,6 @@ impl RuntimeNode {
             paint: super::paint::PaintState::default(),
             touched_stamp: 0,
             on_layout_path: false,
-            layout_input_changed: false,
             hit_slot: None,
         }
     }

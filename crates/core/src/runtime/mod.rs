@@ -15,15 +15,16 @@ mod mount_cx;
 mod mutation;
 mod node;
 mod paint;
+mod region;
 mod transaction;
 mod view;
 
 pub use binding::{create_binding, SharedRuntime};
-pub use branch::create_branch;
+pub use branch::{create_branch, create_branch_when, create_switch};
 pub use dirty::DirtyFlags;
 pub use events::{HitEntry, PointerState};
 pub use inspection::{InspectedNode, RuntimeInspection};
-pub use keyed::create_keyed_list;
+pub use keyed::{create_keyed_list, create_keyed_list_with};
 pub use mount::mount_legacy_widget;
 pub use mount_cx::MountCx;
 pub use mutation::{Mutation, Transform2D};

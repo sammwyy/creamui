@@ -926,3 +926,54 @@ external parent. The check verifies ordering and both parent/child links.
 ```sh
 cargo test -p creamui-core --features perf-metrics mounting_a_wide_subtree
 ```
+
+## 2026-10-05 — Retained regions and reactive ownership
+
+Branches and keyed lists use hidden sibling anchors. Keyed callbacks mount
+detached roots and receive item signals, so surviving rows update without
+recreating their nodes, bindings, or handlers. Removing multiple rows collects
+their subtrees and unlinks each external parent once; owner disposal stops all
+listed scopes before cleanup and detaches siblings in one pass.
+
+The integration fixture verifies two child-list writes for mounting 4,096 rows
+(one anchor and one attachment), one for reversal, and one for removal. Static
+siblings and independent regions retain their relative positions and flex gaps.
+Overlapping removal of a 10,000-node chain and disposal of 10,000 nested owners
+use iterative traversal. Cleanup that writes the structural source is queued
+until reconciliation finishes.
+
+Run the retained benchmarks with:
+
+```sh
+CARGO_BUILD_JOBS=2 cargo bench -p creamui-bench --bench runtime -- \
+  'runtime/(keyed_regions|signal_driven_single_leaf_update|signal_fanout)' \
+  --sample-size 10 --warm-up-time 0.2 --measurement-time 0.5
+```
+
+The keyed fixture gives every row a text binding. Mount and removal timing
+exclude fixture setup and destruction; reversal reuses the mounted tree.
+These short runs report confidence intervals rather than frame-budget targets.
+The larger rows include allocator and memory-cache costs.
+
+| Operation | 1,000 rows | 10,000 rows | 50,000 rows |
+|---|---|---|---|
+| Mount bound rows | 0.472–0.484 ms | 19.04–22.60 ms | 105.2–116.5 ms |
+| Reverse surviving rows | 0.1275–0.1278 ms | 1.509–1.584 ms | 13.81–17.16 ms |
+| Remove bound rows | 0.589–0.602 ms | 15.67–18.57 ms | 143.3–148.9 ms |
+| Update one unrelated binding | 135.1–136.3 ns | 129.9–131.1 ns | 129.6–130.3 ns |
+
+Nested notifications now use a deduplicated FIFO queue, and effects retain
+lexical context scopes. Dropping an effect cancels queued work and removes its
+subscriptions. Signals store zero or one subscriber inline and use a sorted
+map for shared subscribers, avoiding repeated linear scans during subscription
+and unsubscription. Signal dispatch adds constant overhead while keeping a
+single retained binding independent of unrelated tree size.
+
+The fanout fixture writes one signal shared by counter effects and includes
+subscription refresh on every run:
+
+| Subscribers | Notification time |
+|---|---|
+| 1,000 | 0.1745–0.1759 ms |
+| 10,000 | 1.957–1.969 ms |
+| 50,000 | 12.31–12.52 ms |

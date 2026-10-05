@@ -2,25 +2,19 @@ use creamui_reactive::{Owner, Signal};
 use std::rc::Rc;
 
 use super::binding::{create_binding, SharedRuntime};
-use super::branch::create_branch;
-use super::keyed::create_keyed_list;
+use super::branch::{create_branch_when, create_switch};
+use super::keyed::create_keyed_list_with;
 use super::mutation::Mutation;
 use super::node::{EventState, ImageNode, NodeKind, RuntimeNodeId, TextNode};
 use super::transaction::RuntimeTransaction;
 
-/// Compiles a JSX-like mount call sequence against a [`super::Runtime`]:
-/// `cx.container()`/`cx.text(...)` mount static structure once, `cx.bind`/
-/// `cx.branch`/`cx.keyed` set up bindings that mutate the already-mounted
-/// tree directly on every later reactive change. Nothing here ever
-/// rebuilds a widget tree — see REFACTOR.md's Phase 4 objective.
-///
-/// Cheap to clone: owns only a [`SharedRuntime`] handle, an [`Owner`], and
-/// the [`RuntimeNodeId`] new children are appended under.
+/// Direct node construction and reactive bindings scoped to an owner and parent.
 #[derive(Clone)]
 pub struct MountCx {
     runtime: SharedRuntime,
     owner: Owner,
     parent: RuntimeNodeId,
+    detached: bool,
 }
 
 impl MountCx {
@@ -29,6 +23,7 @@ impl MountCx {
             runtime,
             owner,
             parent,
+            detached: false,
         }
     }
 
@@ -52,6 +47,7 @@ impl MountCx {
             runtime: self.runtime.clone(),
             owner: self.owner.clone(),
             parent: node,
+            detached: false,
         }
     }
 
@@ -63,13 +59,16 @@ impl MountCx {
             runtime: self.runtime.clone(),
             owner: self.owner.child(),
             parent: self.parent,
+            detached: self.detached,
         }
     }
 
     fn create_and_append(&self, kind: NodeKind) -> RuntimeNodeId {
         self.runtime.transaction(|tx| {
             let id = tx.create_node(kind);
-            tx.insert_child(self.parent, id, None);
+            if !self.detached {
+                tx.insert_child(self.parent, id, None);
+            }
             id
         })
     }
@@ -102,59 +101,95 @@ impl MountCx {
         create_binding(&self.owner, self.runtime.clone(), f);
     }
 
-    /// Mounts/unmounts a subtree under this cx's parent as `condition`
-    /// changes — see [`create_branch`]. `mount` receives a cx anchored at
-    /// the same parent and a fresh owner scope for the branch's content.
+    pub fn detached(&self) -> Self {
+        Self {
+            detached: true,
+            ..self.clone()
+        }
+    }
+
     pub fn branch(
         &self,
         condition: Signal<bool>,
         mount: impl Fn(&MountCx) -> RuntimeNodeId + 'static,
-    ) {
-        let anchor = self.clone();
-        create_branch(
-            &self.owner,
-            self.runtime.clone(),
-            self.parent,
-            condition,
-            move |runtime, branch_owner| {
-                let branch_cx = MountCx {
-                    runtime: runtime.clone(),
-                    owner: branch_owner.clone(),
-                    parent: anchor.parent,
-                };
-                mount(&branch_cx)
-            },
-        );
+    ) -> RuntimeNodeId {
+        self.branch_when(move || condition.get(), mount)
     }
 
-    /// A keyed, order-preserving list under this cx's parent — see
-    /// [`create_keyed_list`]. `render` receives a cx anchored at the same
-    /// parent and a fresh owner scope for that item.
+    pub fn branch_when(
+        &self,
+        condition: impl Fn() -> bool + 'static,
+        mount: impl Fn(&MountCx) -> RuntimeNodeId + 'static,
+    ) -> RuntimeNodeId {
+        let parent = self.parent;
+        create_branch_when(
+            &self.owner,
+            self.runtime.clone(),
+            parent,
+            condition,
+            move |runtime, owner| {
+                mount(&MountCx::new(runtime.clone(), owner.clone(), parent).detached())
+            },
+        )
+    }
+
+    pub fn switch(
+        &self,
+        condition: impl Fn() -> bool + 'static,
+        mount: impl Fn(&MountCx, bool) -> RuntimeNodeId + 'static,
+    ) -> RuntimeNodeId {
+        let parent = self.parent;
+        create_switch(
+            &self.owner,
+            self.runtime.clone(),
+            parent,
+            condition,
+            move |runtime, owner, value| {
+                Some(mount(
+                    &MountCx::new(runtime.clone(), owner.clone(), parent).detached(),
+                    value,
+                ))
+            },
+        )
+    }
+
     pub fn keyed<T, K>(
         &self,
         items: Signal<Vec<T>>,
         key: impl Fn(&T) -> K + 'static,
-        render: impl Fn(&MountCx, &T) -> RuntimeNodeId + 'static,
-    ) where
-        T: Clone + 'static,
+        render: impl Fn(&MountCx, Signal<T>) -> RuntimeNodeId + 'static,
+    ) -> RuntimeNodeId
+    where
+        T: Clone + PartialEq + 'static,
         K: std::hash::Hash + Eq + Clone + 'static,
     {
-        let anchor = self.clone();
-        create_keyed_list(
+        self.keyed_with(move || items.get(), key, render)
+    }
+
+    pub fn keyed_with<T, K>(
+        &self,
+        items: impl Fn() -> Vec<T> + 'static,
+        key: impl Fn(&T) -> K + 'static,
+        render: impl Fn(&MountCx, Signal<T>) -> RuntimeNodeId + 'static,
+    ) -> RuntimeNodeId
+    where
+        T: Clone + PartialEq + 'static,
+        K: std::hash::Hash + Eq + Clone + 'static,
+    {
+        let parent = self.parent;
+        create_keyed_list_with(
             &self.owner,
             self.runtime.clone(),
-            self.parent,
+            parent,
             items,
             key,
-            move |runtime, item_owner, item| {
-                let item_cx = MountCx {
-                    runtime: runtime.clone(),
-                    owner: item_owner.clone(),
-                    parent: anchor.parent,
-                };
-                render(&item_cx, item)
+            move |runtime, owner, item| {
+                render(
+                    &MountCx::new(runtime.clone(), owner.clone(), parent).detached(),
+                    item,
+                )
             },
-        );
+        )
     }
 
     /// Registers `f` to run once this cx's owner is disposed.
@@ -285,7 +320,7 @@ mod tests {
             panel
         });
 
-        assert!(runtime.with(|r| r.get(root).unwrap().children.is_empty()));
+        assert_eq!(runtime.with(|r| r.get(root).unwrap().children.len()), 1);
         open.set(true);
 
         let panel = runtime.with(|r| r.get(root).unwrap().children.as_slice()[0]);
@@ -296,8 +331,8 @@ mod tests {
     fn keyed_mounts_one_node_per_item_through_the_same_cx_style() {
         let (runtime, root, cx) = root_cx();
         let items = Signal::new(vec![1u32, 2, 3]);
-        cx.keyed(items, |&id| id, |cx, &id| cx.text(id.to_string()));
+        cx.keyed(items, |&id| id, |cx, id| cx.text(id.get().to_string()));
 
-        assert_eq!(runtime.with(|r| r.get(root).unwrap().children.len()), 3);
+        assert_eq!(runtime.with(|r| r.get(root).unwrap().children.len()), 4);
     }
 }

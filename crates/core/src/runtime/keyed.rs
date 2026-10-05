@@ -1,66 +1,105 @@
-use creamui_reactive::{Owner, Signal};
-use std::collections::HashMap;
+use creamui_reactive::{untrack, Owner, Signal};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::rc::Rc;
 
 use super::binding::SharedRuntime;
 use super::node::RuntimeNodeId;
+use super::region::ChildRegion;
 
-struct ListEntry {
+struct ListEntry<T> {
     owner: Owner,
     root: RuntimeNodeId,
+    item: Signal<T>,
 }
 
-/// Wires `items` to a keyed, order-preserving list of subtrees under
-/// `parent` — the runtime-tree analogue of `for_each(items, key, render)`.
-/// An item whose key survives an update keeps its runtime node (and
-/// therefore its owner, layer cache, focus, ...); only genuinely new or
-/// removed keys mount or dispose.
 pub fn create_keyed_list<T, K>(
     owner: &Owner,
     runtime: SharedRuntime,
     parent: RuntimeNodeId,
     items: Signal<Vec<T>>,
     key: impl Fn(&T) -> K + 'static,
-    render: impl Fn(&SharedRuntime, &Owner, &T) -> RuntimeNodeId + 'static,
-) where
-    T: Clone + 'static,
+    render: impl Fn(&SharedRuntime, &Owner, Signal<T>) -> RuntimeNodeId + 'static,
+) -> RuntimeNodeId
+where
+    T: Clone + PartialEq + 'static,
     K: Hash + Eq + Clone + 'static,
 {
-    let container = owner.child();
-    let mut entries: HashMap<K, ListEntry> = HashMap::new();
+    create_keyed_list_with(owner, runtime, parent, move || items.get(), key, render)
+}
 
-    owner.effect(move || {
-        let current = items.get();
-        let keys: Vec<K> = current.iter().map(&key).collect();
-
-        let mut next_entries: HashMap<K, ListEntry> = HashMap::with_capacity(keys.len());
-        let mut ordered_roots: Vec<RuntimeNodeId> = Vec::with_capacity(keys.len());
-
-        for (item, k) in current.iter().zip(&keys) {
-            let entry = match entries.remove(k) {
-                Some(entry) => entry,
-                None => {
-                    let item_owner = container.child();
-                    // `render` manages its own transaction(s) — see
-                    // `branch.rs`'s doc comment on the same constraint.
-                    let root = render(&runtime, &item_owner, item);
-                    ListEntry {
-                        owner: item_owner,
-                        root,
-                    }
-                }
-            };
-            ordered_roots.push(entry.root);
-            next_entries.insert(k.clone(), entry);
-        }
-        runtime.transaction(|tx| tx.reorder_children(parent, &ordered_roots));
-
-        for (_, removed) in entries.drain() {
-            removed.owner.dispose();
-            runtime.transaction(|tx| tx.remove_subtree(removed.root));
-        }
-        entries = next_entries;
+pub fn create_keyed_list_with<T, K>(
+    owner: &Owner,
+    runtime: SharedRuntime,
+    parent: RuntimeNodeId,
+    items: impl Fn() -> Vec<T> + 'static,
+    key: impl Fn(&T) -> K + 'static,
+    render: impl Fn(&SharedRuntime, &Owner, Signal<T>) -> RuntimeNodeId + 'static,
+) -> RuntimeNodeId
+where
+    T: Clone + PartialEq + 'static,
+    K: Hash + Eq + Clone + 'static,
+{
+    let scope = owner.child();
+    let region = Rc::new(RefCell::new(ChildRegion::new(runtime.clone(), parent)));
+    let anchor = region.borrow().anchor();
+    scope.on_cleanup({
+        let region = region.clone();
+        move || region.borrow_mut().clear()
     });
+    let container = scope.downgrade();
+    let mut entries: HashMap<K, ListEntry<T>> = HashMap::new();
+    scope.effect(move || {
+        let current = items();
+        let keys: Vec<K> = untrack(|| current.iter().map(&key).collect());
+        let unique: HashSet<_> = keys.iter().collect();
+        assert_eq!(unique.len(), keys.len(), "keyed list keys must be unique");
+        untrack(|| {
+            let Some(container) = container.upgrade() else {
+                return;
+            };
+            if !region.borrow().is_live() {
+                return;
+            }
+            let mut next_entries = HashMap::with_capacity(keys.len());
+            let mut ordered_roots = Vec::with_capacity(keys.len());
+            for (item, key) in current.into_iter().zip(keys) {
+                let entry = match entries.remove(&key) {
+                    Some(entry) => {
+                        entry.item.set_if_changed(item);
+                        entry
+                    }
+                    None => {
+                        let owner = container.child();
+                        let item = Signal::new(item);
+                        let root = render(&runtime, &owner, item.clone());
+                        ListEntry { owner, root, item }
+                    }
+                };
+                ordered_roots.push(entry.root);
+                next_entries.insert(key, entry);
+                if container.is_disposed() || !region.borrow().is_live() {
+                    Owner::dispose_many(next_entries.values().map(|entry| entry.owner.clone()));
+                    runtime.transaction(|tx| tx.remove_subtrees(&ordered_roots));
+                    entries.clear();
+                    return;
+                }
+            }
+            let removed: Vec<_> = entries.drain().map(|(_, entry)| entry).collect();
+            Owner::dispose_many(removed.iter().map(|entry| entry.owner.clone()));
+            let removed_roots: Vec<_> = removed.iter().map(|entry| entry.root).collect();
+            runtime.transaction(|tx| tx.remove_subtrees(&removed_roots));
+            if container.is_disposed() || !region.borrow().is_live() {
+                Owner::dispose_many(next_entries.values().map(|entry| entry.owner.clone()));
+                runtime.transaction(|tx| tx.remove_subtrees(&ordered_roots));
+                return;
+            }
+            region.borrow_mut().replace(ordered_roots);
+            entries = next_entries;
+        });
+    });
+    anchor
 }
 
 #[cfg(test)]
@@ -72,13 +111,13 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    fn leaf(runtime: &SharedRuntime, _owner: &Owner, id: &u32) -> RuntimeNodeId {
+    fn leaf(runtime: &SharedRuntime, _owner: &Owner, id: Signal<u32>) -> RuntimeNodeId {
         runtime.transaction(|tx| {
             let node = tx.create_node(NodeKind::Container);
             tx.apply(Mutation::SetPaintStyle {
                 node,
                 style: PaintStyle {
-                    background: Some(Color::rgb(*id as u8, 0, 0).into()),
+                    background: Some(Color::rgb(id.get() as u8, 0, 0).into()),
                     ..Default::default()
                 },
             });
@@ -113,7 +152,7 @@ mod tests {
         let after: Vec<RuntimeNodeId> =
             runtime.with(|r| r.get(parent).unwrap().children.as_slice().to_vec());
 
-        assert_eq!(after, vec![before[2], before[0], before[1]]);
+        assert_eq!(after, vec![before[2], before[0], before[1], before[3]]);
     }
 
     #[test]
@@ -143,7 +182,7 @@ mod tests {
             runtime.with(|r| r.get(node_for_1).is_none()),
             "key 1's node must be removed once its key drops out"
         );
-        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 2);
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 3);
     }
 
     #[test]
@@ -173,7 +212,7 @@ mod tests {
                         runs.set(runs.get() + 1);
                     }
                 });
-                leaf(runtime, item_owner, &0)
+                leaf(runtime, item_owner, Signal::new(0))
             }
         });
         assert_eq!(runs.get(), 1);

@@ -199,28 +199,85 @@ impl<'a> RuntimeTransaction<'a> {
     }
 
     pub fn remove_subtree(&mut self, root: RuntimeNodeId) {
-        let Some((parent, children, taffy_node)) = self.runtime.nodes.get(root).map(|n| {
-            (
-                n.parent,
-                n.children.as_slice().to_vec(),
-                n.layout.taffy_node,
-            )
-        }) else {
-            return;
-        };
-        for child in children {
-            self.remove_subtree(child);
+        self.remove_subtrees(&[root]);
+    }
+
+    /// Removes listed roots and descendants, unlinking each surviving parent once.
+    /// Duplicate, nested, and stale roots are accepted.
+    pub fn remove_subtrees(&mut self, roots: &[RuntimeNodeId]) {
+        use std::collections::HashSet;
+
+        let mut removed = HashSet::new();
+        let mut ordered = Vec::new();
+        let mut stack = roots.to_vec();
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.runtime.nodes.get(id) else {
+                continue;
+            };
+            if removed.insert(id) {
+                ordered.push(id);
+                stack.extend_from_slice(node.children.as_slice());
+            }
         }
-        if self.runtime.root == Some(root) {
+        let parents: HashSet<_> = ordered
+            .iter()
+            .filter_map(|&id| self.runtime.nodes.get(id)?.parent)
+            .filter(|parent| !removed.contains(parent))
+            .collect();
+        for parent in parents {
+            let retained: Vec<_> = self
+                .runtime
+                .nodes
+                .get(parent)
+                .expect("external parent exists")
+                .children
+                .as_slice()
+                .iter()
+                .copied()
+                .filter(|id| !removed.contains(id))
+                .collect();
+            self.reorder_children(parent, &retained);
+        }
+        if self
+            .runtime
+            .root
+            .is_some_and(|root| removed.contains(&root))
+        {
             self.runtime.set_root(None);
         }
-        self.runtime.nodes.remove(root);
-        let _ = self.runtime.taffy.remove(taffy_node);
-        if let Some(parent) = parent {
-            if let Some(parent_node) = self.runtime.nodes.get_mut(parent) {
-                parent_node.children.remove(root);
-            }
-            self.touch(parent, DirtyFlags::STRUCTURE);
+        let mut stack: Vec<_> = ordered
+            .iter()
+            .copied()
+            .filter(|&id| {
+                self.runtime
+                    .nodes
+                    .get(id)
+                    .and_then(|node| node.parent)
+                    .is_none_or(|parent| !removed.contains(&parent))
+            })
+            .collect();
+        ordered.clear();
+        while let Some(id) = stack.pop() {
+            ordered.push(id);
+            stack.extend_from_slice(
+                self.runtime
+                    .nodes
+                    .get(id)
+                    .expect("collected runtime node exists")
+                    .children
+                    .as_slice(),
+            );
+        }
+        for id in ordered {
+            let node = self
+                .runtime
+                .nodes
+                .remove(id)
+                .expect("collected runtime node exists");
+            self.runtime
+                .taffy
+                .remove(node.layout.taffy_node)
+                .expect("runtime layout node exists");
         }
     }
 

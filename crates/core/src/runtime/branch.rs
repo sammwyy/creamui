@@ -1,72 +1,97 @@
-use creamui_reactive::{Owner, Signal};
+use creamui_reactive::{untrack, Owner, Signal};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::binding::SharedRuntime;
 use super::node::RuntimeNodeId;
+use super::region::ChildRegion;
 
-/// A conditionally-mounted subtree anchored at a stable parent node — the
-/// runtime-tree analogue of `if condition.get() { <Panel/> }`: only the
-/// branch's own subtree changes when the condition flips, never the rest
-/// of the tree.
 struct BranchBinding {
-    runtime: SharedRuntime,
-    parent: RuntimeNodeId,
-    active: Option<(Owner, RuntimeNodeId)>,
+    region: ChildRegion,
+    variant: Option<bool>,
+    active: Option<Owner>,
 }
 
-impl BranchBinding {
-    fn new(runtime: SharedRuntime, parent: RuntimeNodeId) -> Self {
-        BranchBinding {
-            runtime,
-            parent,
-            active: None,
-        }
-    }
-
-    fn show(&mut self, container: &Owner, mount: &dyn Fn(&SharedRuntime, &Owner) -> RuntimeNodeId) {
-        if self.active.is_some() {
-            return;
-        }
-        let branch_owner = container.child();
-        // `mount` manages its own transaction(s) against `self.runtime` —
-        // it must not be handed an already-open one, since it may recurse
-        // into further mounts that each need their own borrow.
-        let root = mount(&self.runtime, &branch_owner);
-        self.runtime
-            .transaction(|tx| tx.insert_child(self.parent, root, None));
-        self.active = Some((branch_owner, root));
-    }
-
-    fn hide(&mut self) {
-        let Some((owner, root)) = self.active.take() else {
-            return;
-        };
-        owner.dispose();
-        self.runtime.transaction(|tx| tx.remove_subtree(root));
-    }
-}
-
-/// Wires `condition` to mount/unmount a subtree under `parent` — see
-/// [`BranchBinding`]. `owner` should be the enclosing scope; the mounted
-/// content gets its own child scope, disposed on every hide and whenever
-/// `owner` itself is disposed.
 pub fn create_branch(
     owner: &Owner,
     runtime: SharedRuntime,
     parent: RuntimeNodeId,
     condition: Signal<bool>,
     mount: impl Fn(&SharedRuntime, &Owner) -> RuntimeNodeId + 'static,
-) {
-    let container = owner.child();
-    let branch = Rc::new(RefCell::new(BranchBinding::new(runtime, parent)));
-    owner.effect(move || {
-        if condition.get() {
-            branch.borrow_mut().show(&container, &mount);
-        } else {
-            branch.borrow_mut().hide();
-        }
+) -> RuntimeNodeId {
+    create_branch_when(owner, runtime, parent, move || condition.get(), mount)
+}
+
+pub fn create_branch_when(
+    owner: &Owner,
+    runtime: SharedRuntime,
+    parent: RuntimeNodeId,
+    condition: impl Fn() -> bool + 'static,
+    mount: impl Fn(&SharedRuntime, &Owner) -> RuntimeNodeId + 'static,
+) -> RuntimeNodeId {
+    create_switch(
+        owner,
+        runtime,
+        parent,
+        condition,
+        move |runtime, owner, value| value.then(|| mount(runtime, owner)),
+    )
+}
+
+pub fn create_switch(
+    owner: &Owner,
+    runtime: SharedRuntime,
+    parent: RuntimeNodeId,
+    condition: impl Fn() -> bool + 'static,
+    mount: impl Fn(&SharedRuntime, &Owner, bool) -> Option<RuntimeNodeId> + 'static,
+) -> RuntimeNodeId {
+    let scope = owner.child();
+    let region = ChildRegion::new(runtime.clone(), parent);
+    let anchor = region.anchor();
+    let branch = Rc::new(RefCell::new(BranchBinding {
+        region,
+        variant: None,
+        active: None,
+    }));
+    scope.on_cleanup({
+        let branch = branch.clone();
+        move || branch.borrow_mut().region.clear()
     });
+    let container = scope.downgrade();
+    scope.effect(move || {
+        let value = condition();
+        untrack(|| {
+            let Some(container) = container.upgrade() else {
+                return;
+            };
+            {
+                let branch = branch.borrow();
+                if !branch.region.is_live() || branch.variant == Some(value) {
+                    return;
+                }
+            }
+            let previous = branch.borrow_mut().active.take();
+            if let Some(previous) = previous {
+                previous.dispose();
+            }
+            if container.is_disposed() {
+                return;
+            }
+            branch.borrow_mut().region.remove_roots();
+            let active = container.child();
+            let root = mount(&runtime, &active, value);
+            if container.is_disposed() || !branch.borrow().region.is_live() {
+                active.dispose();
+                runtime.transaction(|tx| tx.remove_subtrees(&root.into_iter().collect::<Vec<_>>()));
+                return;
+            }
+            let mut branch = branch.borrow_mut();
+            branch.region.replace(root.into_iter().collect());
+            branch.active = Some(active);
+            branch.variant = Some(value);
+        });
+    });
+    anchor
 }
 
 #[cfg(test)]
@@ -92,21 +117,17 @@ mod tests {
         let owner = Owner::new();
         create_branch(&owner, runtime.clone(), parent, condition.clone(), leaf);
 
-        assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
-
-        condition.set(true);
         assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
 
+        condition.set(true);
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 2);
+
         condition.set(false);
-        assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
     }
 
     #[test]
     fn a_mount_closure_that_recurses_into_another_mount_does_not_panic() {
-        // Regression test: `mount` used to receive an already-open
-        // `RuntimeTransaction`, so a mount closure that itself opened
-        // another transaction (e.g. via a nested `MountCx` call) would hit
-        // a `RefCell` double-borrow panic.
         let mut runtime = Runtime::new();
         let parent = {
             let mut tx = runtime.transaction();
@@ -129,7 +150,7 @@ mod tests {
             },
         );
 
-        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 2);
     }
 
     #[test]
@@ -165,7 +186,7 @@ mod tests {
         assert_eq!(inner_runs.get(), 1);
 
         condition.set(false);
-        assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
 
         inner_signal.set(2);
         assert_eq!(
@@ -187,14 +208,10 @@ mod tests {
         let condition = Signal::new(true);
         let owner = Owner::new();
         create_branch(&owner, runtime.clone(), parent, condition.clone(), leaf);
-        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 1);
+        assert_eq!(runtime.with(|r| r.get(parent).unwrap().children.len()), 2);
 
         owner.dispose();
         condition.set(false);
-        assert_eq!(
-            runtime.with(|r| r.get(parent).unwrap().children.len()),
-            1,
-            "a disposed branch must not react to further condition changes"
-        );
+        assert!(runtime.with(|r| r.get(parent).unwrap().children.is_empty()));
     }
 }

@@ -106,3 +106,51 @@ Pending pastes are discarded after a new edit, selection/cursor change, or
 newer paste request. Paste respects the controller's change guard. Clipboard
 access requires a secure context and the browser's permission or activation
 policy.
+
+## Retained runtime composition
+
+`creamui_core::runtime::MountCx` constructs nodes and scopes their bindings
+under an `Owner`. `branch_when` tracks a derived condition; `switch` mounts one
+of two variants; `keyed_with` tracks a derived `Vec<T>` and retains rows by key.
+These APIs mount roots beside static siblings without adding layout wrappers.
+Their return value is a hidden anchor identifying the region.
+
+Keyed render callbacks receive `Signal<T>` rather than `&T`. Read that signal
+inside a binding to update a surviving row, or inside its event handler to read
+the current value. Values require `Clone + PartialEq`; unchanged values do not
+rerun row bindings. Duplicate keys panic before changing the mounted tree.
+
+```rust
+use creamui_core::runtime::{MountCx, Mutation};
+use creamui_reactive::Signal;
+
+fn mount_rows(cx: &MountCx, rows: Signal<Vec<(u64, String)>>) {
+    cx.text("Before");
+    cx.keyed(rows, |row| row.0, |cx, row| {
+        let node = cx.text("");
+        cx.bind(move |tx| {
+            tx.apply(Mutation::SetText {
+                node,
+                text: row.get().1.into(),
+            });
+        });
+        node
+    });
+    cx.text("After");
+}
+```
+
+Branch and row callbacks receive a detached root context. Use
+`cx.with_parent(root)` to mount descendants of that root. Source reads are
+tracked separately from content bindings, so changing a row's content does not
+remount its surrounding branch. Effects retain the context scopes active when
+they were created, including after a branch is mounted by a later signal write.
+`creamui_reactive::untrack` reads values without subscribing the surrounding
+effect while allowing nested effects to track their own reads.
+
+Call `Owner::dispose` when removing an owned view. Disposal stops all descendant
+effects before running child-first cleanup and removes branch/list nodes and
+anchors. Dropping an owner stops its effects but does not run explicit cleanup.
+`WeakOwner` upgrades only while its scope is active. Effects queued by nested
+writes run after the current effect finishes; writes outside an effect or batch
+finish their notifications synchronously.

@@ -4,6 +4,25 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Retained branches and keyed lists preserve their position among static
+  siblings with hidden anchors, without introducing layout wrappers or gaps.
+  Derived conditions and list sources are supported. Surviving keyed rows receive
+  `Signal<T>` values, preserving their nodes, bindings, and event handlers when
+  data changes; row values now require `PartialEq`.
+- Runtime mounting attaches keyed roots in one batch, and subtree removal
+  unlinks each surviving parent once. Overlapping roots and deep trees are
+  supported without recursive removal.
+- Reactive effects preserve their mounting context, support untracked reads,
+  coalesce nested notifications, and cancel queued work on disposal. Owner
+  disposal stops all descendant effects before child-first cleanup, batches
+  sibling detachment, and rejects new work in disposed scopes. Non-owning scope
+  handles avoid retaining parent owners through structural effects.
+- Retained composition tests cover sibling order, flex spacing, updated row
+  events, duplicate keys, reentrant cleanup, disposal during mounting, and
+  10,000-node trees. Keyed mount, reorder, and removal benchmarks exercise
+  1,000, 10,000, and 50,000 bound rows; shared-signal benchmarks cover the
+  same subscriber counts.
+
 - Android supports CPU presentation with direct premultiplied RGBA copies into
   native buffers, including the expanded damage returned by the platform.
   GPU startup can fall back to the CPU presenter.

@@ -3,12 +3,12 @@
 
 use creamui_bench::scenes;
 use creamui_core::runtime::{
-    create_binding, Mutation, NodeKind, Runtime, SharedRuntime, Transform2D,
+    create_binding, MountCx, Mutation, NodeKind, Runtime, SharedRuntime, Transform2D,
 };
 use creamui_core::PaintStyle;
 use creamui_reactive::{Owner, Signal};
 use creamui_theme::Color;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 fn bench_mount_legacy_widget(c: &mut Criterion) {
     let mut group = c.benchmark_group("runtime/mount_legacy_widget");
@@ -19,6 +19,96 @@ fn bench_mount_legacy_widget(c: &mut Criterion) {
                 let mut tx = runtime.transaction();
                 creamui_core::runtime::mount_legacy_widget(&mut tx, scenes::wide_tree(count), None);
             });
+        });
+    }
+    group.finish();
+}
+
+fn bench_signal_fanout(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime/signal_fanout");
+    for count in [1_000usize, 10_000, 50_000] {
+        let signal = Signal::new(0u64);
+        let owner = Owner::new();
+        let total = std::rc::Rc::new(std::cell::Cell::new(0u64));
+        for _ in 0..count {
+            owner.effect({
+                let signal = signal.clone();
+                let total = total.clone();
+                move || total.set(total.get().wrapping_add(signal.get()))
+            });
+        }
+        let mut tick = 0u64;
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
+            b.iter(|| {
+                tick = tick.wrapping_add(1);
+                signal.set(tick);
+                criterion::black_box(total.get());
+            });
+        });
+        owner.dispose();
+    }
+    group.finish();
+}
+
+fn keyed_context(count: usize) -> (MountCx, Signal<Vec<usize>>) {
+    let mut runtime = Runtime::new();
+    let root = runtime.transaction().create_node(NodeKind::Container);
+    let runtime = SharedRuntime::new(runtime);
+    (
+        MountCx::new(runtime, Owner::new(), root),
+        Signal::new((0..count).collect()),
+    )
+}
+
+fn mount_keyed(cx: &MountCx, items: Signal<Vec<usize>>) {
+    cx.keyed(
+        items,
+        |item| *item,
+        |cx, item| {
+            let node = cx.text("");
+            cx.bind(move |tx| {
+                tx.apply(Mutation::SetText {
+                    node,
+                    text: item.get().to_string().into(),
+                });
+            });
+            node
+        },
+    );
+}
+
+fn bench_keyed_regions(c: &mut Criterion) {
+    let mut group = c.benchmark_group("runtime/keyed_regions");
+    for count in [1_000usize, 10_000, 50_000] {
+        group.bench_with_input(BenchmarkId::new("mount", count), &count, |b, &count| {
+            b.iter_batched(
+                || keyed_context(count),
+                |(cx, items)| {
+                    mount_keyed(&cx, items);
+                    cx
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        let (cx, items) = keyed_context(count);
+        mount_keyed(&cx, items.clone());
+        group.bench_with_input(BenchmarkId::new("reverse", count), &count, |b, _| {
+            b.iter(|| items.update(|items| items.reverse()));
+        });
+        cx.owner().dispose();
+        group.bench_with_input(BenchmarkId::new("remove", count), &count, |b, &count| {
+            b.iter_batched(
+                || {
+                    let (cx, items) = keyed_context(count);
+                    mount_keyed(&cx, items.clone());
+                    (cx, items)
+                },
+                |(cx, items)| {
+                    items.set(Vec::new());
+                    cx
+                },
+                BatchSize::PerIteration,
+            );
         });
     }
     group.finish();
@@ -361,6 +451,8 @@ fn bench_create_node(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_mount_legacy_widget,
+    bench_keyed_regions,
+    bench_signal_fanout,
     bench_direct_leaf_mutation,
     bench_signal_driven_leaf_update,
     bench_compute_layout_after_single_leaf_style_change,

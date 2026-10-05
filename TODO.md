@@ -7,7 +7,8 @@ Current limitations and work still to do. Implemented changes belong in
 
 - Rewrite `jsx!` and `#[component]` to mount through `MountCx`, including
   reactive expressions, conditional branches, keyed lists, and events.
-  The macro currently expands to widget builders. Add
+  The macro currently expands to widget builders. Integrate owned view
+  startup with window lifecycle and preserve control events and hooks. Add
   `CREAMUI_DUMP_JSX` support and validate the rewrite against the examples.
 - Extend runtime composition beyond translated rectangles: add affine
   transforms, group opacity with layer promotion, rounded inherited clips,

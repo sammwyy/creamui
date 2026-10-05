@@ -5,9 +5,6 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Persistent runtime
 
-- Batch legacy runtime child mounting; it currently rewrites a growing child
-  list for each sibling.
-
 - Rewrite `jsx!` and `#[component]` to mount through `MountCx`, including
   reactive expressions, conditional branches, keyed lists, and events.
   The macro currently expands to widget builders. Add

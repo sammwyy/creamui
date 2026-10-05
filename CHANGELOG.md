@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Legacy runtime mounting batches each container's child attachment, avoiding
+  repeated writes of growing sibling lists while preserving child order.
+
 - Retained layout records changed Taffy outputs and rounds only affected
   paths and descendants whose cumulative position changed. Rectangle sync
   skips unchanged flow siblings in wide containers, while preserving layout,

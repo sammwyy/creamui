@@ -910,3 +910,19 @@ The release-profile quick run measured the full layout-and-paint operation:
 Taffy's flex and grid algorithms can still inspect direct children to compute
 flow placement. These counters describe rounding and rectangle sync, rather
 than a constant-time guarantee for the complete layout algorithm.
+
+## Batched legacy mounting — 2026-10-04
+
+Legacy mounting attaches a container's complete ordered child list once,
+then links the mounted root to its optional external parent. Leaf containers
+perform no child-list writes. This avoids copying growing sibling lists
+through both the retained tree and layout tree for each child insertion.
+
+The regression scene mounts 769 widget nodes: a root, 256 containers, and two
+leaves per container. Mounting it under an existing parent performs 258 layout
+child-list writes, one for each populated widget container and one for the
+external parent. The check verifies ordering and both parent/child links.
+
+```sh
+cargo test -p creamui-core --features perf-metrics mounting_a_wide_subtree
+```

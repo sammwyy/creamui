@@ -57,8 +57,12 @@ pub fn mount_legacy_widget(
         tx.insert_child(parent, id, None);
     }
 
-    for child_widget in child_widgets {
-        mount_legacy_widget(tx, child_widget, Some(id));
+    if !child_widgets.is_empty() {
+        let children: Vec<_> = child_widgets
+            .into_iter()
+            .map(|child| mount_legacy_widget(tx, child, None))
+            .collect();
+        tx.reorder_children(id, &children);
     }
 
     id
@@ -127,6 +131,71 @@ mod tests {
             .collect();
         assert_eq!(widths, vec![20.0, 30.0]);
 
+        runtime.check_invariants();
+    }
+
+    #[test]
+    fn mounting_a_wide_subtree_batches_child_writes_and_preserves_order() {
+        let widget: BoxedWidget = Box::new(Branch {
+            width: 800.0,
+            children: (0..256)
+                .map(|index| {
+                    Box::new(Branch {
+                        width: index as f32 + 1.0,
+                        children: vec![
+                            Box::new(Branch {
+                                width: 3.0,
+                                children: vec![],
+                            }),
+                            Box::new(Branch {
+                                width: 4.0,
+                                children: vec![],
+                            }),
+                        ],
+                    }) as BoxedWidget
+                })
+                .collect(),
+        });
+        let mut runtime = Runtime::new();
+        let mut tx = runtime.transaction();
+        let parent = tx.create_node(NodeKind::Container);
+        #[cfg(feature = "perf-metrics")]
+        crate::metrics::reset_frame_metrics();
+        let root = mount_legacy_widget(&mut tx, widget, Some(parent));
+        drop(tx);
+        assert_eq!(runtime.get(parent).unwrap().children.as_slice(), &[root]);
+        for (index, &row) in runtime
+            .get(root)
+            .unwrap()
+            .children
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            let row = runtime.get(row).unwrap();
+            assert_eq!(
+                row.layout_style.size.width,
+                taffy::style::Dimension::Length(index as f32 + 1.0)
+            );
+            assert_eq!(row.parent, Some(root));
+            for (&child, width) in row.children.as_slice().iter().zip([3.0, 4.0]) {
+                let child = runtime.get(child).unwrap();
+                assert_eq!(child.parent, Some(row.id));
+                assert_eq!(
+                    child.layout_style.size.width,
+                    taffy::style::Dimension::Length(width)
+                );
+            }
+            assert_eq!(row.children.len(), 2);
+        }
+        assert_eq!(runtime.get(root).unwrap().children.len(), 256);
+        assert_eq!(runtime.len(), 770);
+        #[cfg(feature = "perf-metrics")]
+        {
+            let metrics = crate::metrics::frame_metrics();
+            assert_eq!(metrics.taffy_children_writes, 258);
+            assert_eq!(metrics.legacy_widgets_mounted, 769);
+        }
         runtime.check_invariants();
     }
 

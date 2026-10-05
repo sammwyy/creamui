@@ -1,8 +1,8 @@
 use crate::{
-    BackendKind, BlurRegion, ControlFlow, CursorIcon, DragIcon, Key, KeyEvent, LogicalPosition,
-    LogicalSize, Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize,
-    PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection, WindowAttributes, WindowEvent,
-    WindowId, WindowLevel, WindowRole,
+    BackendKind, BlurRegion, CompositorIntegrationRequest, ControlFlow, CursorIcon, DragIcon, Key,
+    KeyEvent, LogicalPosition, LogicalSize, Modifiers, MouseButton, MouseScrollDelta,
+    PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection,
+    WindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -68,6 +68,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use xkbcommon::xkb;
 
 mod blur;
+mod integration;
 
 const USER_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -142,6 +143,7 @@ impl<T: 'static> EventLoop<T> {
         let cursor_shape_manager = CursorShapeManager::bind(&globals, &queue_handle).ok();
         let layer_shell = globals.bind(&queue_handle, 1..=5, ()).ok();
         let blur = blur::BlurBackend::bind(&globals, &queue_handle);
+        let integration = integration::IntegrationBackend::bind(&globals, &queue_handle);
         let seat: Option<wl_seat::WlSeat> = globals.bind(&queue_handle, 1..=9, ()).ok();
         let data_device_manager = DataDeviceManagerState::bind(&globals, &queue_handle).ok();
         let data_device = data_device_manager
@@ -160,6 +162,7 @@ impl<T: 'static> EventLoop<T> {
             cursor_shape_manager,
             layer_shell,
             blur,
+            integration,
             data_device_manager,
             data_device,
             icon_pool,
@@ -192,6 +195,9 @@ impl<T: 'static> EventLoop<T> {
             runtime.borrow_mut().apply_cursor_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
             runtime.borrow_mut().apply_blur_requests(&queue_handle);
+            runtime
+                .borrow_mut()
+                .apply_integration_requests(&queue_handle);
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
@@ -282,6 +288,7 @@ impl ActiveEventLoop<'_> {
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.blur_requests.clone(),
+            runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
             attributes.size,
             false,
@@ -341,6 +348,7 @@ impl ActiveEventLoop<'_> {
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.blur_requests.clone(),
+            runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
             attributes.size,
             false,
@@ -404,6 +412,8 @@ struct Runtime {
     layer_shell: Option<ZwlrLayerShellV1>,
     blur: Option<blur::BlurBackend>,
     blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
+    integration: Option<integration::IntegrationBackend>,
+    integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     cursor_serial: Option<u32>,
     pointer_focus: Option<WindowId>,
@@ -444,6 +454,11 @@ struct BlurRequest {
     region: Option<BlurRegion>,
 }
 
+struct IntegrationRequest {
+    window_id: WindowId,
+    request: Option<CompositorIntegrationRequest>,
+}
+
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -454,6 +469,7 @@ impl Runtime {
         cursor_shape_manager: Option<CursorShapeManager>,
         layer_shell: Option<ZwlrLayerShellV1>,
         blur: Option<blur::BlurBackend>,
+        integration: Option<integration::IntegrationBackend>,
         data_device_manager: Option<DataDeviceManagerState>,
         data_device: Option<DataDevice>,
         icon_pool: SlotPool,
@@ -471,6 +487,8 @@ impl Runtime {
             layer_shell,
             blur,
             blur_requests: Arc::new(Mutex::new(Vec::new())),
+            integration,
+            integration_requests: Arc::new(Mutex::new(Vec::new())),
             cursor_shape_device: None,
             cursor_serial: None,
             pointer_focus: None,
@@ -525,6 +543,9 @@ impl Runtime {
                 handle.surface.destroy();
             }
             if let Some(backend) = self.blur.as_mut() {
+                backend.forget(id);
+            }
+            if let Some(backend) = self.integration.as_mut() {
                 backend.forget(id);
             }
             if self.pointer_focus == Some(id) {
@@ -608,6 +629,18 @@ impl Runtime {
             return;
         };
         backend.apply(&self.compositor, &self.windows, &requests, qh);
+    }
+
+    fn apply_integration_requests(&mut self, qh: &QueueHandle<DispatchState>) {
+        let requests = std::mem::take(
+            &mut *self
+                .integration_requests
+                .lock()
+                .expect("integration request lock poisoned"),
+        );
+        if let Some(backend) = self.integration.as_mut() {
+            backend.apply(&self.windows, &requests, qh);
+        }
     }
 
     /// Renders `icon` into a fresh `wl_surface` to hand to `start_drag`.
@@ -722,6 +755,7 @@ fn create_layer_window(
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
         runtime.blur_requests.clone(),
+        runtime.integration_requests.clone(),
         runtime.output_refresh.clone(),
         attributes.size,
         overlay,
@@ -1496,6 +1530,7 @@ pub struct Window {
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
     blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
+    integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
 }
@@ -1510,6 +1545,7 @@ impl Window {
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
         blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
+        integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
         output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
@@ -1530,6 +1566,7 @@ impl Window {
             cursor_requests,
             drag_requests,
             blur_requests,
+            integration_requests,
             output_refresh,
             pointer_passthrough,
         }
@@ -1654,6 +1691,17 @@ impl PlatformWindow for Window {
         requests.push(BlurRequest {
             window_id: self.id,
             region,
+        });
+    }
+    fn set_compositor_integration(&self, request: Option<CompositorIntegrationRequest>) {
+        let mut requests = self
+            .integration_requests
+            .lock()
+            .expect("integration request lock poisoned");
+        requests.retain(|pending| pending.window_id != self.id);
+        requests.push(IntegrationRequest {
+            window_id: self.id,
+            request,
         });
     }
     fn start_drag(

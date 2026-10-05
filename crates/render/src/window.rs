@@ -29,11 +29,12 @@ use creamui_core::{
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 use creamui_platform::AndroidApp;
 use creamui_platform::{
-    ActiveEventLoop, ApplicationHandler, BlurRegion, ControlFlow, CursorIcon as PlatformCursorIcon,
-    DragIcon, EventLoop, EventLoopProxy, InputSerial, Key as PlatformKey, LogicalPosition,
-    LogicalSize, Modifiers as PlatformModifiers, MouseButton, MouseScrollDelta, PlatformWindow,
-    PopupOptions as PlatformPopupOptions, PopupPlacement, ResizeDirection,
-    WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
+    ActiveEventLoop, ApplicationHandler, BlurRegion, CompositorIntegrationRequest, ControlFlow,
+    CursorIcon as PlatformCursorIcon, DragIcon, EventLoop, EventLoopProxy, InputSerial,
+    Key as PlatformKey, LogicalPosition, LogicalSize, Modifiers as PlatformModifiers, MouseButton,
+    MouseScrollDelta, PlatformWindow, PopupOptions as PlatformPopupOptions, PopupPlacement,
+    ResizeDirection, WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId,
+    WindowLevel, WindowRole,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
@@ -1479,6 +1480,15 @@ impl WindowHandle {
     pub fn set_blur_region(&self, region: Option<BlurRegion>) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_blur_region(region);
+        }
+    }
+
+    /// Requests compositor-managed hybrid window controls. This is a no-op
+    /// unless a platform integration feature is enabled and the compositor
+    /// advertises a compatible protocol.
+    pub fn set_compositor_integration(&self, request: Option<CompositorIntegrationRequest>) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_compositor_integration(request);
         }
     }
 

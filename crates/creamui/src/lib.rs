@@ -25,8 +25,9 @@ pub use creamui_fonts::{include_font, use_font, FontHandle, FontWeight};
 pub use creamui_reactive::{create_effect, Effect, Signal};
 pub use creamui_render::{
     run, use_safe_area, use_screen_class, use_system_bars, use_viewport, AppBuilder, AppHandle,
-    BlurRegion, CloseBehavior, PanicDetails, RenderBackend, SafeArea, ScreenClass, WindowContent,
-    WindowHandle, WindowOptions,
+    BlurRegion, CloseBehavior, CompositorControls, CompositorIntegrationMode,
+    CompositorIntegrationRequest, PanicDetails, RenderBackend, SafeArea, ScreenClass,
+    WindowContent, WindowHandle, WindowOptions,
 };
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 pub use creamui_render::{run_android, AndroidApp};

@@ -18,6 +18,7 @@ platform-android = ["creamui-platform/android"]
 platform-wayland = ["creamui-platform/wayland"]
 platform-blur-kwin = ["creamui-platform/blur-kwin"]
 platform-blur-blair = ["creamui-platform/blur-blair"]
+platform-window-integration-blair = ["creamui-platform/window-integration-blair"]
 platform-x11 = ["creamui-platform/x11"]
 platform-windows = ["creamui-platform/windows"]
 # Native Linux system-tray integration through the freedesktop

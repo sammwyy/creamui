@@ -25,6 +25,9 @@ windows = ["winit-adapter"]
 # without at least one of these on.
 blur-kwin = ["wayland", "dep:wayland-protocols-plasma"]
 blur-blair = ["wayland", "dep:blair-blur-protocol"]
+# Opt-in Blair window integration. The public API remains compositor-neutral
+# so other protocol backends can be added beside this one later.
+window-integration-blair = ["wayland", "dep:blair-window-integration-protocol"]
 
 [dependencies]
 raw-window-handle = { workspace = true }
@@ -34,6 +37,7 @@ wayland-client = { version = "0.31", features = ["system"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
 blair-blur-protocol = { path = "../../../blair/crates/blur-protocol", features = ["client"], optional = true }
+blair-window-integration-protocol = { path = "../../../blair/crates/window-integration-protocol", features = ["client"], optional = true }
 xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

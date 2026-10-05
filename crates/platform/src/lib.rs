@@ -97,6 +97,11 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn set_blur_region(&self, region: Option<BlurRegion>) {
         let _ = region;
     }
+    /// Requests an optional compositor integration for this window. Unsupported
+    /// backends and compositors silently keep normal client-side behavior.
+    fn set_compositor_integration(&self, request: Option<CompositorIntegrationRequest>) {
+        let _ = request;
+    }
     /// Starts a real drag-and-drop grab (e.g. a desktop icon dragged toward
     /// the dock or an external app), handed off to the compositor from
     /// `serial` — the input serial of the pointer-button-press that

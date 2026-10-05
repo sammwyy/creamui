@@ -26,6 +26,7 @@ platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop", 
 platform-wayland = ["creamui-platform/wayland", "creamui-render/platform-wayland"]
 platform-blur-kwin = ["creamui-render/platform-blur-kwin"]
 platform-blur-blair = ["creamui-render/platform-blur-blair"]
+platform-window-integration-blair = ["creamui-render/platform-window-integration-blair"]
 platform-x11 = ["creamui-platform/x11", "creamui-render/platform-x11"]
 platform-windows = ["creamui-platform/windows", "creamui-render/platform-windows"]
 platform-android = ["creamui-platform/android", "creamui-render/platform-android"]

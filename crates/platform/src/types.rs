@@ -176,6 +176,28 @@ pub enum BlurRegion {
     },
 }
 
+/// Optional compositor integration requested by a client window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositorIntegrationRequest {
+    Hybrid,
+}
+
+/// Effective integration selected by the compositor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositorIntegrationMode {
+    None,
+    Hybrid,
+}
+
+/// Client-local rectangle occupied by compositor controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CompositorControls {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowLevel {
     Normal,
@@ -357,6 +379,12 @@ pub enum WindowEvent {
     },
     CursorLeft,
     Focused(bool),
+    /// The compositor accepted, changed, or removed a requested integration.
+    /// Content can reserve [`CompositorControls`] to avoid overlapping it.
+    CompositorIntegration {
+        mode: CompositorIntegrationMode,
+        controls: CompositorControls,
+    },
     MouseWheel {
         delta: MouseScrollDelta,
     },

@@ -25,6 +25,9 @@ pub use creamui_platform as platform;
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 pub use creamui_platform::AndroidApp;
 pub use creamui_platform::BlurRegion;
+pub use creamui_platform::{
+    CompositorControls, CompositorIntegrationMode, CompositorIntegrationRequest,
+};
 pub use devtools::{install_devtools, Devtools, DevtoolsCommand, FrameReport, WindowDevtools};
 pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, ScrollBlit};
 #[cfg(not(target_arch = "wasm32"))]

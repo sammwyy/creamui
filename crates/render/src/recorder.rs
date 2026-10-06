@@ -46,6 +46,8 @@ struct ClipState {
 }
 
 pub struct SceneRecorder {
+    pub(crate) collect_background_blur: bool,
+    pub(crate) blur_regions: Vec<(i32, i32, i32, i32)>,
     text: Rc<RefCell<TextSystem>>,
     list: DisplayList,
     spare: Vec<DrawItem>,
@@ -68,6 +70,8 @@ impl Default for SceneRecorder {
 impl SceneRecorder {
     pub fn new() -> Self {
         SceneRecorder {
+            collect_background_blur: false,
+            blur_regions: Vec::new(),
             text: TextSystem::shared(),
             list: DisplayList::new(1, 1, TRANSPARENT),
             spare: Vec::new(),
@@ -105,6 +109,7 @@ impl SceneRecorder {
         self.color_scheme = color_scheme;
         self.animated = false;
         self.frame_time = self.started.elapsed().as_secs_f32();
+        self.blur_regions.clear();
         self.clips.clear();
         self.clips.push(ClipState {
             clip: Clip {
@@ -271,6 +276,49 @@ impl Painter for SceneRecorder {
             width: width * self.scale,
             color,
         }));
+    }
+
+    fn background_blur_region(&mut self, rect: Rect, corner_radius: f32) {
+        if !self.collect_background_blur {
+            return;
+        }
+        let clip = self.clips.last().unwrap().visible.to_rect();
+        let clip = Rect {
+            x: clip.x / self.scale,
+            y: clip.y / self.scale,
+            width: clip.width / self.scale,
+            height: clip.height / self.scale,
+        };
+        let radius = corner_radius
+            .max(0.0)
+            .min(rect.width / 2.0)
+            .min(rect.height / 2.0);
+        for y in (rect.y.max(clip.y).ceil() as i32)
+            ..((rect.y + rect.height).min(clip.y + clip.height).floor() as i32)
+        {
+            let center = y as f32 + 0.5;
+            let dy = (rect.y + radius - center)
+                .max(center - (rect.y + rect.height - radius))
+                .max(0.0);
+            let inset = if dy > 0.0 {
+                radius - (radius * radius - dy * dy).max(0.0).sqrt()
+            } else {
+                0.0
+            };
+            let x0 = (rect.x + inset).max(clip.x).ceil() as i32;
+            let x1 = (rect.x + rect.width - inset)
+                .min(clip.x + clip.width)
+                .floor() as i32;
+            if x1 > x0 {
+                if let Some(last) = self.blur_regions.last_mut() {
+                    if last.0 == x0 && last.2 == x1 - x0 && last.1 + last.3 == y {
+                        last.3 += 1;
+                        continue;
+                    }
+                }
+                self.blur_regions.push((x0, y, x1 - x0, 1));
+            }
+        }
     }
 
     fn fill_rect(&mut self, rect: Rect, color: Color, corner_radius: f32) {
@@ -888,6 +936,83 @@ mod tests {
         });
         assert_eq!(list.items.len(), 2);
         assert!(list.items[0] == list.items[1]);
+    }
+
+    #[test]
+    fn content_blur_follows_pills_without_blurring_shadows_or_gaps() {
+        use creamui_core::{BoxShadow, Renderer, Size, Styled};
+        use creamui_widgets::layout::Flex;
+        let mut expected = None;
+        for scale in [1.0, 1.5, 2.0] {
+            let pill = || {
+                Box::new(
+                    Flex::row()
+                        .size(60.0, 32.0)
+                        .background(Color::rgba(244, 248, 251, 112))
+                        .corner_radius(16.0)
+                        .box_shadow(BoxShadow::new(
+                            0.0,
+                            2.0,
+                            12.0,
+                            0.0,
+                            Color::rgba(0, 0, 0, 24),
+                        )),
+                ) as creamui_core::BoxedWidget
+            };
+            let root = Box::new(
+                Flex::row()
+                    .size(160.0, 60.0)
+                    .gap(12.0)
+                    .padding(8.0)
+                    .child(pill())
+                    .child(pill()),
+            );
+            let mut recorder = SceneRecorder::new();
+            recorder.collect_background_blur = true;
+            recorder.begin(
+                (160.0 * scale) as u32,
+                (60.0 * scale) as u32,
+                scale,
+                TRANSPARENT,
+                ColorScheme::default(),
+            );
+            Renderer::new().render(
+                root,
+                Size {
+                    width: 160.0,
+                    height: 60.0,
+                },
+                &mut recorder,
+            );
+            let contains = |x, y| {
+                recorder
+                    .blur_regions
+                    .iter()
+                    .any(|&(rx, ry, w, h)| x >= rx && x < rx + w && y >= ry && y < ry + h)
+            };
+            assert!(contains(30, 24));
+            assert!(contains(100, 24));
+            assert!(!contains(8, 8), "rounded corner stays clear");
+            assert!(!contains(74, 24), "gap between islands stays clear");
+            assert!(!contains(30, 44), "shadow and edge margin stay clear");
+            if let Some(expected) = &expected {
+                assert_eq!(&recorder.blur_regions, expected);
+            }
+            expected = Some(recorder.blur_regions.clone());
+            recorder.begin(160, 60, 1.0, TRANSPARENT, ColorScheme::default());
+            Renderer::new().render(
+                Box::new(Flex::row().size(160.0, 60.0)),
+                Size {
+                    width: 160.0,
+                    height: 60.0,
+                },
+                &mut recorder,
+            );
+            assert!(
+                recorder.blur_regions.is_empty(),
+                "removing backgrounds clears blur"
+            );
+        }
     }
 
     #[test]

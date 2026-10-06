@@ -163,8 +163,12 @@ impl SafeArea {
 /// Region behind a window's surface the compositor should blur, via
 /// [`crate::PlatformWindow::set_blur_region`]. Coordinates are logical
 /// window-local pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BlurRegion {
+    /// Follow painted translucent widget backgrounds, including their corners.
+    Content,
+    /// Exact window-local coverage as integer rectangles (a Wayland region).
+    Regions(std::sync::Arc<[(i32, i32, i32, i32)]>),
     /// Blur behind the whole surface.
     Window,
     /// Blur restricted to this rectangle.
@@ -196,6 +200,85 @@ pub struct CompositorControls {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+/// Who owns the effective window frame, not merely what the client requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowDecorationMode {
+    #[default]
+    None,
+    /// Waiting for the compositor's first configure; do not draw a fallback yet.
+    Pending,
+    /// The compositor (or native window system) owns the titlebar and controls.
+    Server,
+    /// The compositor requires the application to supply its own controls.
+    Client,
+    /// Server-owned controls overlay the client surface, without an external titlebar.
+    Hybrid,
+}
+
+/// Negotiated frame and the logical-pixel rectangle reserved for overlay controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowDecorations {
+    pub mode: WindowDecorationMode,
+    pub controls: CompositorControls,
+}
+
+/// Standard xdg-decoration and optional overlay integration negotiate independently.
+/// Keep both results so withdrawing the overlay restores the standard frame.
+#[cfg(all(feature = "wayland", target_os = "linux"))]
+pub(crate) struct DecorationNegotiation {
+    requested: bool,
+    standard: WindowDecorationMode,
+    hybrid: Option<CompositorControls>,
+}
+
+#[cfg(all(feature = "wayland", target_os = "linux"))]
+impl DecorationNegotiation {
+    pub(crate) fn new(requested: bool) -> Self {
+        Self {
+            requested,
+            standard: if requested {
+                WindowDecorationMode::Pending
+            } else {
+                WindowDecorationMode::None
+            },
+            hybrid: None,
+        }
+    }
+
+    pub(crate) fn configure(&mut self, server: bool) -> WindowDecorations {
+        self.standard = if server {
+            WindowDecorationMode::Server
+        } else if self.requested {
+            WindowDecorationMode::Client
+        } else {
+            WindowDecorationMode::None
+        };
+        self.effective()
+    }
+
+    pub(crate) fn integrate(
+        &mut self,
+        mode: CompositorIntegrationMode,
+        controls: CompositorControls,
+    ) -> WindowDecorations {
+        self.hybrid = (mode == CompositorIntegrationMode::Hybrid).then_some(controls);
+        self.effective()
+    }
+
+    pub(crate) fn effective(&self) -> WindowDecorations {
+        match self.hybrid {
+            Some(controls) => WindowDecorations {
+                mode: WindowDecorationMode::Hybrid,
+                controls,
+            },
+            None => WindowDecorations {
+                mode: self.standard,
+                controls: CompositorControls::default(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,6 +447,8 @@ impl Default for WindowAttributes {
 
 #[derive(Debug, Clone)]
 pub enum WindowEvent {
+    /// Final decoration ownership changed, including custom compositor overlays.
+    DecorationsChanged(WindowDecorations),
     CloseRequested,
     Resized(PhysicalSize),
     ScaleFactorChanged {
@@ -418,6 +503,57 @@ pub enum ControlFlow {
 #[cfg(test)]
 mod tests {
     use super::SafeArea;
+
+    #[cfg(all(feature = "wayland", target_os = "linux"))]
+    #[test]
+    fn decoration_negotiation_tracks_the_compositor_not_the_request() {
+        use super::*;
+        let mut state = DecorationNegotiation::new(true);
+        assert_eq!(state.effective().mode, WindowDecorationMode::Pending);
+        assert_eq!(state.configure(false).mode, WindowDecorationMode::Client);
+        assert_eq!(state.configure(true).mode, WindowDecorationMode::Server);
+        let controls = CompositorControls {
+            x: 992,
+            y: 14,
+            width: 112,
+            height: 28,
+        };
+        assert_eq!(
+            state.integrate(CompositorIntegrationMode::Hybrid, controls),
+            WindowDecorations {
+                mode: WindowDecorationMode::Hybrid,
+                controls
+            }
+        );
+        // A standard configure must not erase a negotiated overlay.
+        assert_eq!(state.configure(false).mode, WindowDecorationMode::Hybrid);
+        assert_eq!(
+            state.integrate(CompositorIntegrationMode::None, controls),
+            WindowDecorations {
+                mode: WindowDecorationMode::Client,
+                controls: CompositorControls::default()
+            }
+        );
+        state.configure(true);
+        state.integrate(CompositorIntegrationMode::Hybrid, controls);
+        assert_eq!(
+            state
+                .integrate(CompositorIntegrationMode::None, controls)
+                .mode,
+            WindowDecorationMode::Server
+        );
+
+        let mut undecorated = DecorationNegotiation::new(false);
+        assert_eq!(
+            undecorated.configure(false).mode,
+            WindowDecorationMode::None
+        );
+        // A compositor may force server decoration even if none was requested.
+        assert_eq!(
+            undecorated.configure(true).mode,
+            WindowDecorationMode::Server
+        );
+    }
 
     #[test]
     fn content_rect_insets_are_the_bands_outside_the_rect() {

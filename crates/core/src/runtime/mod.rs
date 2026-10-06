@@ -452,6 +452,22 @@ impl Runtime {
             if let Some(clip) = node.layout.effective_clip {
                 painter.push_clip(clip);
             }
+            if let Some(crate::Background::Solid(color)) = node.paint_style.background {
+                let color = color.resolve(&painter.color_scheme());
+                if color.a > 0
+                    && node.layout.effective_opacity > 0.0
+                    && (color.a < 255 || node.layout.effective_opacity < 1.0)
+                {
+                    let transform = node.layout.effective_transform;
+                    let mut rect = node.layout.rect;
+                    rect.x += transform.x;
+                    rect.y += transform.y;
+                    painter.background_blur_region(
+                        rect,
+                        node.paint_style.corner_radius.unwrap_or(0.0),
+                    );
+                }
+            }
             paint::paint_fragment(
                 fragment,
                 painter,

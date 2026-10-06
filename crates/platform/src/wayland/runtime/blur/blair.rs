@@ -42,7 +42,7 @@ impl BlairBlur {
             else {
                 continue;
             };
-            match request.region {
+            match &request.region {
                 None => {
                     manager.unset(&surface);
                     self.forget(request.window_id);

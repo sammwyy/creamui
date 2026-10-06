@@ -138,6 +138,16 @@ impl Window {
 }
 
 impl PlatformWindow for Window {
+    fn window_decorations(&self) -> crate::WindowDecorations {
+        crate::WindowDecorations {
+            mode: if self.inner.is_decorated() {
+                crate::WindowDecorationMode::Server
+            } else {
+                crate::WindowDecorationMode::None
+            },
+            ..Default::default()
+        }
+    }
     fn id(&self) -> WindowId {
         self.id()
     }

@@ -265,6 +265,8 @@ struct PaintOutputs {
     /// width regardless of how much of it a scroll ancestor currently shows.
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
+    window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
+    window_drag_content: Vec<Rect>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
@@ -387,6 +389,8 @@ fn paint_instance(
         out.focusables.clear();
         out.draggables.clear();
         out.drag_starts.clear();
+        out.window_drags.clear();
+        out.window_drag_content.clear();
         out.scrollables.clear();
         out.cursors.clear();
         out.hovers.clear();
@@ -421,7 +425,11 @@ fn paint_instance(
         if let Some(background) = resolved.paint.background {
             match background {
                 crate::Background::Solid(color) => {
-                    painter.fill_rect(rect, color.resolve(&colors), radius)
+                    let color = color.resolve(&colors);
+                    if color.a > 0 && color.a < 255 {
+                        painter.background_blur_region(rect, radius);
+                    }
+                    painter.fill_rect(rect, color, radius)
                 }
                 crate::Background::LinearGradient(gradient) => painter.fill_linear_gradient(
                     rect,
@@ -500,6 +508,14 @@ fn paint_instance(
             }
             if let Some(on_drag_start) = instance.widget.on_drag_start_with_content(content) {
                 out.drag_starts.push((visible, rect, on_drag_start));
+            }
+            if let Some(handler) = instance.widget.on_window_drag() {
+                out.window_drags.push((visible, handler));
+            }
+            // Intrinsic content (text, icons, images, inputs) is not empty
+            // background even when it has no click handler of its own.
+            if instance.has_measure {
+                out.window_drag_content.push(visible);
             }
             let on_scroll_bounded = instance.widget.on_scroll_bounded();
             let on_content_overflow = instance.widget.on_content_overflow();
@@ -662,6 +678,8 @@ pub struct Scene {
     focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>, bool)>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
+    window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
+    window_drag_content: Vec<Rect>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
@@ -769,6 +787,31 @@ impl Scene {
             .rev()
             .find(|(visible, _, _)| visible.contains(point))
             .map(|(_, rect, handler)| (*rect, handler.clone()))
+    }
+
+    /// Window movement is a background action, never an overlay input grab.
+    /// The app chooses the regions; buttons, inputs, sliders and other pointer
+    /// interactions inside them keep their normal behavior automatically.
+    pub fn window_drag_at(&self, point: Point) -> Option<Rc<dyn Fn()>> {
+        if self
+            .window_drag_content
+            .iter()
+            .any(|rect| rect.contains(point))
+            || self.hit_test(point).is_some()
+            || self.hit_test_at(point).is_some()
+            || self.focus_hit_test(point).is_some()
+            || self.drag_hit_test(point).is_some()
+            || self.drag_start_at(point).is_some()
+            || self.hover_hit_test(point).is_some()
+            || self.cursor_hit_test(point).is_some()
+        {
+            return None;
+        }
+        self.window_drags
+            .iter()
+            .rev()
+            .find(|(rect, _)| rect.contains(point))
+            .map(|(_, handler)| handler.clone())
     }
 
     /// Returns the index (into this scene's scrollables) of the topmost
@@ -1048,6 +1091,8 @@ impl Renderer {
             focusables: out.focusables,
             draggables: out.draggables,
             drag_starts: out.drag_starts,
+            window_drags: out.window_drags,
+            window_drag_content: out.window_drag_content,
             scrollables: out.scrollables,
             cursors: out.cursors,
             hovers: out.hovers,

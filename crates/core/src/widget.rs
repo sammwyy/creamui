@@ -184,6 +184,10 @@ pub trait Painter {
         let _ = family;
         self.fill_text_weight(rect, text, color, font_size, align, bold, italic);
     }
+    /// Declares a translucent widget background for compositor blur.
+    /// Separate from draw calls so text, borders and shadows never enlarge it.
+    fn background_blur_region(&mut self, _rect: Rect, _corner_radius: f32) {}
+
     fn fill_rect(&mut self, rect: Rect, color: creamui_theme::Color, corner_radius: f32);
     fn fill_linear_gradient(
         &mut self,
@@ -666,6 +670,12 @@ pub trait Widget {
         None
     }
 
+    /// Marks an app-selected region whose empty background moves the window.
+    /// Unlike a normal drag handler, this never wins over interactive content.
+    fn on_window_drag(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
+
     /// Optional scroll-wheel handler, called with the vertical scroll delta
     /// (in logical pixels; positive scrolls content up, i.e. reveals
     /// content further down) when the pointer is over this widget's rect.
@@ -922,6 +932,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_drag_end(&self) -> Option<Rc<dyn Fn()>> {
         self.widget.on_drag_end()
+    }
+    fn on_window_drag(&self) -> Option<Rc<dyn Fn()>> {
+        self.widget.on_window_drag()
     }
     fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
         self.widget.on_scroll()

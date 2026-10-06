@@ -554,6 +554,21 @@ success = "#151515"
     }
 
     #[test]
+    fn builtin_variants_load_their_shared_palette_unchanged() {
+        let _guard = lock();
+        let builtin = builtin_theme();
+        for (id, theme) in &builtin.variants {
+            let resolved = SystemThemeLoader::new()
+                .theme(&builtin.id)
+                .variant(id)
+                .accent(theme.colors.accent)
+                .load_from_paths(None, vec![])
+                .unwrap();
+            assert_eq!(resolved.theme.colors, theme.colors, "{id}");
+        }
+    }
+
+    #[test]
     fn resolves_arbitrary_variants_and_custom_accents() {
         let _guard = lock();
         let root = temporary_dir("variants");

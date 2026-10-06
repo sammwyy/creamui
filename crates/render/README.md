@@ -26,6 +26,45 @@ creamui_render::run(options, theme.surface, |_| {}, build_ui);
 
 For a complete example, see the [CreamUI repository](https://github.com/sammwyy/creamui).
 
+## Window decorations
+
+`WindowOptions::decorations = true` requests a native frame. The native Wayland
+backend asks for server-side decorations through `xdg-decoration`, but honors
+the compositor's answer instead of assuming that request was accepted.
+`use_window_decorations()` reads the reactive result while building content;
+`WindowHandle::decorations()` exposes the same state to callbacks and effects.
+
+The result distinguishes `Pending`, `Server`, `Client`, `Hybrid`, and explicitly
+undecorated `None`. Draw fallback controls only for `Client`, never for
+`Pending`. On compositors without `xdg-decoration`, a decorated window resolves
+to `Client` after its first configure.
+
+With `platform-window-integration-blair`, request
+`handle.set_compositor_integration(Some(CompositorIntegrationRequest::Hybrid))`
+to allow compositor-owned controls over the client surface. Unsupported
+compositors keep their standard decoration result. `WindowDecorations::controls`
+reports the logical-pixel rectangle to reserve in `Hybrid` mode. Ownership and
+rectangle changes rebuild subscribed content, including when the compositor
+withdraws hybrid mode and restores its standard frame.
+
+Decorations do not round or clip the application's root surface. Leave its
+outline to the compositor so the window, opacity and background blur share
+the same shape.
+
+### Moving and resizing without stealing content clicks
+
+The app chooses its empty draggable regions with `CUIWindowDragArea`. This is
+background metadata, not a transparent button that intercepts input. Buttons,
+inputs, sliders, and intrinsic content such as text and icons inside or over
+the region keep priority automatically. No application-level hit-test or
+per-button exception is needed. Regions honor viewport clipping and modals.
+
+CreamUI passes the initiating pointer-press serial to Wayland's native
+`xdg_toplevel.move` and `resize` requests, including when using the window drag
+handle directly. Resizable client, undecorated, and hybrid windows expose all
+eight resize edges; normal server decorations leave their edges to the
+compositor. A resizable window's initial size is not imposed as its minimum.
+
 ## Background apps and system tray
 
 `AppBuilder` retains the usual desktop behavior by default: it exits when

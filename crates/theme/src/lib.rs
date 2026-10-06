@@ -120,21 +120,20 @@ impl ColorScheme {
 
     pub const fn dark() -> Self {
         Self {
-            // A cool charcoal keeps dark applications calm, while the blue
-            // accent gives CreamUI its own crisp, desktop-native character.
-            surface: Color::rgb(0x18, 0x1b, 0x22),
-            surface_elevated: Color::rgb(0x23, 0x27, 0x31),
-            surface_hover: Color::rgb(0x30, 0x36, 0x43),
-            accent: Color::rgb(0x5d, 0xa9, 0xf6),
-            accent_hover: Color::rgb(0x7a, 0xba, 0xfa),
-            accent_pressed: Color::rgb(0x3f, 0x87, 0xcf),
-            selection_background: Color::rgb(0x0a, 0x84, 0xff),
+            // Neutral charcoal surfaces leave colour to the shared accent.
+            surface: Color::rgba(20, 20, 20, 240),
+            surface_elevated: Color::rgba(30, 30, 30, 240),
+            surface_hover: Color::rgba(255, 255, 255, 12),
+            accent: Color::rgb(0, 153, 211),
+            accent_hover: Color::rgb(0, 170, 226),
+            accent_pressed: Color::rgb(0, 132, 190),
+            selection_background: Color::rgba(0, 153, 211, 48),
             selection_text: Color::rgb(0xff, 0xff, 0xff),
-            text_primary: Color::rgb(0xf3, 0xf6, 0xfa),
-            text_secondary: Color::rgb(0xb8, 0xc0, 0xcc),
-            text_disabled: Color::rgb(0x78, 0x82, 0x91),
-            border: Color::rgb(0x3a, 0x42, 0x50),
-            border_strong: Color::rgb(0x5a, 0x65, 0x76),
+            text_primary: Color::rgb(238, 238, 238),
+            text_secondary: Color::rgb(168, 168, 168),
+            text_disabled: Color::rgb(120, 120, 120),
+            border: Color::rgba(255, 255, 255, 18),
+            border_strong: Color::rgba(255, 255, 255, 32),
             danger: Color::rgb(0xe5, 0x4b, 0x4b),
             warning: Color::rgb(0xe0, 0xa5, 0x2e),
             success: Color::rgb(0x3d, 0xc9, 0x6f),
@@ -144,19 +143,19 @@ impl ColorScheme {
         Self {
             // A lightly blue-tinted canvas layers cleanly under white
             // controls without feeling sterile.
-            surface: Color::rgb(0xf4, 0xf7, 0xfb),
-            surface_elevated: Color::rgb(0xff, 0xff, 0xff),
-            surface_hover: Color::rgb(0xe8, 0xee, 0xf5),
-            accent: Color::rgb(0x36, 0x8f, 0xe8),
-            accent_hover: Color::rgb(0x2d, 0x80, 0xd6),
-            accent_pressed: Color::rgb(0x1f, 0x6e, 0xbb),
-            selection_background: Color::rgb(0x0a, 0x66, 0xcc),
+            surface: Color::rgba(244, 248, 251, 220),
+            surface_elevated: Color::rgba(255, 255, 255, 184),
+            surface_hover: Color::rgba(25, 45, 65, 9),
+            accent: Color::rgb(0, 153, 211),
+            accent_hover: Color::rgb(0, 170, 226),
+            accent_pressed: Color::rgb(0, 132, 190),
+            selection_background: Color::rgba(0, 153, 211, 30),
             selection_text: Color::rgb(0xff, 0xff, 0xff),
-            text_primary: Color::rgb(0x20, 0x2a, 0x38),
-            text_secondary: Color::rgb(0x62, 0x6f, 0x80),
+            text_primary: Color::rgb(26, 33, 44),
+            text_secondary: Color::rgb(104, 114, 129),
             text_disabled: Color::rgb(0x96, 0xa1, 0xb0),
-            border: Color::rgb(0xdd, 0xe4, 0xed),
-            border_strong: Color::rgb(0xc1, 0xcd, 0xda),
+            border: Color::rgba(27, 39, 55, 23),
+            border_strong: Color::rgba(27, 39, 55, 32),
             danger: Color::rgb(0xd1, 0x3a, 0x3a),
             warning: Color::rgb(0xb8, 0x7d, 0x0a),
             success: Color::rgb(0x22, 0xa0, 0x55),
@@ -165,22 +164,20 @@ impl ColorScheme {
 
     pub fn midnight() -> Self {
         let mut colors = Self::dark();
-        colors.surface = Color::rgb(0x0a, 0x0a, 0x0c);
-        colors.surface_elevated = Color::rgb(0x12, 0x11, 0x15);
-        colors.surface_hover = Color::rgb(0x1d, 0x1b, 0x21);
-        colors.accent = Color::rgb(0xb3, 0x8c, 0xff);
-        colors.accent_hover = Color::rgb(0xc4, 0xa8, 0xff);
-        colors.accent_pressed = Color::rgb(0x91, 0x69, 0xd9);
-        colors.selection_background = Color::rgb(0x78, 0x56, 0xc8);
-        colors.border = Color::rgb(0x29, 0x27, 0x2e);
-        colors.border_strong = Color::rgb(0x43, 0x3f, 0x4a);
+        colors.surface = Color::rgba(6, 6, 6, 248);
+        colors.surface_elevated = Color::rgba(14, 14, 14, 248);
         colors
     }
 
     pub fn with_accent(mut self, accent: Color) -> Self {
+        if accent == self.accent {
+            return self;
+        }
         self.accent = accent;
         self.accent_hover = accent.mix(Color::rgb(255, 255, 255), 0.15);
         self.accent_pressed = accent.mix(Color::rgb(0, 0, 0), 0.15);
+        self.selection_background =
+            Color::rgba(accent.r, accent.g, accent.b, self.selection_background.a);
         self
     }
 }
@@ -624,5 +621,45 @@ mod tests {
         let midnight = ColorScheme::midnight();
         assert!(midnight.surface.r < dark.surface.r);
         assert!(midnight.surface_elevated.r < dark.surface_elevated.r);
+    }
+
+    #[test]
+    fn dark_variants_keep_non_accent_tokens_monochrome() {
+        for colors in [ColorScheme::dark(), ColorScheme::midnight()] {
+            for color in [
+                colors.surface,
+                colors.surface_elevated,
+                colors.surface_hover,
+                colors.text_primary,
+                colors.text_secondary,
+                colors.text_disabled,
+                colors.border,
+                colors.border_strong,
+            ] {
+                assert_eq!(color.r, color.g);
+                assert_eq!(color.g, color.b);
+            }
+        }
+    }
+
+    #[test]
+    fn applying_accents_preserves_surfaces_and_selection_opacity() {
+        let accent = Color::rgb(255, 117, 181);
+        for colors in [
+            ColorScheme::light(),
+            ColorScheme::dark(),
+            ColorScheme::midnight(),
+        ] {
+            assert_eq!(colors.with_accent(colors.accent), colors);
+            let custom = colors.with_accent(accent);
+            assert_eq!(custom.surface, colors.surface);
+            assert_eq!(custom.surface_elevated, colors.surface_elevated);
+            assert_eq!(custom.selection_text, colors.selection_text);
+            assert_eq!(
+                custom.selection_background,
+                Color::rgba(accent.r, accent.g, accent.b, colors.selection_background.a)
+            );
+            assert_eq!(custom.with_accent(accent), custom);
+        }
     }
 }

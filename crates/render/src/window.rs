@@ -33,8 +33,8 @@ use creamui_platform::{
     CursorIcon as PlatformCursorIcon, DragIcon, EventLoop, EventLoopProxy, InputSerial,
     Key as PlatformKey, LogicalPosition, LogicalSize, Modifiers as PlatformModifiers, MouseButton,
     MouseScrollDelta, PlatformWindow, PopupOptions as PlatformPopupOptions, PopupPlacement,
-    ResizeDirection, WindowAttributes as PlatformWindowAttributes, WindowEvent, WindowId,
-    WindowLevel, WindowRole,
+    ResizeDirection, WindowAttributes as PlatformWindowAttributes, WindowDecorationMode,
+    WindowDecorations, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
@@ -75,6 +75,13 @@ impl ViewportProvider {
 /// layout directly from this value.
 pub fn use_viewport() -> Size {
     creamui_reactive::use_context::<ViewportProvider>().get()
+}
+
+/// Reads the compositor's effective decoration result for this window.
+/// Rebuilds subscribed content when ownership or the hybrid control rectangle changes.
+/// `Pending` is not a client-side fallback: wait for the first configure.
+pub fn use_window_decorations() -> WindowDecorations {
+    creamui_reactive::use_context::<Signal<WindowDecorations>>().get()
 }
 
 pub use creamui_platform::SafeArea;
@@ -248,9 +255,14 @@ pub struct WindowOptions {
     /// Optional logical screen position used when creating the window.
     pub position: Option<(i32, i32)>,
     pub resizable: bool,
+    /// Requests a platform-owned frame (server-side on native Wayland).
+    /// The compositor may require client decorations instead; inspect
+    /// [`use_window_decorations`] or [`WindowHandle::decorations`] for the result.
+    /// `false` explicitly requests an undecorated surface.
     pub decorations: bool,
     pub transparent: bool,
-    /// Compositor-side background blur, applied once at creation. Requires
+    /// Compositor-side background blur. `Content` follows the painted
+    /// translucent backgrounds each frame; other regions apply at creation. Requires
     /// `transparent` and the `blur-kwin`/`blur-blair` platform feature
     /// matching the running compositor; `None` otherwise.
     pub blur: Option<BlurRegion>,
@@ -462,6 +474,7 @@ fn with_window_scope<R>(
     safe_area: &Signal<SafeArea>,
     system_bars: &Signal<SystemBars>,
     window_drag: &WindowDragHandle,
+    decorations: &Signal<WindowDecorations>,
     f: impl FnOnce() -> R,
 ) -> R {
     creamui_reactive::with_context_scope(|| {
@@ -476,6 +489,7 @@ fn with_window_scope<R>(
             mode: system_bars.clone(),
         });
         creamui_reactive::provide_context(window_drag.clone());
+        creamui_reactive::provide_context(decorations.clone());
         f()
     })
 }
@@ -655,6 +669,8 @@ impl FrameState {
 /// Coalesces invalidations into at most one build, layout, record and
 /// present per compositor frame.
 struct Pipeline {
+    content_blur: bool,
+    applied_blur: RefCell<Vec<(i32, i32, i32, i32)>>,
     frame: RefCell<FrameState>,
     /// Full window, including the bands system bars cover.
     surface: Signal<Size>,
@@ -663,6 +679,7 @@ struct Pipeline {
     viewport: Signal<Size>,
     safe_area: Signal<SafeArea>,
     chrome: SystemChrome,
+    decorations: Signal<WindowDecorations>,
     scale_factor: Signal<f64>,
     window: SharedWindow,
     source: UiSource,
@@ -773,6 +790,7 @@ impl Pipeline {
             &self.safe_area,
             &self.chrome.mode,
             &self.window_drag,
+            &self.decorations,
             f,
         )
     }
@@ -944,6 +962,7 @@ impl Pipeline {
             inspected_content,
             ..
         } = &mut *frame;
+        recorder.collect_background_blur = self.content_blur;
         recorder.begin(width, height, scale as f32, self.system_bar_clear(), colors);
         let previous_focus = scene.as_ref().and_then(|scene| {
             self.focused
@@ -1012,6 +1031,16 @@ impl Pipeline {
         }
         if let Some(devtools) = devtools.as_ref() {
             devtools.paint_overlay(recorder, logical);
+        }
+        if self.content_blur && *self.applied_blur.borrow() != recorder.blur_regions {
+            if let Some(window) = self.window.borrow().as_ref() {
+                window.set_blur_region(Some(BlurRegion::Regions(
+                    recorder.blur_regions.clone().into(),
+                )));
+                self.applied_blur
+                    .borrow_mut()
+                    .clone_from(&recorder.blur_regions);
+            }
         }
         let list = recorder.finish();
         report.display_items = list.items.len();
@@ -1413,6 +1442,7 @@ pub struct WindowHandle {
     window: SharedWindow,
     theme: ThemeProvider,
     chrome: SystemChrome,
+    decorations: Signal<WindowDecorations>,
     on_chrome_changed: Rc<dyn Fn()>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
@@ -1422,6 +1452,12 @@ pub struct WindowHandle {
 }
 
 impl WindowHandle {
+    /// Final decoration ownership; initially `Pending` on negotiating backends.
+    /// A read inside a reactive effect subscribes it to compositor changes.
+    pub fn decorations(&self) -> WindowDecorations {
+        self.decorations.get()
+    }
+
     /// Requests a new logical-pixel window size. The actual resize (and any
     /// resulting `Resized` event) happens asynchronously, same as a user
     /// dragging the window border.
@@ -1592,7 +1628,7 @@ impl WindowHandle {
     /// Starts the platform's native window drag gesture.
     pub fn drag_window(&self) {
         if let Some(window) = self.window.borrow().as_ref() {
-            let _ = window.drag_window();
+            start_window_move(window.as_ref(), self.last_input_serial.get());
         }
     }
 
@@ -1848,6 +1884,7 @@ struct WindowState {
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
+    resizable: bool,
     presenter: Option<Presenter>,
     backend: RenderBackend,
     transparent: bool,
@@ -2415,6 +2452,18 @@ impl WindowState {
 
     fn handle_window_event(&mut self, event: WindowEvent) {
         match event {
+            WindowEvent::DecorationsChanged(decorations) => {
+                log::debug!("creamui-render: negotiated decorations: {:?}", decorations);
+                self.frameless_resizable = self.resizable
+                    && matches!(
+                        decorations.mode,
+                        WindowDecorationMode::Client
+                            | WindowDecorationMode::None
+                            | WindowDecorationMode::Hybrid
+                    );
+                set_if_changed(&self.pipeline.decorations, decorations);
+                self.pipeline.invalidate_layout();
+            }
             WindowEvent::Resized(new_size) => {
                 if new_size.width == 0 || new_size.height == 0 {
                     return;
@@ -2514,8 +2563,20 @@ impl WindowState {
                 self.pipeline.invalidate_paint();
                 if let Some(direction) = self.resize_direction() {
                     if let Some(window) = self.pipeline.window.borrow().as_ref() {
-                        let _ = window.drag_resize_window(direction);
+                        let result = match serial {
+                            Some(serial) => {
+                                window.drag_resize_window_with_serial(direction, serial)
+                            }
+                            None => window.drag_resize_window(direction),
+                        };
+                        if let Err(error) = result {
+                            log::debug!("creamui-render: interactive resize failed: {error}");
+                        }
                     }
+                    return;
+                }
+                if let Some(handler) = self.scene(|scene| scene.window_drag_at(self.pointer_pos)) {
+                    handler();
                     return;
                 }
                 if self.runtime().is_some() {
@@ -3017,7 +3078,7 @@ impl AppHandler {
                 .create_window(attrs)
                 .expect("failed to create window"),
         };
-        if let Some(region) = spec.options.blur {
+        if let Some(region) = spec.options.blur.clone() {
             window.set_blur_region(Some(region));
         }
         // Show the window immediately; the presenter's first frame replaces
@@ -3032,6 +3093,7 @@ impl AppHandler {
         );
 
         let pipeline = spec.pipeline;
+        set_if_changed(&pipeline.decorations, window.window_decorations());
         pipeline.scale_factor.set(window.scale_factor());
         *pipeline.window.borrow_mut() = Some(window.clone());
         {
@@ -3072,6 +3134,7 @@ impl AppHandler {
             window: pipeline.window.clone(),
             theme: pipeline.theme.clone(),
             chrome: pipeline.chrome.clone(),
+            decorations: pipeline.decorations.clone(),
             on_chrome_changed,
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
@@ -3081,13 +3144,21 @@ impl AppHandler {
         });
 
         let now = Instant::now();
+        let frameless_resizable = spec.options.resizable
+            && matches!(
+                pipeline.decorations.peek().mode,
+                WindowDecorationMode::Client
+                    | WindowDecorationMode::None
+                    | WindowDecorationMode::Hybrid
+            );
         let mut state = WindowState {
             pipeline,
             close_requested: spec.close_requested,
             focus_lost_handler: spec.focus_lost_handler,
             last_input_serial: spec.last_input_serial,
             close_behavior: spec.options.close_behavior,
-            frameless_resizable: !spec.options.decorations && spec.options.resizable,
+            frameless_resizable,
+            resizable: spec.options.resizable,
             presenter: Some(presenter),
             backend: spec.options.backend,
             transparent: spec.options.transparent,
@@ -3487,6 +3558,16 @@ fn run_windows(
     }
 }
 
+fn start_window_move(window: &dyn PlatformWindow, serial: Option<InputSerial>) {
+    let result = match serial {
+        Some(serial) => window.drag_window_with_serial(serial),
+        None => window.drag_window(),
+    };
+    if let Err(error) = result {
+        log::debug!("creamui-render: interactive move failed: {error}");
+    }
+}
+
 /// Builds one window's pre-creation state (signals, pipeline, reactive
 /// effect) — everything that doesn't need the platform window yet.
 fn build_window_spec(
@@ -3504,11 +3585,13 @@ fn build_window_spec(
     } = spec;
 
     let window: SharedWindow = Rc::new(RefCell::new(None));
+    let last_input_serial = Rc::new(Cell::new(None));
     let window_drag = WindowDragHandle::new({
         let window = window.clone();
+        let last_input_serial = last_input_serial.clone();
         move || {
             if let Some(window) = window.borrow().as_ref() {
-                let _ = window.drag_window();
+                start_window_move(window.as_ref(), last_input_serial.get());
             }
         }
     });
@@ -3521,6 +3604,8 @@ fn build_window_spec(
         }
     });
     let pipeline = Rc::new(Pipeline {
+        content_blur: options.blur == Some(BlurRegion::Content),
+        applied_blur: RefCell::new(Vec::new()),
         frame: RefCell::new(FrameState {
             recorder: SceneRecorder::new(),
             renderer: match &source {
@@ -3546,6 +3631,14 @@ fn build_window_spec(
             height: options.height as f32,
         }),
         safe_area: Signal::new(SafeArea::ZERO),
+        decorations: Signal::new(WindowDecorations {
+            mode: if options.decorations && popup.is_none() {
+                WindowDecorationMode::Pending
+            } else {
+                WindowDecorationMode::None
+            },
+            ..Default::default()
+        }),
         chrome: SystemChrome {
             mode: Signal::new(options.system_bars),
             occupied: Signal::new(SafeArea::ZERO),
@@ -3603,7 +3696,7 @@ fn build_window_spec(
         _runtime_subscription: runtime_subscription,
         close_requested: Rc::new(Cell::new(false)),
         focus_lost_handler: Rc::new(RefCell::new(None)),
-        last_input_serial: Rc::new(Cell::new(None)),
+        last_input_serial,
     }
 }
 
@@ -3614,6 +3707,80 @@ mod tests {
         EventState, ImageContent, ImageFit, ImageNode, Mutation, NodeKind, Runtime,
     };
     use std::cell::Cell;
+
+    #[derive(Default)]
+    struct InteractiveTestWindow {
+        requests: std::sync::Mutex<Vec<(InputSerial, Option<ResizeDirection>)>>,
+    }
+
+    impl raw_window_handle::HasDisplayHandle for InteractiveTestWindow {
+        fn display_handle(
+            &self,
+        ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+            Err(raw_window_handle::HandleError::Unavailable)
+        }
+    }
+    impl raw_window_handle::HasWindowHandle for InteractiveTestWindow {
+        fn window_handle(
+            &self,
+        ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+            Err(raw_window_handle::HandleError::Unavailable)
+        }
+    }
+    impl PlatformWindow for InteractiveTestWindow {
+        fn id(&self) -> WindowId {
+            unreachable!("headless test window has no platform ID")
+        }
+        fn request_redraw(&self) {}
+        fn close(&self) {}
+        fn request_inner_size(&self, _: LogicalSize) {}
+        fn set_outer_position(&self, _: LogicalPosition) {}
+        fn outer_position(&self) -> Option<creamui_platform::PhysicalPosition> {
+            None
+        }
+        fn monitor_size(&self) -> Option<creamui_platform::PhysicalSize> {
+            None
+        }
+        fn scale_factor(&self) -> f64 {
+            1.0
+        }
+        fn inner_size(&self) -> creamui_platform::PhysicalSize {
+            creamui_platform::PhysicalSize {
+                width: 100,
+                height: 100,
+            }
+        }
+        fn is_ready(&self) -> bool {
+            true
+        }
+        fn set_visible(&self, _: bool) {}
+        fn set_minimized(&self, _: bool) {}
+        fn set_maximized(&self, _: bool) {}
+        fn set_window_level(&self, _: WindowLevel) {}
+        fn drag_window(&self) -> Result<(), String> {
+            panic!("must pass the pointer serial to move")
+        }
+        fn drag_resize_window(&self, _: ResizeDirection) -> Result<(), String> {
+            panic!("must pass the pointer serial to resize")
+        }
+        fn drag_window_with_serial(&self, serial: InputSerial) -> Result<(), String> {
+            self.requests.lock().unwrap().push((serial, None));
+            Ok(())
+        }
+        fn drag_resize_window_with_serial(
+            &self,
+            direction: ResizeDirection,
+            serial: InputSerial,
+        ) -> Result<(), String> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((serial, Some(direction)));
+            Ok(())
+        }
+        fn set_cursor(&self, _: PlatformCursorIcon) {}
+        fn focus(&self) {}
+    }
 
     struct WindowEventHarness {
         state: WindowState,
@@ -3657,6 +3824,7 @@ mod tests {
                 last_input_serial: spec.last_input_serial,
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
+                resizable: true,
                 presenter: None,
                 backend: RenderBackend::Cpu,
                 transparent: false,
@@ -3697,6 +3865,135 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn background_drag_preserves_clicks_and_hybrid_resize_uses_the_press_serial() {
+        let clicks = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let clicks = clicks.clone();
+            move |_| {
+                let clicks = clicks.clone();
+                Box::new(
+                    creamui_widgets::CUIWindowDragArea::new()
+                        .size(100.0, 100.0)
+                        .child(Box::new(creamui_widgets::RawButton::new(
+                            creamui_core::layout::Style {
+                                size: creamui_core::layout::Size {
+                                    width: creamui_core::layout::Dimension::Length(40.0),
+                                    height: creamui_core::layout::Dimension::Length(40.0),
+                                },
+                                ..Default::default()
+                            },
+                            move || clicks.set(clicks.get() + 1),
+                        ))),
+                )
+            }
+        });
+        let window = Arc::new(InteractiveTestWindow::default());
+        *harness.state.pipeline.window.borrow_mut() = Some(window.clone());
+        harness.send(WindowEvent::DecorationsChanged(WindowDecorations {
+            mode: WindowDecorationMode::Hybrid,
+            ..Default::default()
+        }));
+        for (point, serial) in [
+            (Point { x: 60.0, y: 30.0 }, 41),
+            (Point { x: 20.0, y: 20.0 }, 42),
+            (Point { x: 2.0, y: 50.0 }, 43),
+        ] {
+            harness.send(WindowEvent::CursorMoved {
+                position: creamui_platform::PhysicalPosition {
+                    x: point.x as f64,
+                    y: point.y as f64,
+                },
+            });
+            harness.send(WindowEvent::MouseInput {
+                pressed: true,
+                button: MouseButton::Left,
+                serial: Some(InputSerial(serial)),
+            });
+            harness.send(WindowEvent::MouseInput {
+                pressed: false,
+                button: MouseButton::Left,
+                serial: Some(InputSerial(serial + 100)),
+            });
+        }
+        assert_eq!(
+            clicks.get(),
+            1,
+            "content handles the click, not the app's drag background"
+        );
+        assert_eq!(
+            *window.requests.lock().unwrap(),
+            vec![
+                (InputSerial(41), None),
+                (InputSerial(43), Some(ResizeDirection::West))
+            ]
+        );
+    }
+
+    #[test]
+    fn negotiated_decorations_rebuild_content_and_select_resize_ownership() {
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let observed = observed.clone();
+            move |_| {
+                observed.borrow_mut().push(use_window_decorations());
+                Box::new(BlankWidget)
+            }
+        });
+        assert_eq!(
+            observed.borrow().last().unwrap().mode,
+            WindowDecorationMode::Pending
+        );
+        for mode in [
+            WindowDecorationMode::Client,
+            WindowDecorationMode::Server,
+            WindowDecorationMode::Hybrid,
+            WindowDecorationMode::None,
+        ] {
+            let decorations = WindowDecorations {
+                mode,
+                ..Default::default()
+            };
+            harness.send(WindowEvent::DecorationsChanged(decorations));
+            assert_eq!(observed.borrow().last(), Some(&decorations));
+            assert_eq!(
+                harness.state.frameless_resizable,
+                matches!(
+                    mode,
+                    WindowDecorationMode::Client
+                        | WindowDecorationMode::None
+                        | WindowDecorationMode::Hybrid
+                )
+            );
+        }
+        let overlay = WindowDecorations {
+            mode: WindowDecorationMode::Hybrid,
+            controls: creamui_platform::CompositorControls {
+                x: 0,
+                y: 14,
+                width: 96,
+                height: 28,
+            },
+        };
+        harness.send(WindowEvent::DecorationsChanged(overlay));
+        assert_eq!(observed.borrow().last(), Some(&overlay));
+        let moved = WindowDecorations {
+            controls: creamui_platform::CompositorControls {
+                x: 20,
+                ..overlay.controls
+            },
+            ..overlay
+        };
+        harness.send(WindowEvent::DecorationsChanged(moved));
+        assert_eq!(observed.borrow().last(), Some(&moved));
+        harness.state.resizable = false;
+        harness.send(WindowEvent::DecorationsChanged(WindowDecorations {
+            mode: WindowDecorationMode::Client,
+            ..Default::default()
+        }));
+        assert!(!harness.state.frameless_resizable);
     }
 
     #[test]

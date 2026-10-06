@@ -70,12 +70,25 @@ impl BlurBackend {
     allow(dead_code)
 )]
 fn wl_region_for(
-    region: BlurRegion,
+    region: &BlurRegion,
     compositor: &CompositorState,
     qh: &QueueHandle<DispatchState>,
 ) -> Option<WlRegion> {
     match region {
         BlurRegion::Window => None,
+        BlurRegion::Content => {
+            // Content is resolved by the renderer, never blur the margins.
+            Some(compositor.wl_compositor().create_region(qh, ()))
+        }
+        BlurRegion::Regions(rects) => {
+            let region = compositor.wl_compositor().create_region(qh, ());
+            for &(x, y, width, height) in rects.iter() {
+                if width > 0 && height > 0 {
+                    region.add(x, y, width, height);
+                }
+            }
+            Some(region)
+        }
         BlurRegion::Rect {
             x,
             y,
@@ -84,8 +97,8 @@ fn wl_region_for(
         } => {
             let wl_region = compositor.wl_compositor().create_region(qh, ());
             wl_region.add(
-                x as i32,
-                y as i32,
+                *x as i32,
+                *y as i32,
                 width.ceil() as i32,
                 height.ceil() as i32,
             );

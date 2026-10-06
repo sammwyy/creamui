@@ -109,13 +109,7 @@ mod blair {
                         _ => CompositorIntegrationMode::None,
                     };
                     *data.mode.lock().expect("integration mode lock poisoned") = mode;
-                    state.runtime.borrow_mut().events.push((
-                        data.window_id,
-                        WindowEvent::CompositorIntegration {
-                            mode,
-                            controls: CompositorControls::default(),
-                        },
-                    ));
+                    publish(state, data.window_id, mode, CompositorControls::default());
                 }
                 Event::Controls {
                     x,
@@ -124,22 +118,40 @@ mod blair {
                     height,
                 } => {
                     let mode = *data.mode.lock().expect("integration mode lock poisoned");
-                    state.runtime.borrow_mut().events.push((
+                    publish(
+                        state,
                         data.window_id,
-                        WindowEvent::CompositorIntegration {
-                            mode,
-                            controls: CompositorControls {
-                                x,
-                                y,
-                                width,
-                                height,
-                            },
+                        mode,
+                        CompositorControls {
+                            x,
+                            y,
+                            width,
+                            height,
                         },
-                    ));
+                    );
                 }
                 _ => {}
             }
         }
+    }
+
+    fn publish(
+        state: &mut DispatchState,
+        window_id: crate::WindowId,
+        mode: CompositorIntegrationMode,
+        controls: CompositorControls,
+    ) {
+        let mut runtime = state.runtime.borrow_mut();
+        if let Some(native) = runtime.windows.get(&window_id) {
+            let decorations = native.handle().configure_integration(mode, controls);
+            runtime
+                .events
+                .push((window_id, WindowEvent::DecorationsChanged(decorations)));
+        }
+        runtime.events.push((
+            window_id,
+            WindowEvent::CompositorIntegration { mode, controls },
+        ));
     }
 }
 

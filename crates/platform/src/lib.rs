@@ -79,12 +79,30 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
         true
     }
     fn is_ready(&self) -> bool;
+    /// Effective decoration negotiation. Undecorated backends return `None`.
+    fn window_decorations(&self) -> WindowDecorations {
+        WindowDecorations::default()
+    }
     fn set_visible(&self, visible: bool);
     fn set_minimized(&self, minimized: bool);
     fn set_maximized(&self, maximized: bool);
     fn set_window_level(&self, level: WindowLevel);
     fn drag_window(&self) -> Result<(), String>;
+    /// Starts a compositor move with the serial of the initiating pointer press.
+    fn drag_window_with_serial(&self, serial: InputSerial) -> Result<(), String> {
+        let _ = serial;
+        self.drag_window()
+    }
     fn drag_resize_window(&self, direction: ResizeDirection) -> Result<(), String>;
+    /// Starts a compositor resize with the serial of the initiating pointer press.
+    fn drag_resize_window_with_serial(
+        &self,
+        direction: ResizeDirection,
+        serial: InputSerial,
+    ) -> Result<(), String> {
+        let _ = serial;
+        self.drag_resize_window(direction)
+    }
     fn set_cursor(&self, icon: CursorIcon);
     fn focus(&self);
     /// Enables or disables the platform text input method for this window.
@@ -98,7 +116,7 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
         let _ = region;
     }
     /// Requests an optional compositor integration for this window. Unsupported
-    /// backends and compositors silently keep normal client-side behavior.
+    /// backends and compositors keep their standard decoration negotiation.
     fn set_compositor_integration(&self, request: Option<CompositorIntegrationRequest>) {
         let _ = request;
     }

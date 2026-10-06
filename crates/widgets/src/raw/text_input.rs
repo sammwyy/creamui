@@ -15,6 +15,8 @@ pub struct RawTextInput {
     pub on_submit: Rc<dyn Fn()>,
     pub on_key_press: Rc<dyn Fn(KeyInput)>,
     pub clipboard_enabled: bool,
+    /// Paint bullets and prevent copying/cutting secrets to the clipboard.
+    pub password: bool,
     paste_handler: Option<Rc<dyn Fn()>>,
     lifetime: Rc<()>,
     keyboard_revision: Rc<Cell<u64>>,
@@ -831,6 +833,7 @@ impl RawTextInput {
             on_submit: Rc::new(|| {}),
             on_key_press: Rc::new(|_| {}),
             clipboard_enabled: true,
+            password: false,
             paste_handler: None,
             lifetime: Rc::new(()),
             keyboard_revision: Rc::new(Cell::new(0)),
@@ -929,7 +932,7 @@ impl RawTextInput {
 
     fn horizontal_scroll(&self, visible_width: f32) -> f32 {
         let (text_width, _) = crate::text_metrics::measure_family(
-            &self.value,
+            &self.display_value(),
             self.font_size(),
             crate::text_metrics::unbounded_width(),
             self.family(),
@@ -940,6 +943,8 @@ impl RawTextInput {
 
     fn drag_handler(&self, content_box: Option<Rect>, start: bool) -> Rc<dyn Fn(Point, Rect)> {
         let value = self.value.clone();
+        let displayed = self.display_value();
+        let password = self.password;
         let font_size = self.font_size();
         let family = self.style.typography.font_family.clone();
         let style = self.style.clone();
@@ -950,14 +955,23 @@ impl RawTextInput {
         Rc::new(move |point, rect| {
             let content = content_box.unwrap_or_else(|| style.content_rect(rect));
             let width =
-                crate::text_metrics::advance_width_family(&value, font_size, family.as_deref());
+                crate::text_metrics::advance_width_family(&displayed, font_size, family.as_deref());
             let scroll = (width - content.width + 4.0).max(0.0);
             let cursor = crate::text_metrics::byte_offset_at_x_family(
-                &value,
+                &displayed,
                 font_size,
                 (point.x - (content.x - rect.x) + scroll).max(0.0),
                 family.as_deref(),
             );
+            let cursor = if password {
+                value
+                    .char_indices()
+                    .nth(displayed[..cursor].chars().count())
+                    .map(|(offset, _)| offset)
+                    .unwrap_or(value.len())
+            } else {
+                cursor
+            };
             if start {
                 anchor.set(cursor);
             }
@@ -972,6 +986,21 @@ impl RawTextInput {
             });
         })
     }
+
+    fn display_value(&self) -> String {
+        if self.password {
+            "•".repeat(self.value.chars().count())
+        } else {
+            self.value.clone()
+        }
+    }
+    fn display_offset(&self, byte: usize) -> usize {
+        if self.password {
+            self.value[..byte.min(self.value.len())].chars().count() * '•'.len_utf8()
+        } else {
+            byte.min(self.value.len())
+        }
+    }
 }
 
 impl Widget for RawTextInput {
@@ -985,6 +1014,7 @@ impl Widget for RawTextInput {
 
     fn paint_content(&self, painter: &mut dyn Painter, _rect: Rect, text_rect: Rect) {
         // Unwrapped: a bounded width here would word-wrap onto a second row.
+        let displayed = self.display_value();
         let unbounded = Rect {
             x: text_rect.x - self.horizontal_scroll(text_rect.width),
             width: crate::text_metrics::unbounded_width(),
@@ -1006,15 +1036,16 @@ impl Widget for RawTextInput {
             }
         } else {
             let selected = self.selection.range();
+            let selected = self.display_offset(selected.start)..self.display_offset(selected.end);
             if !selected.is_empty() {
                 if let Some(background) = self.selection_background {
                     let before = crate::text_metrics::advance_width_family(
-                        &self.value[..selected.start],
+                        &displayed[..selected.start],
                         self.font_size(),
                         self.family(),
                     );
                     let (width, _) = crate::text_metrics::measure_family(
-                        &self.value[selected.clone()],
+                        &displayed[selected.clone()],
                         self.font_size(),
                         crate::text_metrics::unbounded_width(),
                         self.family(),
@@ -1034,7 +1065,7 @@ impl Widget for RawTextInput {
             }
             painter.fill_text_selected_font(
                 unbounded,
-                &self.value,
+                &displayed,
                 self.text_color(painter),
                 self.selection_text_color
                     .unwrap_or(self.text_color(painter)),
@@ -1080,8 +1111,9 @@ impl Widget for RawTextInput {
         }
         let visible_width = text_rect.width;
         let cursor = self.cursor.min(self.value.len());
+        let displayed = self.display_value();
         let text_width = crate::text_metrics::advance_width_family(
-            &self.value[..cursor],
+            &displayed[..self.display_offset(cursor)],
             self.font_size(),
             self.family(),
         );
@@ -1107,6 +1139,7 @@ impl Widget for RawTextInput {
         let on_selection_change = self.on_selection_change.clone();
         let clipboard_enabled = self.clipboard_enabled;
         let on_submit = self.on_submit.clone();
+        let password = self.password;
         let on_key_press = self.on_key_press.clone();
         let paste_handler = self.paste_handler.clone();
         let lifetime = Rc::downgrade(&self.lifetime);
@@ -1136,11 +1169,11 @@ impl Widget for RawTextInput {
                         });
                         return;
                     }
-                    Key::Char('c') | Key::Char('C') if !selected.is_empty() => {
+                    Key::Char('c') | Key::Char('C') if !selected.is_empty() && !password => {
                         clipboard_write(value[selected.range()].to_owned());
                         return;
                     }
-                    Key::Char('x') | Key::Char('X') if !selected.is_empty() => {
+                    Key::Char('x') | Key::Char('X') if !selected.is_empty() && !password => {
                         let range = selected.range();
                         clipboard_write(value[range.clone()].to_owned());
                         let mut next = value.clone();

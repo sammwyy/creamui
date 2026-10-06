@@ -1,8 +1,10 @@
 use super::{layout_container_methods, shrinkable, StyleExt};
 use creamui_core::layout::{Dimension, Style};
-use creamui_core::{BoxedWidget, Painter, Point, Rect, Widget, WindowDragHandle};
+use creamui_core::{BoxedWidget, Painter, Rect, Widget, WindowDragHandle};
 use std::rc::Rc;
 
+/// App-selected background drag region. Intrinsic content and interactive
+/// controls retain priority, so apps do not need to carve holes for each child.
 pub struct CUIWindowDragArea {
     inner: crate::raw::RawView,
     drag: Option<WindowDragHandle>,
@@ -43,9 +45,9 @@ impl Widget for CUIWindowDragArea {
         self.inner.children()
     }
 
-    fn on_drag_start(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
+    fn on_window_drag(&self) -> Option<Rc<dyn Fn()>> {
         let drag = self.drag.clone()?;
-        Some(Rc::new(move |_, _| drag.start_drag()))
+        Some(Rc::new(move || drag.start_drag()))
     }
 }
 
@@ -63,7 +65,7 @@ mod tests {
                 started_by_handle.set(true);
             }));
             let area = CUIWindowDragArea::new();
-            area.on_drag_start().unwrap()(Point::default(), Rect::default());
+            area.on_window_drag().unwrap()();
         });
         assert!(started.get());
     }

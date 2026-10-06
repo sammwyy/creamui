@@ -4,11 +4,14 @@
 //! Resolves faces through `creamui-fonts`'s registry and lays text out with
 //! the same engine `creamui-render` paints with, without rasterizing.
 
-use creamui_fonts::{FontFace, FontWeight, LayoutSettings, TextLayout, DEFAULT_FAMILY};
+use creamui_fonts::{FontFace, FontWeight, LayoutSettings, TextLayout};
 use std::rc::Rc;
 
 fn font(family: Option<&str>) -> Rc<FontFace> {
-    creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), FontWeight::Regular)
+    let family = family
+        .map(str::to_owned)
+        .unwrap_or_else(creamui_fonts::preferred_family);
+    creamui_fonts::resolve(&family, FontWeight::Regular)
 }
 
 fn wrapped(face: &FontFace, text: &str, font_size: f32, max_width: f32) -> Rc<TextLayout> {
@@ -57,7 +60,13 @@ pub fn measure_family(
     } else {
         FontWeight::Regular
     };
-    let face = creamui_fonts::resolve(family.unwrap_or(DEFAULT_FAMILY), weight);
+    // Match the renderer: absent an explicit family, use the application's
+    // preferred face, not system-ui. Otherwise measured labels can wrap at
+    // paint time when the preferred font has wider glyphs.
+    let family = family
+        .map(str::to_owned)
+        .unwrap_or_else(creamui_fonts::preferred_family);
+    let face = creamui_fonts::resolve(&family, weight);
     let layout = wrapped(&face, text, font_size, max_width);
     let width = layout.lines.first().map_or(0.0, |line| line.width.ceil());
     // The wrapped height, not a single-line guess: at a narrow `max_width`
@@ -280,6 +289,39 @@ pub fn byte_offset_at_point_family(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implicit_text_measurement_uses_the_renderers_preferred_family() {
+        let previous = creamui_fonts::preferred_family();
+        let source = creamui_fonts::resolve(creamui_fonts::DEFAULT_FAMILY, FontWeight::Regular);
+        creamui_fonts::register_bytes(
+            "Metrics Preferred",
+            FontWeight::Regular,
+            source.font_ref().data,
+        )
+        .unwrap();
+        creamui_fonts::set_preferred_family(Some("Metrics Preferred".into()));
+        let implicit_face = font(None).id();
+        let explicit_face = font(Some("Metrics Preferred")).id();
+        let implicit = measure_family("Brightness 65%", 13.0, unbounded_width(), None, false);
+        let explicit = measure_family(
+            "Brightness 65%",
+            13.0,
+            unbounded_width(),
+            Some("Metrics Preferred"),
+            false,
+        );
+        let implicit_glyphs = layout_family("Control center", 15.0, 160.0, None);
+        let explicit_glyphs =
+            layout_family("Control center", 15.0, 160.0, Some("Metrics Preferred"));
+        creamui_fonts::set_preferred_family(Some(previous));
+        assert_eq!(implicit_face, explicit_face);
+        assert_eq!(implicit, explicit);
+        assert_eq!(implicit_glyphs.len(), explicit_glyphs.len());
+        for (actual, expected) in implicit_glyphs.iter().zip(&explicit_glyphs) {
+            assert_eq!((actual.x, actual.advance), (expected.x, expected.advance));
+        }
+    }
 
     #[test]
     fn longer_text_measures_wider() {

@@ -7,6 +7,12 @@ pub struct TextInput {
 impl_styled_inner!(TextInput);
 
 impl TextInput {
+    /// Conceal the value while preserving UTF-8 editing and paste support.
+    /// Copy/cut never export a password to the clipboard.
+    pub fn password(mut self) -> Self {
+        self.inner.password = true;
+        self
+    }
     /// The style used when none is given explicitly: a fixed 200x38 box,
     /// matching this widget's original hardcoded layout.
     pub fn default_style() -> Style {

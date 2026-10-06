@@ -1,8 +1,9 @@
 use crate::{
-    BackendKind, BlurRegion, CompositorIntegrationRequest, ControlFlow, CursorIcon, DragIcon, Key,
+    BackendKind, BlurRegion, CompositorControls, CompositorIntegrationMode,
+    CompositorIntegrationRequest, ControlFlow, CursorIcon, DecorationNegotiation, DragIcon, Key,
     KeyEvent, LogicalPosition, LogicalSize, Modifiers, MouseButton, MouseScrollDelta,
     PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection,
-    WindowAttributes, WindowEvent, WindowId, WindowLevel, WindowRole,
+    WindowAttributes, WindowDecorations, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -33,7 +34,7 @@ use smithay_client_toolkit::{
                 wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1},
                 wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
             },
-            xdg::shell::client::xdg_surface,
+            xdg::shell::client::{xdg_surface, xdg_toplevel::ResizeEdge},
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -41,7 +42,10 @@ use smithay_client_toolkit::{
     shell::{
         xdg::{
             popup::{Popup, PopupConfigure, PopupHandler},
-            window::{Window as XdgWindow, WindowConfigure, WindowDecorations, WindowHandler},
+            window::{
+                DecorationMode, Window as XdgWindow, WindowConfigure,
+                WindowDecorations as XdgDecorations, WindowHandler,
+            },
             XdgPositioner, XdgShell, XdgSurface,
         },
         WaylandSurface,
@@ -193,6 +197,7 @@ impl<T: 'static> EventLoop<T> {
             }
             runtime.borrow_mut().close_requested();
             runtime.borrow_mut().apply_cursor_requests();
+            runtime.borrow_mut().apply_interactive_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
             runtime.borrow_mut().apply_blur_requests(&queue_handle);
             runtime
@@ -267,18 +272,17 @@ impl ActiveEventLoop<'_> {
         }
         let surface = runtime.compositor.create_surface(self.queue_handle);
         let decorations = if attributes.decorations {
-            WindowDecorations::RequestServer
+            XdgDecorations::RequestServer
         } else {
-            WindowDecorations::None
+            XdgDecorations::None
         };
         let window = runtime
             .xdg_shell
             .create_window(surface, decorations, self.queue_handle);
         window.set_title(attributes.title);
-        window.set_min_size(Some((
-            attributes.size.width.ceil() as u32,
-            attributes.size.height.ceil() as u32,
-        )));
+        let (minimum, maximum) = window_size_limits(attributes.size, attributes.resizable);
+        window.set_min_size(Some(minimum));
+        window.set_max_size(maximum);
         window.commit();
         let handle = Arc::new(Window::new(
             id,
@@ -287,12 +291,15 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.interactive_requests.clone(),
             runtime.blur_requests.clone(),
             runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
             attributes.size,
             false,
         ));
+        *handle.decorations.lock().expect("decoration lock poisoned") =
+            DecorationNegotiation::new(attributes.decorations);
         runtime.windows.insert(
             id,
             NativeWindow::Toplevel {
@@ -347,6 +354,7 @@ impl ActiveEventLoop<'_> {
             runtime.close_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
+            runtime.interactive_requests.clone(),
             runtime.blur_requests.clone(),
             runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
@@ -433,6 +441,7 @@ struct Runtime {
     /// Window currently under the drag pointer, if any.
     drag_target: Option<WindowId>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+    interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
     icon_pool: SlotPool,
 }
 
@@ -442,6 +451,39 @@ struct DragRequest {
     serial: u32,
     mime_types: Vec<String>,
     icon: Option<DragIcon>,
+}
+
+struct InteractiveRequest {
+    window_id: WindowId,
+    serial: u32,
+    /// `None` means move; otherwise resize the specified edges.
+    resize: Option<ResizeDirection>,
+}
+
+fn window_size_limits(size: LogicalSize, resizable: bool) -> ((u32, u32), Option<(u32, u32)>) {
+    if resizable {
+        // The initial size is not the minimum size of a resizable window.
+        ((1, 1), None)
+    } else {
+        let fixed = (
+            size.width.ceil().max(1.0) as u32,
+            size.height.ceil().max(1.0) as u32,
+        );
+        (fixed, Some(fixed))
+    }
+}
+
+fn resize_edge(direction: ResizeDirection) -> ResizeEdge {
+    match direction {
+        ResizeDirection::East => ResizeEdge::Right,
+        ResizeDirection::West => ResizeEdge::Left,
+        ResizeDirection::North => ResizeEdge::Top,
+        ResizeDirection::South => ResizeEdge::Bottom,
+        ResizeDirection::NorthWest => ResizeEdge::TopLeft,
+        ResizeDirection::NorthEast => ResizeEdge::TopRight,
+        ResizeDirection::SouthWest => ResizeEdge::BottomLeft,
+        ResizeDirection::SouthEast => ResizeEdge::BottomRight,
+    }
 }
 
 /// Queued by [`Window::set_blur_region`], drained by [`Runtime::apply_blur_requests`].
@@ -505,6 +547,7 @@ impl Runtime {
             active_drag: None,
             drag_target: None,
             drag_requests: Arc::new(Mutex::new(Vec::new())),
+            interactive_requests: Arc::new(Mutex::new(Vec::new())),
             icon_pool,
         }))
     }
@@ -574,6 +617,29 @@ impl Runtime {
         for (window_id, icon) in requests {
             if window_id == focused {
                 device.set_shape(serial, cursor_shape(icon));
+            }
+        }
+    }
+
+    fn apply_interactive_requests(&mut self) {
+        let requests = std::mem::take(
+            &mut *self
+                .interactive_requests
+                .lock()
+                .expect("interactive request lock poisoned"),
+        );
+        let Some(seat) = self.seat.as_ref() else {
+            return;
+        };
+        for request in requests {
+            let Some(NativeWindow::Toplevel { window, .. }) = self.windows.get(&request.window_id)
+            else {
+                continue;
+            };
+            if let Some(direction) = request.resize {
+                window.resize(seat, request.serial, resize_edge(direction));
+            } else {
+                window.move_(seat, request.serial);
             }
         }
     }
@@ -754,6 +820,7 @@ fn create_layer_window(
         runtime.close_requests.clone(),
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
+        runtime.interactive_requests.clone(),
         runtime.blur_requests.clone(),
         runtime.integration_requests.clone(),
         runtime.output_refresh.clone(),
@@ -1472,6 +1539,15 @@ impl WindowHandler for DispatchState {
             native.handle().set_inner_size(size);
             native.handle().set_ready();
         }
+        let decorations = runtime.windows[&id]
+            .handle()
+            .decorations
+            .lock()
+            .expect("decoration lock poisoned")
+            .configure(configure.decoration_mode == DecorationMode::Server);
+        runtime
+            .events
+            .push((id, WindowEvent::DecorationsChanged(decorations)));
         runtime.events.push((id, WindowEvent::Resized(size)));
         runtime.events.push((
             id,
@@ -1524,11 +1600,13 @@ pub struct Window {
     scale_factor: AtomicU32,
     inner_size: Mutex<PhysicalSize>,
     ready: AtomicBool,
+    decorations: Mutex<DecorationNegotiation>,
     requested_redraw: AtomicBool,
     visible: AtomicBool,
     close_requests: Arc<Mutex<Vec<WindowId>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+    interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
     blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
@@ -1544,6 +1622,7 @@ impl Window {
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
+        interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
         blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
         integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
         output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
@@ -1560,11 +1639,13 @@ impl Window {
                 height: size.height.ceil().max(1.0) as u32,
             }),
             ready: AtomicBool::new(false),
+            decorations: Mutex::new(DecorationNegotiation::new(false)),
             requested_redraw: AtomicBool::new(true),
             visible: AtomicBool::new(false),
             close_requests,
             cursor_requests,
             drag_requests,
+            interactive_requests,
             blur_requests,
             integration_requests,
             output_refresh,
@@ -1586,6 +1667,17 @@ impl Window {
 
     fn pointer_passthrough(&self) -> bool {
         self.pointer_passthrough
+    }
+
+    fn configure_integration(
+        &self,
+        mode: CompositorIntegrationMode,
+        controls: CompositorControls,
+    ) -> WindowDecorations {
+        self.decorations
+            .lock()
+            .expect("decoration lock poisoned")
+            .integrate(mode, controls)
     }
 }
 
@@ -1610,6 +1702,12 @@ impl HasDisplayHandle for Window {
 }
 
 impl PlatformWindow for Window {
+    fn window_decorations(&self) -> WindowDecorations {
+        self.decorations
+            .lock()
+            .expect("decoration lock poisoned")
+            .effective()
+    }
     fn id(&self) -> WindowId {
         self.id
     }
@@ -1670,8 +1768,34 @@ impl PlatformWindow for Window {
     fn drag_window(&self) -> Result<(), String> {
         Err("Wayland interactive move requires an input serial".to_owned())
     }
+    fn drag_window_with_serial(&self, serial: crate::InputSerial) -> Result<(), String> {
+        self.interactive_requests
+            .lock()
+            .expect("interactive request lock poisoned")
+            .push(InteractiveRequest {
+                window_id: self.id,
+                serial: serial.0,
+                resize: None,
+            });
+        Ok(())
+    }
     fn drag_resize_window(&self, _: ResizeDirection) -> Result<(), String> {
         Err("Wayland interactive resize requires an input serial".to_owned())
+    }
+    fn drag_resize_window_with_serial(
+        &self,
+        direction: ResizeDirection,
+        serial: crate::InputSerial,
+    ) -> Result<(), String> {
+        self.interactive_requests
+            .lock()
+            .expect("interactive request lock poisoned")
+            .push(InteractiveRequest {
+                window_id: self.id,
+                serial: serial.0,
+                resize: Some(direction),
+            });
+        Ok(())
     }
     fn set_cursor(&self, icon: CursorIcon) {
         let mut requests = self
@@ -1880,6 +2004,32 @@ fn dispatch_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizable_windows_do_not_use_their_initial_size_as_a_minimum() {
+        let size = LogicalSize::new(1120.0, 760.0);
+        assert_eq!(window_size_limits(size, true), ((1, 1), None));
+        assert_eq!(
+            window_size_limits(size, false),
+            ((1120, 760), Some((1120, 760)))
+        );
+    }
+
+    #[test]
+    fn all_resize_directions_map_to_wayland_edges() {
+        for (direction, edge) in [
+            (ResizeDirection::North, ResizeEdge::Top),
+            (ResizeDirection::South, ResizeEdge::Bottom),
+            (ResizeDirection::East, ResizeEdge::Right),
+            (ResizeDirection::West, ResizeEdge::Left),
+            (ResizeDirection::NorthWest, ResizeEdge::TopLeft),
+            (ResizeDirection::NorthEast, ResizeEdge::TopRight),
+            (ResizeDirection::SouthWest, ResizeEdge::BottomLeft),
+            (ResizeDirection::SouthEast, ResizeEdge::BottomRight),
+        ] {
+            assert_eq!(resize_edge(direction), edge);
+        }
+    }
 
     #[test]
     fn wayland_axis_deltas_match_the_platform_scroll_convention() {

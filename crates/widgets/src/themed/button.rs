@@ -44,7 +44,7 @@ impl ButtonSize {
         match self {
             Self::Xs => 24.,
             Self::Sm => 28.,
-            Self::Md => 34.,
+            Self::Md => 36.,
             Self::Lg => 40.,
             Self::Xl => 48.,
         }
@@ -117,7 +117,7 @@ impl Button {
         let mut inner = RawButton::new(style, on_click)
             .background(background)
             .border(border, size.border_width())
-            .corner_radius(theme.button_radius.min(size.height() / 4.))
+            .corner_radius(theme.button_radius.min(size.height() / 2.))
             .child(child);
         inner = inner
             .hover_style(creamui_core::StateStyle::new().background(

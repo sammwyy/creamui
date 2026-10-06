@@ -7,19 +7,19 @@ pub struct TextInput {
 impl_styled_inner!(TextInput);
 
 impl TextInput {
-    /// The style used when none is given explicitly: a fixed 200x36 box,
+    /// The style used when none is given explicitly: a fixed 200x38 box,
     /// matching this widget's original hardcoded layout.
     pub fn default_style() -> Style {
         Style {
             size: creamui_core::layout::Size {
                 width: creamui_core::layout::Dimension::Length(200.0),
-                height: creamui_core::layout::Dimension::Length(36.0),
+                height: creamui_core::layout::Dimension::Length(38.0),
             },
             padding: creamui_core::layout::Rect {
                 top: creamui_core::layout::LengthPercentage::Length(0.0),
-                right: creamui_core::layout::LengthPercentage::Length(8.0),
+                right: creamui_core::layout::LengthPercentage::Length(10.0),
                 bottom: creamui_core::layout::LengthPercentage::Length(0.0),
-                left: creamui_core::layout::LengthPercentage::Length(8.0),
+                left: creamui_core::layout::LengthPercentage::Length(10.0),
             },
             ..Default::default()
         }

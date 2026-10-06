@@ -120,21 +120,21 @@ impl ColorScheme {
 
     pub const fn dark() -> Self {
         Self {
-            // Warm charcoal rather than a blue-black: it gives vivid accents
-            // room to glow without tinting the whole application purple.
-            surface: Color::rgb(0x1c, 0x1b, 0x1d),
-            surface_elevated: Color::rgb(0x27, 0x25, 0x27),
-            surface_hover: Color::rgb(0x34, 0x31, 0x34),
-            accent: Color::rgb(0xa7, 0x7b, 0xff),
-            accent_hover: Color::rgb(0xb7, 0x93, 0xff),
-            accent_pressed: Color::rgb(0x8d, 0x62, 0xdb),
+            // A cool charcoal keeps dark applications calm, while the blue
+            // accent gives CreamUI its own crisp, desktop-native character.
+            surface: Color::rgb(0x18, 0x1b, 0x22),
+            surface_elevated: Color::rgb(0x23, 0x27, 0x31),
+            surface_hover: Color::rgb(0x30, 0x36, 0x43),
+            accent: Color::rgb(0x5d, 0xa9, 0xf6),
+            accent_hover: Color::rgb(0x7a, 0xba, 0xfa),
+            accent_pressed: Color::rgb(0x3f, 0x87, 0xcf),
             selection_background: Color::rgb(0x0a, 0x84, 0xff),
             selection_text: Color::rgb(0xff, 0xff, 0xff),
-            text_primary: Color::rgb(0xf4, 0xf1, 0xf0),
-            text_secondary: Color::rgb(0xb9, 0xb2, 0xb4),
-            text_disabled: Color::rgb(0x80, 0x7a, 0x7c),
-            border: Color::rgb(0x3d, 0x39, 0x3d),
-            border_strong: Color::rgb(0x5d, 0x57, 0x5c),
+            text_primary: Color::rgb(0xf3, 0xf6, 0xfa),
+            text_secondary: Color::rgb(0xb8, 0xc0, 0xcc),
+            text_disabled: Color::rgb(0x78, 0x82, 0x91),
+            border: Color::rgb(0x3a, 0x42, 0x50),
+            border_strong: Color::rgb(0x5a, 0x65, 0x76),
             danger: Color::rgb(0xe5, 0x4b, 0x4b),
             warning: Color::rgb(0xe0, 0xa5, 0x2e),
             success: Color::rgb(0x3d, 0xc9, 0x6f),
@@ -142,21 +142,21 @@ impl ColorScheme {
     }
     pub const fn light() -> Self {
         Self {
-            // A light warm-grey canvas lets white secondary surfaces read as
-            // deliberately layered instead of clinical.
-            surface: Color::rgb(0xf5, 0xf2, 0xf0),
-            surface_elevated: Color::rgb(0xff, 0xfd, 0xfc),
-            surface_hover: Color::rgb(0xeb, 0xe6, 0xe5),
-            accent: Color::rgb(0x9a, 0x6d, 0xf2),
-            accent_hover: Color::rgb(0x88, 0x59, 0xe2),
-            accent_pressed: Color::rgb(0x76, 0x48, 0xc8),
+            // A lightly blue-tinted canvas layers cleanly under white
+            // controls without feeling sterile.
+            surface: Color::rgb(0xf4, 0xf7, 0xfb),
+            surface_elevated: Color::rgb(0xff, 0xff, 0xff),
+            surface_hover: Color::rgb(0xe8, 0xee, 0xf5),
+            accent: Color::rgb(0x36, 0x8f, 0xe8),
+            accent_hover: Color::rgb(0x2d, 0x80, 0xd6),
+            accent_pressed: Color::rgb(0x1f, 0x6e, 0xbb),
             selection_background: Color::rgb(0x0a, 0x66, 0xcc),
             selection_text: Color::rgb(0xff, 0xff, 0xff),
-            text_primary: Color::rgb(0x2d, 0x29, 0x2b),
-            text_secondary: Color::rgb(0x6d, 0x65, 0x69),
-            text_disabled: Color::rgb(0x9b, 0x92, 0x96),
-            border: Color::rgb(0xe4, 0xdd, 0xdd),
-            border_strong: Color::rgb(0xc7, 0xbd, 0xbf),
+            text_primary: Color::rgb(0x20, 0x2a, 0x38),
+            text_secondary: Color::rgb(0x62, 0x6f, 0x80),
+            text_disabled: Color::rgb(0x96, 0xa1, 0xb0),
+            border: Color::rgb(0xdd, 0xe4, 0xed),
+            border_strong: Color::rgb(0xc1, 0xcd, 0xda),
             danger: Color::rgb(0xd1, 0x3a, 0x3a),
             warning: Color::rgb(0xb8, 0x7d, 0x0a),
             success: Color::rgb(0x22, 0xa0, 0x55),
@@ -268,10 +268,10 @@ impl Theme {
             spacing_small: 4.,
             spacing_medium: 8.,
             spacing_large: 16.,
-            button_radius: 7.,
+            button_radius: 9.,
             checkbox_radius: 4.,
-            input_radius: 7.,
-            textarea_radius: 12.,
+            input_radius: 9.,
+            textarea_radius: 14.,
             input_border_width: 1.,
             card_radius: 12.,
             scroll_radius: 16.,

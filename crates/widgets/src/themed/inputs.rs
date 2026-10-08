@@ -23,9 +23,9 @@ impl TextInput {
             },
             padding: creamui_core::layout::Rect {
                 top: creamui_core::layout::LengthPercentage::Length(0.0),
-                right: creamui_core::layout::LengthPercentage::Length(10.0),
+                right: creamui_core::layout::LengthPercentage::Length(12.0),
                 bottom: creamui_core::layout::LengthPercentage::Length(0.0),
-                left: creamui_core::layout::LengthPercentage::Length(10.0),
+                left: creamui_core::layout::LengthPercentage::Length(12.0),
             },
             ..Default::default()
         }

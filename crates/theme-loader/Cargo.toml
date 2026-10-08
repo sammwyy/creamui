@@ -9,6 +9,6 @@ homepage.workspace = true
 authors.workspace = true
 
 [dependencies]
-creamui-theme = { version = "0.1.2", path = "../theme" }
+creamui-theme = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

@@ -1,7 +1,7 @@
 [package]
 name = "creamui-bench"
 description = "Performance laboratory: reproducible benchmark scenes and engine counters for measuring CreamUI before/after the incremental-runtime refactor"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -12,7 +12,7 @@ bench = false
 [dependencies]
 creamui-abi = { workspace = true }
 creamui-core = { workspace = true, features = ["perf-metrics"] }
-creamui_ffi = { package = "creamui-ffi", version = "0.1.1", path = "../ffi" }
+creamui_ffi = { package = "creamui-ffi", version = "0.2.0", path = "../ffi" }
 creamui-reactive = { workspace = true }
 creamui-widgets = { workspace = true }
 creamui-theme = { workspace = true }

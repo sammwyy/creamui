@@ -1,7 +1,7 @@
 [package]
 name = "creamui-render"
 description = "Rendering backend for CreamUI"
-version = "0.1.2"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -39,7 +39,7 @@ creamui-theme-loader = { workspace = true, optional = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-tray = { workspace = true, optional = true }
-creamui-platform = { version = "0.1.1", path = "../platform", default-features = false }
+creamui-platform = { version = "0.2.0", path = "../platform", default-features = false }
 tiny-skia = { workspace = true }
 swash = "0.2"
 rustc-hash = "2"

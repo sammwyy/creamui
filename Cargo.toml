@@ -46,7 +46,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Sammwy"]
@@ -54,23 +54,23 @@ repository = "https://github.com/sammwyy/creamui"
 homepage = "https://github.com/sammwyy/creamui"
 
 [workspace.dependencies]
-creamui-reactive = { version = "0.1.1", path = "crates/reactive" }
-creamui = { version = "0.1.1", path = "crates/creamui" }
-creamui-core = { version = "0.1.2", path = "crates/core" }
-creamui-theme = { version = "0.1.2", path = "crates/theme" }
-creamui-theme-loader = { version = "0.1.1", path = "crates/theme-loader" }
-creamui-fonts = { version = "0.1.1", path = "crates/fonts" }
-creamui-widgets = { version = "0.1.1", path = "crates/widgets" }
-creamui-image = { version = "0.1.1", path = "crates/image" }
-creamui-platform = { version = "0.1.1", path = "crates/platform" }
-creamui-render = { version = "0.1.2", path = "crates/render" }
-creamui-tray = { version = "0.1.1", path = "crates/tray" }
-creamui-devtools = { version = "0.1.1", path = "crates/devtools" }
-creamui-jsx = { version = "0.1.1", path = "crates/jsx" }
-creamui-macros = { version = "0.1.1", path = "crates/macros" }
-creamui-abi = { version = "0.1.1", path = "crates/abi" }
-creamui-ffi = { version = "0.1.1", path = "crates/ffi" }
-creamui-dynamic = { version = "0.1.1", path = "crates/dynamic" }
+creamui-reactive = { version = "0.2.0", path = "crates/reactive" }
+creamui = { version = "0.2.0", path = "crates/creamui" }
+creamui-core = { version = "0.2.0", path = "crates/core" }
+creamui-theme = { version = "0.2.0", path = "crates/theme" }
+creamui-theme-loader = { version = "0.2.0", path = "crates/theme-loader" }
+creamui-fonts = { version = "0.2.0", path = "crates/fonts" }
+creamui-widgets = { version = "0.2.0", path = "crates/widgets" }
+creamui-image = { version = "0.2.0", path = "crates/image" }
+creamui-platform = { version = "0.2.0", path = "crates/platform" }
+creamui-render = { version = "0.2.0", path = "crates/render" }
+creamui-tray = { version = "0.2.0", path = "crates/tray" }
+creamui-devtools = { version = "0.2.0", path = "crates/devtools" }
+creamui-jsx = { version = "0.2.0", path = "crates/jsx" }
+creamui-macros = { version = "0.2.0", path = "crates/macros" }
+creamui-abi = { version = "0.2.0", path = "crates/abi" }
+creamui-ffi = { version = "0.2.0", path = "crates/ffi" }
+creamui-dynamic = { version = "0.2.0", path = "crates/dynamic" }
 
 taffy = "0.7"
 wgpu = { version = "22", default-features = false, features = ["wgsl", "dx12", "metal"] }

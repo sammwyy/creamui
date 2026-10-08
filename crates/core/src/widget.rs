@@ -129,6 +129,13 @@ pub trait Painter {
     fn pressed(&self, _rect: Rect) -> bool {
         false
     }
+    fn is_visible(&self, _rect: Rect) -> bool {
+        true
+    }
+    /// The frame's time in seconds, without requesting another frame.
+    fn frame_time(&self) -> Option<f32> {
+        None
+    }
     /// Request another frame only while an animated control is visible.
     fn animation_time(&mut self) -> f32 {
         0.0
@@ -539,6 +546,20 @@ pub trait Widget {
         self.paint(painter, rect);
     }
 
+    fn has_transition(&self) -> bool {
+        false
+    }
+
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        _state: &mut crate::TransitionState,
+    ) {
+        self.paint_content(painter, rect, content);
+    }
+
     /// This widget's fundamental content, for [`crate::runtime::mount_legacy_widget`]
     /// to classify as [`crate::runtime::NodeKind::Text`]/[`crate::runtime::NodeKind::Image`]
     /// instead of the default opaque [`crate::runtime::NodeKind::Custom`].
@@ -877,6 +898,18 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn paint_content(&self, painter: &mut dyn Painter, rect: Rect, content: Rect) {
         self.widget.paint_content(painter, rect, content)
+    }
+    fn has_transition(&self) -> bool {
+        self.widget.has_transition()
+    }
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        state: &mut crate::TransitionState,
+    ) {
+        self.widget.paint_transition(painter, rect, content, state)
     }
     fn legacy_node_kind(&self) -> Option<crate::runtime::NodeKind> {
         self.widget.legacy_node_kind()

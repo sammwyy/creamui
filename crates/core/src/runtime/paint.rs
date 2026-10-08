@@ -91,6 +91,7 @@ pub struct PaintFragment {
 #[derive(Default)]
 pub struct PaintState {
     pub fragment: Option<PaintFragment>,
+    pub(super) transition: std::cell::RefCell<crate::TransitionState>,
 }
 
 fn translated(rect: crate::Rect, x: f32, y: f32) -> crate::Rect {
@@ -285,8 +286,23 @@ pub(super) fn generate_fragment(
     node: &RuntimeNode,
     colors: &creamui_theme::ColorScheme,
 ) -> PaintFragment {
+    generate_fragment_at(node, colors, None).0
+}
+
+pub(super) struct PaintFrame {
+    pub time: Option<f32>,
+    pub hovered: bool,
+    pub pressed: bool,
+}
+
+pub(super) fn generate_fragment_at(
+    node: &RuntimeNode,
+    colors: &creamui_theme::ColorScheme,
+    frame: Option<PaintFrame>,
+) -> (PaintFragment, bool) {
     let rect = node.layout.rect;
     let mut ops = Vec::new();
+    let mut animated = false;
     let paint = &node.paint_style;
 
     if let Some(background) = paint.background.as_ref() {
@@ -363,7 +379,20 @@ pub(super) fn generate_fragment(
         NodeKind::Custom(custom) => {
             if let Some(widget) = &custom.widget {
                 let mut recorder = RecordingPainter::new(*colors);
-                widget.paint_content(&mut recorder, rect, node.layout.content_rect);
+                if let Some(frame) = frame {
+                    recorder.frame_time = frame.time;
+                    recorder.hovered = frame.hovered;
+                    recorder.pressed = frame.pressed;
+                    widget.paint_transition(
+                        &mut recorder,
+                        rect,
+                        node.layout.content_rect,
+                        &mut node.paint.transition.borrow_mut(),
+                    );
+                    animated = recorder.animated;
+                } else {
+                    widget.paint_content(&mut recorder, rect, node.layout.content_rect);
+                }
                 ops.extend(recorder.into_ops());
             }
         }
@@ -381,7 +410,7 @@ pub(super) fn generate_fragment(
         )));
     }
 
-    PaintFragment { ops, bounds: rect }
+    (PaintFragment { ops, bounds: rect }, animated)
 }
 
 /// Records a legacy `Widget::paint` call as [`PaintOp`]s instead of
@@ -391,6 +420,10 @@ pub(super) fn generate_fragment(
 pub struct RecordingPainter {
     color_scheme: creamui_theme::ColorScheme,
     ops: Vec<PaintOp>,
+    frame_time: Option<f32>,
+    animated: bool,
+    hovered: bool,
+    pressed: bool,
 }
 
 impl RecordingPainter {
@@ -398,6 +431,10 @@ impl RecordingPainter {
         RecordingPainter {
             color_scheme,
             ops: Vec::new(),
+            frame_time: None,
+            animated: false,
+            hovered: false,
+            pressed: false,
         }
     }
 
@@ -438,6 +475,23 @@ impl RecordingPainter {
 impl crate::Painter for RecordingPainter {
     fn color_scheme(&self) -> creamui_theme::ColorScheme {
         self.color_scheme
+    }
+
+    fn frame_time(&self) -> Option<f32> {
+        self.frame_time
+    }
+
+    fn animation_time(&mut self) -> f32 {
+        self.animated = true;
+        self.frame_time.unwrap_or(0.0)
+    }
+
+    fn hovered(&self, _: crate::Rect) -> bool {
+        self.hovered
+    }
+
+    fn pressed(&self, _: crate::Rect) -> bool {
+        self.pressed
     }
 
     fn fill_rect(&mut self, rect: crate::Rect, color: creamui_theme::Color, corner_radius: f32) {

@@ -449,6 +449,21 @@ impl Runtime {
             let Some(fragment) = &node.paint.fragment else {
                 continue;
             };
+            let transform = node.layout.effective_transform;
+            let rect = crate::Rect {
+                x: node.layout.rect.x + transform.x,
+                y: node.layout.rect.y + transform.y,
+                ..node.layout.rect
+            };
+            if node.layout.effective_opacity <= 0.0
+                || node
+                    .layout
+                    .effective_clip
+                    .is_some_and(|clip| !rect.overlaps(clip))
+                || !painter.is_visible(rect)
+            {
+                continue;
+            }
             if let Some(clip) = node.layout.effective_clip {
                 painter.push_clip(clip);
             }
@@ -468,8 +483,29 @@ impl Runtime {
                     );
                 }
             }
+            let animated_fragment = match &node.kind {
+                NodeKind::Custom(custom)
+                    if custom
+                        .widget
+                        .as_ref()
+                        .is_some_and(|widget| widget.has_transition()) =>
+                {
+                    let frame = paint::PaintFrame {
+                        time: painter.frame_time(),
+                        hovered: painter.hovered(rect),
+                        pressed: painter.pressed(rect),
+                    };
+                    let (fragment, animated) =
+                        paint::generate_fragment_at(node, &painter.color_scheme(), Some(frame));
+                    if animated {
+                        painter.animation_time();
+                    }
+                    Some(fragment)
+                }
+                _ => None,
+            };
             paint::paint_fragment(
-                fragment,
+                animated_fragment.as_ref().unwrap_or(fragment),
                 painter,
                 node.layout.effective_transform,
                 node.layout.effective_opacity,

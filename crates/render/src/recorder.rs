@@ -259,6 +259,14 @@ impl Painter for SceneRecorder {
         self.hovered(rect) && self.press_origin.is_some_and(|point| rect.contains(point))
     }
 
+    fn is_visible(&self, rect: Rect) -> bool {
+        self.visible(self.bounds(rect))
+    }
+
+    fn frame_time(&self) -> Option<f32> {
+        Some(self.frame_time)
+    }
+
     /// The same instant for every widget in a frame, so animations stay in
     /// step with each other however long the frame takes to record.
     fn animation_time(&mut self) -> f32 {
@@ -1019,6 +1027,8 @@ mod tests {
     fn animation_requests_are_tracked_per_frame() {
         let mut recorder = SceneRecorder::new();
         recorder.begin(10, 10, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        assert!(recorder.frame_time().is_some());
+        assert!(!recorder.animated());
         recorder.animation_time();
         assert!(recorder.animated());
         recorder.begin(10, 10, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());

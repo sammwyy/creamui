@@ -22,6 +22,7 @@ enum PaintMode {
 
 struct Instance {
     widget: BoxedWidget,
+    transition: RefCell<crate::TransitionState>,
     /// Compared field-by-field (specifically `style.layout`) against next
     /// frame's declared style to decide whether `node_id`'s `taffy::Style`
     /// needs rewriting. `constrain_inflow` is a pure function, so comparing
@@ -107,6 +108,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         let reports_layout = reports_layout || children.iter().any(|child| child.reports_layout);
         return Instance {
             widget,
+            transition: RefCell::default(),
             paint_overflow: max_paint_overflow(&new_style),
             style: new_style,
             has_measure: new_has_measure,
@@ -163,6 +165,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
     let reports_layout = reports_layout || new_children.iter().any(|child| child.reports_layout);
     Instance {
         widget,
+        transition: old.transition,
         style: new_style,
         has_measure: new_has_measure,
         measure_fingerprint: new_measure_fingerprint,
@@ -451,7 +454,16 @@ fn paint_instance(
                 }
             }
         }
-        instance.widget.paint_content(painter, rect, content);
+        if instance.widget.has_transition() {
+            instance.widget.paint_transition(
+                painter,
+                rect,
+                content,
+                &mut instance.transition.borrow_mut(),
+            );
+        } else {
+            instance.widget.paint_content(painter, rect, content);
+        }
         #[cfg(feature = "perf-metrics")]
         crate::metrics::record(|m| m.paint_nodes_recorded += 1);
         // Borders and outlines sit over component-specific content, matching

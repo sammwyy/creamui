@@ -5,6 +5,7 @@
 //! turns a widget tree into a laid-out, painted [`Scene`] using `taffy` for
 //! CSS-like flex/grid layout.
 
+mod animation;
 mod damage;
 mod geometry;
 mod image;
@@ -15,6 +16,7 @@ mod style;
 mod virtualize;
 mod widget;
 
+pub use animation::{Easing, Transition, TransitionState};
 pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT_MAX_RECTS};
 pub use geometry::{Point, Rect, Size};
 pub use image::RgbaImage;

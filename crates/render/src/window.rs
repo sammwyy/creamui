@@ -3549,13 +3549,32 @@ fn run_windows(
     #[cfg(not(target_arch = "wasm32"))]
     let mut handler = handler;
     #[cfg(not(target_arch = "wasm32"))]
-    event_loop
-        .run_app(&mut handler)
-        .expect("event loop exited with an error");
+    if let Err(error) = event_loop.run_app(&mut handler) {
+        // Losing the Wayland connection is the normal consequence of its
+        // compositor shutting down.  `run_app` cannot distinguish that from
+        // an application-requested exit at this layer, but it must not turn a
+        // compositor shutdown into an application panic.
+        if event_loop_connection_closed(&error) {
+            log::debug!("creamui-render: event loop stopped after compositor disconnect: {error}");
+        } else {
+            panic!("event loop exited with an error: {error}");
+        }
+    }
     #[cfg(target_arch = "wasm32")]
     {
         event_loop.spawn_app(handler);
     }
+}
+
+/// Whether the platform event loop ended because its display server closed
+/// the connection beneath it.
+fn event_loop_connection_closed(error: &str) -> bool {
+    matches!(
+        error,
+        error if error.contains("Broken pipe")
+            || error.contains("Connection reset")
+            || error.contains("Connection refused")
+    )
 }
 
 fn start_window_move(window: &dyn PlatformWindow, serial: Option<InputSerial>) {
@@ -5768,5 +5787,12 @@ mod tests {
             background_jobs: HashMap::new(),
         }));
         resolve_background_job(&commands, 99, Box::new(0u32));
+    }
+
+    #[test]
+    fn compositor_disconnect_errors_are_clean_event_loop_exits() {
+        assert!(event_loop_connection_closed("Io error: Broken pipe (os error 32)"));
+        assert!(event_loop_connection_closed("Connection reset by peer"));
+        assert!(!event_loop_connection_closed("failed to initialize renderer"));
     }
 }

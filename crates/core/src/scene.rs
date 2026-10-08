@@ -45,6 +45,7 @@ struct Instance {
     children: Vec<Instance>,
     node_id: taffy::NodeId,
     reports_layout: bool,
+    has_pointer_barriers: bool,
     /// The largest border/outline overflow across every interaction state,
     /// cached here because clipping ancestors need it on every paint.
     paint_overflow: f32,
@@ -106,6 +107,8 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             m.taffy_context_writes += 1;
         });
         let reports_layout = reports_layout || children.iter().any(|child| child.reports_layout);
+        let has_pointer_barriers =
+            widget.blocks_pointer() || children.iter().any(|child| child.has_pointer_barriers);
         return Instance {
             widget,
             transition: RefCell::default(),
@@ -116,6 +119,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
             key: new_key,
             children,
             node_id,
+            has_pointer_barriers,
             reports_layout,
         };
     };
@@ -163,6 +167,8 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
     }
 
     let reports_layout = reports_layout || new_children.iter().any(|child| child.reports_layout);
+    let has_pointer_barriers =
+        widget.blocks_pointer() || new_children.iter().any(|child| child.has_pointer_barriers);
     let transition = if old.widget.has_transition() && widget.has_transition() {
         old.transition
     } else {
@@ -179,6 +185,7 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         node_id: old.node_id,
         paint_overflow,
         reports_layout,
+        has_pointer_barriers,
     }
 }
 
@@ -262,6 +269,7 @@ fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
 #[derive(Default)]
 struct PaintOutputs {
     modal: bool,
+    pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -278,6 +286,41 @@ struct PaintOutputs {
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
+}
+
+#[derive(Clone, Copy)]
+struct PointerBarrier {
+    rect: Rect,
+    hits: usize,
+    hits_at: usize,
+    focusables: usize,
+    draggables: usize,
+    drag_starts: usize,
+    scrollables: usize,
+    cursors: usize,
+    hovers: usize,
+}
+
+impl PaintOutputs {
+    fn block_pointer(&mut self, rect: Rect) {
+        self.pointer_barriers.push(PointerBarrier {
+            rect,
+            hits: self.hits.len(),
+            hits_at: self.hits_at.len(),
+            focusables: self.focusables.len(),
+            draggables: self.draggables.len(),
+            drag_starts: self.drag_starts.len(),
+            scrollables: self.scrollables.len(),
+            cursors: self.cursors.len(),
+            hovers: self.hovers.len(),
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PointerContext {
+    barrier: Option<taffy::NodeId>,
+    enabled: bool,
 }
 
 /// Context threaded through [`paint_instance`] to identify and paint the
@@ -337,6 +380,94 @@ fn max_paint_overflow(style: &crate::Style) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn find_pointer_barrier(
+    tree: &Tree,
+    instance: &Instance,
+    painter: &dyn Painter,
+    parent_origin: Point,
+    clip: Rect,
+    viewport: Rect,
+    mode: PaintMode,
+) -> Option<taffy::NodeId> {
+    if !instance.has_pointer_barriers {
+        return None;
+    }
+    let absolute =
+        instance.style.layout.position == Position::Absolute && instance.widget.is_portal();
+    if mode == PaintMode::Flow && absolute {
+        return None;
+    }
+    let layout = tree.layout(instance.node_id).expect("layout was computed");
+    let rect = Rect {
+        x: parent_origin.x + layout.location.x,
+        y: parent_origin.y + layout.location.y,
+        width: layout.size.width,
+        height: layout.size.height,
+    };
+    let paint_self = mode == PaintMode::Flow || absolute;
+    let effective_clip = if mode == PaintMode::Absolute && absolute {
+        viewport
+    } else {
+        clip
+    };
+    let mut barrier = (paint_self && instance.widget.blocks_pointer())
+        .then(|| rect.intersect(effective_clip))
+        .flatten()
+        .filter(|visible| painter.hovered(*visible))
+        .map(|_| instance.node_id);
+    let child_clip = if paint_self && instance.widget.clips_children() {
+        let margin = instance
+            .children
+            .iter()
+            .map(|child| child.paint_overflow)
+            .fold(0.0_f32, f32::max);
+        let Some(clip) = rect.inflate(margin).intersect(effective_clip) else {
+            return barrier;
+        };
+        clip
+    } else {
+        effective_clip
+    };
+    let offset = instance.widget.scroll_offset();
+    let child_origin = Point {
+        x: rect.x - offset.x,
+        y: rect.y - offset.y,
+    };
+    let child_mode = if mode == PaintMode::Absolute && absolute {
+        PaintMode::Flow
+    } else {
+        mode
+    };
+    for child in &instance.children {
+        barrier = find_pointer_barrier(
+            tree,
+            child,
+            painter,
+            child_origin,
+            child_clip,
+            viewport,
+            child_mode,
+        )
+        .or(barrier);
+    }
+    if mode == PaintMode::Absolute && absolute {
+        for child in &instance.children {
+            barrier = find_pointer_barrier(
+                tree,
+                child,
+                painter,
+                child_origin,
+                child_clip,
+                viewport,
+                PaintMode::Absolute,
+            )
+            .or(barrier);
+        }
+    }
+    barrier
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_instance(
     tree: &Tree,
     instance: &Instance,
@@ -347,6 +478,7 @@ fn paint_instance(
     focus: &mut FocusContext,
     out: &mut PaintOutputs,
     mode: PaintMode,
+    mut pointer: PointerContext,
 ) {
     #[cfg(test)]
     PAINT_INSTANCE_VISITS.with(|c| c.set(c.get() + 1));
@@ -379,7 +511,8 @@ fn paint_instance(
             .max(0.0),
     };
 
-    let absolute = instance.style.layout.position == Position::Absolute;
+    let absolute =
+        instance.style.layout.position == Position::Absolute && instance.widget.is_portal();
     if mode == PaintMode::Flow && absolute {
         return;
     }
@@ -389,6 +522,7 @@ fn paint_instance(
         clip
     };
 
+    pointer.enabled |= pointer.barrier == Some(instance.node_id);
     let paint_self = mode == PaintMode::Flow || absolute;
     let focus_visible = painter.focus_visible() || instance.widget.accepts_text_input();
     if paint_self && instance.widget.is_modal() && rect.overlaps(effective_clip) {
@@ -403,19 +537,26 @@ fn paint_instance(
         out.scrollables.clear();
         out.cursors.clear();
         out.hovers.clear();
+        out.pointer_barriers.clear();
         focus.counter = 0;
+    }
+    if paint_self && instance.widget.blocks_pointer() {
+        if let Some(visible) = rect.intersect(effective_clip) {
+            out.block_pointer(visible);
+        }
     }
     if paint_self
         && rect
             .inflate(instance.paint_overflow)
             .overlaps(effective_clip)
     {
+        painter.set_pointer_enabled(pointer.enabled);
         let focusable = instance.widget.focusable() && instance.widget.on_key().is_some();
         let states = instance
             .widget
             .style_state()
-            .with_hovered(painter.hovered(rect))
-            .with_pressed(painter.pressed(rect))
+            .with_hovered(pointer.enabled && painter.hovered(rect))
+            .with_pressed(pointer.enabled && painter.pressed(rect))
             .with_focused(focus_visible && focusable && focus.is_focused(instance.node_id));
         let colors = painter.color_scheme();
         let resolved = instance.style.resolve(states);
@@ -510,6 +651,7 @@ fn paint_instance(
         }
     }
 
+    painter.set_pointer_enabled(true);
     if paint_self {
         if let Some(visible) = rect.intersect(effective_clip) {
             #[cfg(feature = "perf-metrics")]
@@ -577,7 +719,7 @@ fn paint_instance(
     };
 
     // Portal layers escape ancestor clips.
-    let clips = instance.widget.clips_children() && mode != PaintMode::Absolute;
+    let clips = instance.widget.clips_children() && paint_self;
     // Give a child's own border/outline overflow (e.g. a focus ring)
     // headroom so this container's own tight-fit edge doesn't clip it.
     let margin = instance
@@ -621,6 +763,7 @@ fn paint_instance(
             focus,
             out,
             child_mode,
+            pointer,
         );
     }
     // Flow mode defers every absolute node, so an absolute layer's own
@@ -639,6 +782,7 @@ fn paint_instance(
                 focus,
                 out,
                 PaintMode::Absolute,
+                pointer,
             );
         }
     }
@@ -689,6 +833,7 @@ fn report_layout(tree: &Tree, instance: &Instance, parent_origin: Point) -> bool
 /// lists need [`Widget::key`](crate::Widget::key) for stable identity.
 pub struct Scene {
     modal: bool,
+    pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -704,6 +849,13 @@ pub struct Scene {
 }
 
 impl Scene {
+    fn pointer_barrier(&self, point: Point) -> Option<&PointerBarrier> {
+        self.pointer_barriers
+            .iter()
+            .rev()
+            .find(|barrier| barrier.rect.contains(point))
+    }
+
     /// Initial focus within the active modal, when it contains controls.
     pub fn modal_focus(&self) -> Option<usize> {
         (self.modal && !self.focusables.is_empty()).then_some(0)
@@ -737,6 +889,10 @@ impl Scene {
     pub fn hit_test(&self, point: Point) -> Option<&Rc<dyn Fn()>> {
         self.hits
             .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.hits),
+            )
             .rev()
             .find(|(rect, _)| rect.contains(point))
             .map(|(_, handler)| handler)
@@ -747,6 +903,10 @@ impl Scene {
     pub fn hit_test_at(&self, point: Point) -> Option<&Rc<dyn Fn(Point)>> {
         self.hits_at
             .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.hits_at),
+            )
             .rev()
             .find(|(rect, _)| rect.contains(point))
             .map(|(_, handler)| handler)
@@ -758,6 +918,10 @@ impl Scene {
         self.focusables
             .iter()
             .enumerate()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.focusables),
+            )
             .rev()
             .find(|(_, (_, rect, _, _))| rect.is_some_and(|rect| rect.contains(point)))
             .map(|(index, _)| index)
@@ -781,6 +945,10 @@ impl Scene {
         self.draggables
             .iter()
             .enumerate()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.draggables),
+            )
             .rev()
             .find(|(_, (visible, _, _, _))| visible.contains(point))
             .map(|(index, _)| index)
@@ -802,6 +970,10 @@ impl Scene {
     pub fn drag_start_at(&self, point: Point) -> Option<(Rect, Rc<dyn Fn(Point, Rect)>)> {
         self.drag_starts
             .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.drag_starts),
+            )
             .rev()
             .find(|(visible, _, _)| visible.contains(point))
             .map(|(_, rect, handler)| (*rect, handler.clone()))
@@ -811,6 +983,9 @@ impl Scene {
     /// The app chooses the regions; buttons, inputs, sliders and other pointer
     /// interactions inside them keep their normal behavior automatically.
     pub fn window_drag_at(&self, point: Point) -> Option<Rc<dyn Fn()>> {
+        if self.pointer_barrier(point).is_some() {
+            return None;
+        }
         if self
             .window_drag_content
             .iter()
@@ -838,6 +1013,10 @@ impl Scene {
         self.scrollables
             .iter()
             .enumerate()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.scrollables),
+            )
             .rev()
             .find(|(_, (rect, _, _, _))| rect.contains(point))
             .map(|(index, _)| index)
@@ -872,6 +1051,10 @@ impl Scene {
     pub fn cursor_hit_test(&self, point: Point) -> Option<CursorIcon> {
         self.cursors
             .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.cursors),
+            )
             .rev()
             .find(|(rect, _)| rect.contains(point))
             .map(|(_, icon)| *icon)
@@ -881,6 +1064,10 @@ impl Scene {
     pub fn hover_hit_test(&self, point: Point) -> Option<(Rect, Rc<dyn Fn(bool)>)> {
         self.hovers
             .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.hovers),
+            )
             .rev()
             .find(|(rect, _)| rect.contains(point))
             .map(|(rect, handler)| (*rect, handler.clone()))
@@ -1086,6 +1273,16 @@ impl Renderer {
             counter: 0,
         };
         drop(previous_order);
+        let mut barrier = None;
+        for mode in [PaintMode::Flow, PaintMode::Absolute] {
+            barrier =
+                find_pointer_barrier(&self.tree, instance, painter, self.origin, clip, clip, mode)
+                    .or(barrier);
+        }
+        let pointer = PointerContext {
+            barrier,
+            enabled: barrier.is_none(),
+        };
         for mode in [PaintMode::Flow, PaintMode::Absolute] {
             paint_instance(
                 &self.tree,
@@ -1097,6 +1294,7 @@ impl Renderer {
                 &mut focus,
                 &mut out,
                 mode,
+                pointer,
             );
         }
         painter.pop_clip();
@@ -1104,6 +1302,7 @@ impl Renderer {
             out.focusables.iter().map(|(id, _, _, _)| *id).collect();
         Some(Scene {
             modal: out.modal,
+            pointer_barriers: out.pointer_barriers,
             hits: out.hits,
             hits_at: out.hits_at,
             focusables: out.focusables,

@@ -57,6 +57,7 @@ pub struct SceneRecorder {
     pub pointer: Option<Point>,
     pub press_origin: Option<Point>,
     pub focus_visible: bool,
+    pointer_enabled: bool,
     animated: bool,
     started: RecorderInstant,
     frame_time: f32,
@@ -82,6 +83,7 @@ impl SceneRecorder {
             pointer: None,
             press_origin: None,
             focus_visible: true,
+            pointer_enabled: true,
             animated: false,
             started: RecorderInstant::now(),
             frame_time: 0.0,
@@ -110,6 +112,7 @@ impl SceneRecorder {
         self.scale = scale.max(0.01);
         self.color_scheme = color_scheme;
         self.animated = false;
+        self.pointer_enabled = true;
         self.frame_time = self.started.elapsed().as_secs_f32();
         self.blur_regions.clear();
         self.clips.clear();
@@ -258,7 +261,11 @@ impl Painter for SceneRecorder {
     }
 
     fn hovered(&self, rect: Rect) -> bool {
-        self.pointer.is_some_and(|point| rect.contains(point))
+        self.pointer_enabled && self.pointer.is_some_and(|point| rect.contains(point))
+    }
+
+    fn set_pointer_enabled(&mut self, enabled: bool) {
+        self.pointer_enabled = enabled;
     }
 
     fn pressed(&self, rect: Rect) -> bool {
@@ -1039,5 +1046,135 @@ mod tests {
         assert!(recorder.animated());
         recorder.begin(10, 10, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
         assert!(!recorder.animated());
+    }
+
+    #[test]
+    fn select_portals_suppress_hover_on_controls_behind_them() {
+        use creamui_core::{Renderer, Size, StateStyle, Styled};
+        use creamui_widgets::{RawButton, RawSwitch, RawView, Select, SelectController};
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(
+                creamui_theme::Theme::light(),
+            ));
+            let controller = SelectController::default();
+            controller.set_open(true);
+            let normal = Color::rgb(11, 22, 33);
+            let hover = Color::rgb(44, 55, 66);
+            let build = || {
+                Box::new(
+                    RawView::new(creamui_widgets::layout::column(0.0))
+                        .child(Box::new(
+                            Select::controlled(&["One", "Two"], controller.clone())
+                                .searchable()
+                                .width(176.0)
+                                .height(34.0),
+                        ))
+                        .child(Box::new(
+                            RawSwitch::new(false, normal, normal, Color::rgb(255, 255, 255), || {})
+                                .hover_colors(hover, hover),
+                        ))
+                        .child(Box::new(
+                            RawButton::new(
+                                creamui_core::Style::new().width(176.0).height(40.0),
+                                || {},
+                            )
+                            .background(normal)
+                            .hover_style(StateStyle::new().background(hover)),
+                        )),
+                ) as creamui_core::BoxedWidget
+            };
+            let mut renderer = Renderer::new();
+            let mut recorder = SceneRecorder::new();
+            let viewport = Size {
+                width: 320.0,
+                height: 240.0,
+            };
+            for y in [45.0, 65.0] {
+                recorder.pointer = Some(Point { x: 10.0, y });
+                recorder.begin(320, 240, 1.0, TRANSPARENT, ColorScheme::light());
+                renderer.render(build(), viewport, &mut recorder);
+                let colors: Vec<_> = recorder
+                    .current_list()
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        if let Primitive::Quad(quad) = &item.primitive {
+                            Some(quad.background)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert!(colors.contains(&normal));
+                assert!(!colors.contains(&hover));
+            }
+            controller.set_open(false);
+            recorder.begin(320, 240, 1.0, TRANSPARENT, ColorScheme::light());
+            renderer.render(build(), viewport, &mut recorder);
+            assert!(recorder.current_list().items.iter().any(|item| {
+                matches!(&item.primitive, Primitive::Quad(quad) if quad.background == hover)
+            }));
+        });
+    }
+
+    #[test]
+    fn resized_select_popups_use_opaque_surfaces_and_clip_search_and_options() {
+        use creamui_core::{Renderer, Size, Styled};
+        use creamui_widgets::{Select, SelectController};
+        creamui_reactive::with_context_scope(|| {
+            let theme = creamui_theme::Theme::light();
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+            let controller = SelectController::default();
+            controller.set_open(true);
+            let mut renderer = Renderer::new();
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(320, 300, 1.0, TRANSPARENT, ColorScheme::light());
+            let scene = renderer.render(
+                Box::new(
+                    Select::controlled(
+                        &[
+                            "One",
+                            "A very long option label that exceeds the field width",
+                            "Three",
+                            "Four",
+                            "Five",
+                            "Six",
+                            "Seven",
+                            "Eight",
+                        ],
+                        controller,
+                    )
+                    .searchable()
+                    .width(176.0)
+                    .height(34.0),
+                ),
+                Size {
+                    width: 320.0,
+                    height: 300.0,
+                },
+                &mut recorder,
+            );
+            let opaque = Color {
+                a: 255,
+                ..theme.surface_elevated
+            };
+            assert!(recorder.current_list().items.iter().any(|item| {
+                matches!(&item.primitive, Primitive::Quad(quad) if quad.background == opaque && quad.bounds == Bounds::new(0.0, 34.0, 176.0, 282.0))
+            }));
+            let search = scene.drag_hit_test(Point { x: 20.0, y: 50.0 }).unwrap();
+            let (rect, _) = scene.draggable_at(search).unwrap();
+            assert!(rect.width <= 170.0 && rect.x + rect.width <= 176.0);
+            let list = scene.scroll_hit_test(Point { x: 20.0, y: 100.0 }).unwrap();
+            let rect = scene.scroll_rect_at(list).unwrap();
+            assert!(rect.width <= 170.0 && rect.x + rect.width <= 176.0);
+            assert_eq!(rect.height, 204.0);
+            for item in &recorder.current_list().items {
+                if let Primitive::Text(text) = &item.primitive {
+                    if text.y as f32 >= 34.0 {
+                        assert!(item.clip.bounds.x1 <= 176.0);
+                    }
+                }
+            }
+        });
     }
 }

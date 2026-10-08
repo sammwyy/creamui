@@ -4,6 +4,11 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Select popups size their search field and option list to the resolved
+  trigger width and clip their contents. Popover surfaces and option rows
+  are opaque, and unmatched searches display an empty state. Popup layers
+  shield background click, hover, focus, drag, wheel, and cursor targets;
+  page scrollbars remain in their parent's paint layer.
 - Pointer and touch focus no longer draw keyboard focus outlines on controls.
   Keyboard navigation restores the indicator; text fields retain their caret
   and focus appearance after pointer activation.

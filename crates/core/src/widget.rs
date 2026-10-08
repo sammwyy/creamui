@@ -132,6 +132,7 @@ pub trait Painter {
     fn focus_visible(&self) -> bool {
         true
     }
+    fn set_pointer_enabled(&mut self, _enabled: bool) {}
     fn is_visible(&self, _rect: Rect) -> bool {
         true
     }
@@ -553,6 +554,14 @@ pub trait Widget {
         false
     }
 
+    fn blocks_pointer(&self) -> bool {
+        false
+    }
+
+    fn is_portal(&self) -> bool {
+        true
+    }
+
     fn paint_transition(
         &self,
         painter: &mut dyn Painter,
@@ -904,6 +913,12 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn has_transition(&self) -> bool {
         self.widget.has_transition()
+    }
+    fn blocks_pointer(&self) -> bool {
+        self.widget.blocks_pointer()
+    }
+    fn is_portal(&self) -> bool {
+        self.widget.is_portal()
     }
     fn paint_transition(
         &self,

@@ -77,6 +77,14 @@ with `state.value(target, transition, painter)`. Frames are requested only
 while the value is moving. Custom painters provide `Painter::frame_time`
 to enable transitions; painters without a clock use the target immediately.
 
+`Select::searchable()` keeps its search field and scrollable options inside
+the popup at the control's resolved width. Popovers use opaque surfaces and
+shield pointer events from the content behind them. Custom popup surfaces
+can implement `Widget::blocks_pointer`; custom painters honor
+`Painter::set_pointer_enabled` when determining hover and pressed state.
+Absolutely positioned widgets float in the portal pass by default;
+`Widget::is_portal` can return `false` for local decorations such as scrollbars.
+
 ## File pickers
 
 Desktop and browser `FilePicker` use native selection dialogs. Android uses

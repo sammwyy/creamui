@@ -12,7 +12,7 @@ use creamui_core::layout::{
 /// to dismiss reliably when its user clicks anywhere outside it.
 pub(crate) fn portal_dismiss_layer(on_dismiss: impl Fn() + 'static) -> BoxedWidget {
     const EXTENT: f32 = 1_000_000.0;
-    Box::new(RawButton::new(
+    Box::new(PortalDismissLayer(RawButton::new(
         Style {
             position: Position::Absolute,
             inset: creamui_core::layout::Rect {
@@ -28,7 +28,25 @@ pub(crate) fn portal_dismiss_layer(on_dismiss: impl Fn() + 'static) -> BoxedWidg
             ..Default::default()
         },
         on_dismiss,
-    ))
+    )))
+}
+
+struct PortalDismissLayer(RawButton);
+
+impl Widget for PortalDismissLayer {
+    fn style(&self) -> creamui_core::Style {
+        self.0.style()
+    }
+    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+        self.0.on_click()
+    }
+    fn blocks_pointer(&self) -> bool {
+        true
+    }
+    fn cursor_icon(&self) -> Option<CursorIcon> {
+        Some(CursorIcon::Default)
+    }
 }
 
 /// A full-parent dimmer used as the base of modal dialogs and transient
@@ -82,6 +100,9 @@ impl Overlay {
 }
 
 impl Widget for Overlay {
+    fn blocks_pointer(&self) -> bool {
+        true
+    }
     fn style(&self) -> creamui_core::Style {
         self.style.clone().into()
     }
@@ -130,6 +151,15 @@ impl Popover {
 }
 
 impl Widget for Popover {
+    fn blocks_pointer(&self) -> bool {
+        true
+    }
+    fn clips_children(&self) -> bool {
+        true
+    }
+    fn clip_corner_radius(&self) -> f32 {
+        self.theme.menu_radius
+    }
     fn style(&self) -> creamui_core::Style {
         self.style.clone().into()
     }
@@ -147,7 +177,14 @@ impl Widget for Popover {
                 self.theme.menu_radius + spread,
             );
         }
-        painter.fill_rect(rect, self.theme.surface_elevated, self.theme.menu_radius);
+        painter.fill_rect(
+            rect,
+            Color {
+                a: 255,
+                ..self.theme.surface_elevated
+            },
+            self.theme.menu_radius,
+        );
         painter.stroke_rect(rect, self.theme.border_strong, 1.0, self.theme.menu_radius);
     }
     fn children(&mut self) -> Vec<BoxedWidget> {

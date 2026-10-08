@@ -267,6 +267,17 @@ pub struct RuntimeNode {
 }
 
 impl RuntimeNode {
+    pub(super) fn is_portal(&self) -> bool {
+        self.layout_style.position == taffy::style::Position::Absolute
+            && match &self.kind {
+                NodeKind::Custom(custom) => custom
+                    .widget
+                    .as_ref()
+                    .is_none_or(|widget| widget.is_portal()),
+                _ => true,
+            }
+    }
+
     pub(super) fn new(id: RuntimeNodeId, kind: NodeKind, taffy_node: taffy::NodeId) -> Self {
         RuntimeNode {
             id,

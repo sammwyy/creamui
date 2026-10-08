@@ -420,9 +420,7 @@ impl Runtime {
                 let Some(node) = self.nodes.get(id) else {
                     continue;
                 };
-                if id != context_root
-                    && node.layout_style.position == taffy::style::Position::Absolute
-                {
+                if id != context_root && node.is_portal() {
                     absolute_roots.push(id);
                     continue;
                 }

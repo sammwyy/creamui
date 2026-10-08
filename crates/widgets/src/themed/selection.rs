@@ -138,25 +138,20 @@ impl Widget for Select {
             .enumerate()
             .filter(|(_, label)| query.is_empty() || label.to_ascii_lowercase().contains(&query))
             .collect();
-        let list_height = (matching.len() as f32 * option_height).min(204.0);
+        let list_height = (matching.len().max(1) as f32 * option_height).min(204.0);
         let popup_style = padding(
             Style {
                 position: Position::Absolute,
                 inset: creamui_core::layout::Rect {
                     left: LengthPercentageAuto::Length(0.0),
                     right: LengthPercentageAuto::Auto,
-                    top: LengthPercentageAuto::Length(40.0),
+                    top: LengthPercentageAuto::Percent(1.0),
                     bottom: LengthPercentageAuto::Auto,
                 },
                 size: creamui_core::layout::Size {
-                    width: match self.style.size.width {
-                        Dimension::Length(width) => Dimension::Length(width),
-                        _ => Dimension::Length(220.0),
-                    },
-                    // Keep the popup's opaque surface and hit region
-                    // deterministic across absolute-layout parents.
+                    width: Dimension::Percent(1.0),
                     height: Dimension::Length(
-                        list_height + if self.searchable { 46.0 } else { 6.0 },
+                        list_height + if self.searchable { 44.0 } else { 6.0 },
                     ),
                 },
                 ..column(2.0)
@@ -169,15 +164,31 @@ impl Widget for Select {
                 TextInput::controlled(&query_controller)
                     .placeholder("Search…")
                     .layout(Style {
-                        size: fixed(220.0, 36.0),
+                        size: creamui_core::layout::Size {
+                            width: Dimension::Percent(1.0),
+                            height: Dimension::Length(36.0),
+                        },
+                        flex_shrink: 0.0,
                         ..Default::default()
                     }),
             ));
         }
         let mut options = RawView::new(Style {
             flex_direction: creamui_core::layout::FlexDirection::Column,
+            flex_shrink: 0.0,
             ..Default::default()
         });
+        if matching.is_empty() {
+            options = options.child(Box::new(
+                RawText::new(
+                    "No results",
+                    self.theme.text_secondary,
+                    self.theme.typography.body,
+                )
+                .height(option_height)
+                .text_align(TextAlign::Center),
+            ));
+        }
         for (index, label) in matching {
             let selected = self.controller.selected() == index;
             let controller = self.controller.clone();
@@ -195,12 +206,16 @@ impl Widget for Select {
                     bottom: creamui_core::layout::LengthPercentage::Length(0.0),
                 },
                 align_items: Some(AlignItems::Center),
+                flex_shrink: 0.0,
                 ..Default::default()
             };
             let background = if selected {
                 self.theme.accent
             } else {
-                self.theme.surface_elevated
+                Color {
+                    a: 255,
+                    ..self.theme.surface_elevated
+                }
             };
             let foreground = if selected {
                 self.theme.selection_text
@@ -223,13 +238,20 @@ impl Widget for Select {
                 .hover_style(creamui_core::StateStyle::new().background(if selected {
                     self.theme.accent_hover
                 } else {
-                    self.theme.surface_hover
+                    Color {
+                        a: 255,
+                        ..self.theme.surface_hover
+                    }
                 }))
-                .focus_style(creamui_core::StateStyle::new().outline(self.theme.accent, 2.0));
+                .focus_style(creamui_core::StateStyle::new().border(self.theme.accent, 1.0));
             options = options.child(Box::new(item));
         }
         let list_style = Style {
-            size: fixed(220.0, list_height),
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(list_height),
+            },
+            flex_shrink: 0.0,
             ..Default::default()
         };
         popup = popup.child(Box::new(

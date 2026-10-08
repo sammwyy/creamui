@@ -414,6 +414,9 @@ impl RawScrollbar {
 }
 
 impl Widget for RawScrollbar {
+    fn is_portal(&self) -> bool {
+        false
+    }
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }

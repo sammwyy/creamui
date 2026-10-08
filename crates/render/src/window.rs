@@ -2196,6 +2196,18 @@ impl WindowState {
         self.pipeline.frame.borrow_mut().recorder.press_origin = origin;
     }
 
+    fn set_focus_visible(&mut self, visible: bool) {
+        let changed = {
+            let mut frame = self.pipeline.frame.borrow_mut();
+            let changed = frame.recorder.focus_visible != visible;
+            frame.recorder.focus_visible = visible;
+            changed
+        };
+        if changed {
+            self.pipeline.invalidate_paint();
+        }
+    }
+
     fn set_ime_allowed(&mut self, allowed: bool) {
         if self.ime_allowed == allowed {
             return;
@@ -2407,6 +2419,7 @@ impl WindowState {
     }
 
     fn handle_key_input(&mut self, key: KeyInput) {
+        self.set_focus_visible(true);
         if let Some(runtime) = self.runtime() {
             if key.key == Key::Tab {
                 let text_input = runtime.with_mut(|runtime| {
@@ -2559,6 +2572,7 @@ impl WindowState {
                 serial,
             } => {
                 self.last_input_serial.set(serial);
+                self.set_focus_visible(false);
                 self.set_press_origin(Some(self.pointer_pos));
                 self.pipeline.invalidate_paint();
                 if let Some(direction) = self.resize_direction() {
@@ -4215,6 +4229,52 @@ mod tests {
     }
 
     #[test]
+    fn pointer_focus_hides_control_outlines_and_keyboard_focus_restores_them() {
+        let accent = Color::rgb(13, 24, 35);
+        let mut harness = WindowEventHarness::new(move |_| {
+            Box::new(creamui_widgets::RawSwitch::new(
+                false,
+                accent,
+                Color::rgb(40, 40, 40),
+                Color::rgb(255, 255, 255),
+                || {},
+            ))
+        });
+        let has_outline = |harness: &WindowEventHarness| {
+            harness.state.pipeline.frame.borrow().presented.as_ref().unwrap().items.iter().any(|item| {
+                matches!(&item.primitive, crate::display_list::Primitive::Quad(quad) if quad.border_color == accent)
+            })
+        };
+        harness.state.pointer_pos = Point { x: 10.0, y: 10.0 };
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        harness.state.redraw();
+        assert_eq!(harness.state.pipeline.focused.get(), Some(0));
+        assert!(!has_outline(&harness));
+        harness.send(WindowEvent::MouseInput {
+            pressed: false,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        harness.key(KeyInput {
+            key: Key::Tab,
+            modifiers: Modifiers::default(),
+        });
+        harness.state.redraw();
+        assert!(has_outline(&harness));
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Left,
+            serial: None,
+        });
+        harness.state.redraw();
+        assert!(!has_outline(&harness));
+    }
+
+    #[test]
     fn ime_changes_poll_insets_until_the_animation_settles() {
         let mut harness = WindowEventHarness::new(|_| {
             Box::new(creamui_widgets::RawView::new(
@@ -5791,8 +5851,12 @@ mod tests {
 
     #[test]
     fn compositor_disconnect_errors_are_clean_event_loop_exits() {
-        assert!(event_loop_connection_closed("Io error: Broken pipe (os error 32)"));
+        assert!(event_loop_connection_closed(
+            "Io error: Broken pipe (os error 32)"
+        ));
         assert!(event_loop_connection_closed("Connection reset by peer"));
-        assert!(!event_loop_connection_closed("failed to initialize renderer"));
+        assert!(!event_loop_connection_closed(
+            "failed to initialize renderer"
+        ));
     }
 }

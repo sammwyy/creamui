@@ -129,6 +129,9 @@ pub trait Painter {
     fn pressed(&self, _rect: Rect) -> bool {
         false
     }
+    fn focus_visible(&self) -> bool {
+        true
+    }
     fn is_visible(&self, _rect: Rect) -> bool {
         true
     }

@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Pointer and touch focus no longer draw keyboard focus outlines on controls.
+  Keyboard navigation restores the indicator; text fields retain their caret
+  and focus appearance after pointer activation.
 - Checkboxes and switches animate checked-state changes with a configurable
   160 ms ease-out transition. Switch thumbs slide as track colors blend;
   checkbox fills fade and checks reveal progressively. Renderer-owned

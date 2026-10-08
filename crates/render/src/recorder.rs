@@ -56,6 +56,7 @@ pub struct SceneRecorder {
     color_scheme: ColorScheme,
     pub pointer: Option<Point>,
     pub press_origin: Option<Point>,
+    pub focus_visible: bool,
     animated: bool,
     started: RecorderInstant,
     frame_time: f32,
@@ -80,6 +81,7 @@ impl SceneRecorder {
             color_scheme: ColorScheme::default(),
             pointer: None,
             press_origin: None,
+            focus_visible: true,
             animated: false,
             started: RecorderInstant::now(),
             frame_time: 0.0,
@@ -247,6 +249,10 @@ impl SceneRecorder {
 }
 
 impl Painter for SceneRecorder {
+    fn focus_visible(&self) -> bool {
+        self.focus_visible
+    }
+
     fn color_scheme(&self) -> ColorScheme {
         self.color_scheme
     }

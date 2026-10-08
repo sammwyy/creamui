@@ -390,6 +390,7 @@ fn paint_instance(
     };
 
     let paint_self = mode == PaintMode::Flow || absolute;
+    let focus_visible = painter.focus_visible() || instance.widget.accepts_text_input();
     if paint_self && instance.widget.is_modal() && rect.overlaps(effective_clip) {
         out.modal = true;
         out.hits.clear();
@@ -415,7 +416,7 @@ fn paint_instance(
             .style_state()
             .with_hovered(painter.hovered(rect))
             .with_pressed(painter.pressed(rect))
-            .with_focused(focusable && focus.is_focused(instance.node_id));
+            .with_focused(focus_visible && focusable && focus.is_focused(instance.node_id));
         let colors = painter.color_scheme();
         let resolved = instance.style.resolve(states);
         let radius = resolved.paint.corner_radius.unwrap_or(0.0);
@@ -491,7 +492,7 @@ fn paint_instance(
     if paint_self && instance.widget.focusable() {
         if let Some(on_key) = instance.widget.on_key() {
             let visible = rect.intersect(effective_clip);
-            if visible.is_some() && focus.is_focused(instance.node_id) {
+            if focus_visible && visible.is_some() && focus.is_focused(instance.node_id) {
                 instance.widget.paint_focused_overlay_with_content(
                     painter,
                     rect,

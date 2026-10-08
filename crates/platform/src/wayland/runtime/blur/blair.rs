@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use blair_blur_protocol::client::{
+use crate::wayland::blair_protocol::blur::client::{
     blair_blur_manager_v1::BlairBlurManagerV1, blair_blur_v1::BlairBlurV1,
 };
 use smithay_client_toolkit::compositor::CompositorState;

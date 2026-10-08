@@ -1,5 +1,8 @@
 pub mod runtime;
 
+#[cfg(any(feature = "blur-blair", feature = "window-integration-blair"))]
+pub(crate) mod blair_protocol;
+
 use crate::{InputSerial, LogicalSize, PopupOptions, PopupPlacement};
 use smithay_client_toolkit::{
     compositor::{Surface, SurfaceData},

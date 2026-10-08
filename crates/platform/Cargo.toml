@@ -24,20 +24,20 @@ windows = ["winit-adapter"]
 # Neither is enabled by `wayland` itself; `set_blur_region` stays a no-op
 # without at least one of these on.
 blur-kwin = ["wayland", "dep:wayland-protocols-plasma"]
-blur-blair = ["wayland", "dep:blair-blur-protocol"]
+blur-blair = ["wayland", "dep:wayland-backend", "dep:wayland-scanner"]
 # Opt-in Blair window integration. The public API remains compositor-neutral
 # so other protocol backends can be added beside this one later.
-window-integration-blair = ["wayland", "dep:blair-window-integration-protocol"]
+window-integration-blair = ["wayland", "dep:wayland-backend", "dep:wayland-scanner"]
 
 [dependencies]
 raw-window-handle = { workspace = true }
 winit = { workspace = true, optional = true }
 smithay-client-toolkit = { version = "0.19", optional = true }
 wayland-client = { version = "0.31", features = ["system"], optional = true }
+wayland-backend = { version = "0.3", optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
-blair-blur-protocol = { path = "../../../blair/crates/blur-protocol", features = ["client"], optional = true }
-blair-window-integration-protocol = { path = "../../../blair/crates/window-integration-protocol", features = ["client"], optional = true }
+wayland-scanner = { version = "0.31", optional = true }
 xkbcommon = { version = "0.8", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

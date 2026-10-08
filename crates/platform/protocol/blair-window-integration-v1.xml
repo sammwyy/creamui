@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="blair_window_integration_unstable_v1">
+  <interface name="blair_window_integration_manager_v1" version="1">
+    <description summary="optional integration for a client window">
+      Clients opt in per wl_surface. The compositor remains the final policy
+      authority.
+    </description>
+
+    <request name="get_integration">
+      <arg name="id" type="new_id" interface="blair_window_integration_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <request name="unset">
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="blair_window_integration_v1" version="1">
+    <enum name="mode">
+      <entry name="none" value="0"/>
+      <entry name="hybrid" value="1"/>
+    </enum>
+
+    <request name="set_hybrid">
+      <arg name="enabled" type="int" summary="non-zero requests hybrid controls"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+    <event name="mode">
+      <arg name="mode" type="uint" enum="mode" summary="effective compositor-selected mode"/>
+    </event>
+    <event name="controls">
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <description summary="client-local rectangle reserved for compositor controls; zero size means none"/>
+    </event>
+  </interface>
+</protocol>

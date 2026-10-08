@@ -11,7 +11,7 @@ use super::{DispatchState, IntegrationRequest, NativeWindow, WindowId};
 mod blair {
     use std::sync::Mutex;
 
-    use blair_window_integration_protocol::client::{
+    use crate::wayland::blair_protocol::window_integration::client::{
         blair_window_integration_manager_v1::BlairWindowIntegrationManagerV1,
         blair_window_integration_v1::{BlairWindowIntegrationV1, Event, Mode},
     };
@@ -130,7 +130,6 @@ mod blair {
                         },
                     );
                 }
-                _ => {}
             }
         }
     }

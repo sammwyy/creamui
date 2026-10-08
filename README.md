@@ -146,6 +146,7 @@ release APK commands, secure keystore handling, and Windows desktop builds.
 |---|---|
 | `creamui` | Main facade crate; the recommended starting point |
 | `creamui-reactive` | Signals and reactive effects |
+| `creamui-router` | Declarative routes, reactive hooks, browser and memory history |
 | `creamui-theme` | Default theme, light palette, and design tokens |
 | `creamui-core` | Widget, painter, scene, and layout abstractions |
 | `creamui-widgets` | Raw and themed components |

@@ -1,0 +1,16 @@
+[package]
+name = "creamui-router-browser-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+creamui-router = { path = "../.." }
+creamui-core = { path = "../../../core" }
+creamui-reactive = { path = "../../../reactive" }
+wasm-bindgen = "0.2"

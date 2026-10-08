@@ -34,6 +34,13 @@ pub use creamui_render::{
 pub use creamui_render::{run_android, AndroidApp};
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use creamui_render::{TrayBuilder, TrayIcon};
+#[cfg(feature = "router")]
+pub use creamui_router as router;
+#[cfg(feature = "router")]
+pub use creamui_router::{
+    use_location, use_params, use_query_params, use_router, Location, Params, RouteMatch, Router,
+    RouterBuilder, RouterError, RouterOutlet, RouterProvider,
+};
 pub use creamui_theme::{
     use_theme, AccentPreset, AppearanceSelection, Color, ColorScheme, ResolvedAppearance, Theme,
     ThemeDefinition, ThemeProvider, Typography,

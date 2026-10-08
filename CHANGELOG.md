@@ -4,6 +4,12 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Add `creamui-router` with declarative routes, scoped providers and outlets,
+  reactive location/params/query hooks, browser and memory history, and Android
+  deep links and history restoration. Android root Back backgrounds the task
+  so its native runtime can resume. Add a cross-platform sidebar example and
+  browser/device integration checks.
+
 - Select popups size their search field and option list to the resolved
   trigger width and clip their contents. Popover surfaces and option rows
   are opaque, and unmatched searches display an empty state. Popup layers

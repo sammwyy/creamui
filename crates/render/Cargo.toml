@@ -31,6 +31,7 @@ perf-metrics = ["creamui-core/perf-metrics", "dep:tracing"]
 system-theme = ["dep:creamui-theme-loader"]
 # Installs `env_logger` so `RUST_LOG` and `CUI_DEBUG=1` print engine logs.
 logger = ["dep:env_logger"]
+router = ["dep:creamui-router"]
 
 [dependencies]
 creamui-core = { workspace = true }
@@ -38,6 +39,7 @@ creamui-theme = { workspace = true }
 creamui-theme-loader = { workspace = true, optional = true }
 creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
+creamui-router = { workspace = true, optional = true }
 creamui-tray = { workspace = true, optional = true }
 creamui-platform = { version = "0.2.0", path = "../platform", default-features = false }
 tiny-skia = { workspace = true }

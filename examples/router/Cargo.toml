@@ -1,0 +1,34 @@
+[package]
+name = "router"
+publish = false
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "creamui_router_example"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["platform-winit"]
+platform-winit = ["creamui/platform-winit"]
+platform-android = ["creamui/platform-android"]
+
+[dependencies]
+creamui = { path = "../../crates/creamui", default-features = false, features = ["router"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+
+[package.metadata.android]
+package = "dev.creamui.routerexample"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "CreamUI Router"
+
+[package.metadata.android.application.activity]
+launch_mode = "singleTop"

@@ -17,6 +17,7 @@ image = ["dep:creamui-image"]
 image-jpeg = ["image", "creamui-image/jpeg"]
 image-webp = ["image", "creamui-image/webp"]
 jsx = ["dep:creamui-jsx", "dep:creamui-macros"]
+router = ["dep:creamui-router", "creamui-render/router"]
 abi = ["dep:creamui-abi"]
 dynamic = ["abi", "jsx", "dep:creamui-dynamic"]
 ffi = ["abi", "dep:creamui_ffi"]
@@ -33,11 +34,12 @@ platform-android = ["creamui-platform/android", "creamui-render/platform-android
 perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics", "creamui-devtools?/perf-metrics"]
 system-theme = ["creamui-render/system-theme", "dep:creamui-theme-loader"]
 logger = ["creamui-render/logger"]
-full = ["image-jpeg", "image-webp", "jsx", "dynamic", "ffi", "devtools", "tray", "logger"]
+full = ["image-jpeg", "image-webp", "jsx", "router", "dynamic", "ffi", "devtools", "tray", "logger"]
 
 [dependencies]
 creamui-core = { workspace = true }
 creamui-reactive = { workspace = true }
+creamui-router = { workspace = true, optional = true }
 creamui-platform = { version = "0.2.0", path = "../platform", default-features = false }
 creamui-render = { version = "0.2.0", path = "../render", default-features = false }
 creamui-devtools = { workspace = true, optional = true }

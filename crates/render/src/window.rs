@@ -669,6 +669,8 @@ impl FrameState {
 /// Coalesces invalidations into at most one build, layout, record and
 /// present per compositor frame.
 struct Pipeline {
+    #[cfg(feature = "router")]
+    router_host: creamui_router::RouterHost,
     content_blur: bool,
     applied_blur: RefCell<Vec<(i32, i32, i32, i32)>>,
     frame: RefCell<FrameState>,
@@ -791,7 +793,11 @@ impl Pipeline {
             &self.chrome.mode,
             &self.window_drag,
             &self.decorations,
-            f,
+            || {
+                #[cfg(feature = "router")]
+                creamui_reactive::provide_context(self.router_host.clone());
+                f()
+            },
         )
     }
 
@@ -1857,6 +1863,8 @@ impl AppBuilder {
 
     #[cfg(all(feature = "platform-android", target_os = "android"))]
     pub fn run_android(self, app: AndroidApp) {
+        #[cfg(feature = "router")]
+        creamui_router::android::install(app.clone());
         run_windows(
             self.specs,
             self.on_panic,
@@ -2758,6 +2766,26 @@ impl WindowState {
                     self.pipeline.invalidate_paint();
                     return;
                 }
+                #[cfg(feature = "router")]
+                if event.key == PlatformKey::Back && self.pipeline.router_host.router().is_some() {
+                    match self.pipeline.router_host.back() {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            #[cfg(target_os = "android")]
+                            if let Some(router) = self.pipeline.router_host.router() {
+                                if let Err(error) =
+                                    creamui_router::android::background_task(&router)
+                                {
+                                    log::warn!("router root Back failed: {error}");
+                                }
+                            }
+                            #[cfg(not(target_os = "android"))]
+                            self.close_requested.set(true);
+                        }
+                        Err(error) => log::warn!("router back failed: {error}"),
+                    }
+                    return;
+                }
                 if event.key == PlatformKey::F3 {
                     let toggled = self
                         .pipeline
@@ -3319,6 +3347,10 @@ impl ApplicationHandler<AppEvent> for AppHandler {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        #[cfg(feature = "router")]
+        for state in self.windows.values() {
+            state.pipeline.router_host.poll();
+        }
         // Closes before creates: a replacement popup must not be requested
         // while the one it's replacing is still alive server-side.
         self.close_requested_windows(event_loop);
@@ -3335,6 +3367,23 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             .values_mut()
             .filter_map(|state| state.tick(now))
             .min();
+        // A reused NativeActivity exposes new Intent data through setIntent,
+        // but winit has no onNewIntent event. Poll only while the app is active.
+        #[cfg(all(feature = "router", target_os = "android"))]
+        let next_wake = if !self.suspended
+            && self
+                .windows
+                .values()
+                .any(|state| state.pipeline.router_host.router().is_some())
+        {
+            Some(
+                next_wake
+                    .unwrap_or(now + Duration::from_millis(250))
+                    .min(now + Duration::from_millis(250)),
+            )
+        } else {
+            next_wake
+        };
         event_loop.set_control_flow(match next_wake {
             Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
@@ -3637,6 +3686,8 @@ fn build_window_spec(
         }
     });
     let pipeline = Rc::new(Pipeline {
+        #[cfg(feature = "router")]
+        router_host: creamui_router::RouterHost::default(),
         content_blur: options.blur == Some(BlurRegion::Content),
         applied_blur: RefCell::new(Vec::new()),
         frame: RefCell::new(FrameState {
@@ -4226,6 +4277,39 @@ mod tests {
 
         assert!(!harness.state.ime_allowed);
         assert_eq!(harness.state.pipeline.focused.get(), None);
+    }
+
+    #[cfg(feature = "router")]
+    #[test]
+    fn router_back_dismisses_ime_then_pops_then_closes_at_root() {
+        let router = creamui_router::Router::memory("/")
+            .dev_override(false)
+            .build()
+            .unwrap();
+        let provider = creamui_router::RouterProvider::new(router.clone());
+        let mut harness = WindowEventHarness::new(move |_| {
+            provider.render(|| {
+                Box::new(creamui_widgets::RawView::new(creamui_core::Style::default()))
+                    as BoxedWidget
+            })
+        });
+        router.navigate("/details").unwrap();
+        harness.state.ime_allowed = true;
+        let back = || {
+            WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+                key: PlatformKey::Back,
+                pressed: true,
+                synthetic: false,
+            })
+        };
+        harness.send(back());
+        assert!(!harness.state.ime_allowed);
+        assert_eq!(router.url(), "/details");
+        harness.send(back());
+        assert_eq!(router.url(), "/");
+        assert!(!harness.state.close_requested.get());
+        harness.send(back());
+        assert!(harness.state.close_requested.get());
     }
 
     #[test]

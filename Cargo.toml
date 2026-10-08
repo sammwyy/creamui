@@ -4,6 +4,7 @@ members = [
     "crates/bench",
     "crates/creamui",
     "crates/reactive",
+    "crates/router",
     "crates/core",
     "crates/theme",
     "crates/theme-loader",
@@ -32,6 +33,7 @@ members = [
     "examples/images",
     "examples/facade",
     "examples/hooks",
+    "examples/router",
     "examples/fonts",
     "examples/flex",
     "examples/grid",
@@ -55,6 +57,7 @@ homepage = "https://github.com/sammwyy/creamui"
 
 [workspace.dependencies]
 creamui-reactive = { version = "0.2.0", path = "crates/reactive" }
+creamui-router = { version = "0.2.0", path = "crates/router" }
 creamui = { version = "0.2.0", path = "crates/creamui" }
 creamui-core = { version = "0.2.0", path = "crates/core" }
 creamui-theme = { version = "0.2.0", path = "crates/theme" }

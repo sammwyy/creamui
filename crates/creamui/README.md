@@ -14,6 +14,7 @@ creamui = { version = "0.1", features = ["jsx", "image"] }
 | `image` | `creamui-image` with PNG decoding |
 | `image-jpeg` / `image-webp` | JPEG or WebP decoding, respectively |
 | `jsx` | JSX macros and runtime support |
+| `router` | Declarative routing, provider/outlet, reactive hooks and platform history |
 | `abi` | C-compatible ABI types |
 | `dynamic` | Dynamic runtime client and ABI types |
 | `ffi` | Shared-library C ABI and ABI types |

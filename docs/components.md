@@ -54,6 +54,29 @@ Controllers are available for controls whose interaction state is larger than on
 
 Buttons, checkboxes, switches, and sliders support focus navigation and keyboard activation. Text inputs support editing, selection, and caret state. Use Tab and Shift+Tab to move through focusable controls.
 
+`Checkbox`, `Switch`, and their `Raw*` equivalents animate checked-state
+changes by default with a 160 ms ease-out transition. The renderer retains
+the visual state across reactive rebuilds, and rapid toggles reverse from
+the current position. Initial mounting uses the supplied state immediately.
+
+Use `.transition(...)` to adjust the duration and easing or disable animation:
+
+```rust
+use creamui_core::{Easing, Transition};
+use creamui_widgets::{Checkbox, Switch};
+use std::time::Duration;
+
+let switch = Switch::new(false, || {})
+    .transition(Transition::new(Duration::from_millis(200)).easing(Easing::Linear));
+let checkbox = Checkbox::new(true, || {}).transition(Transition::NONE);
+```
+
+Custom widgets can implement `Widget::has_transition` and
+`Widget::paint_transition`, sampling the renderer-owned `TransitionState`
+with `state.value(target, transition, painter)`. Frames are requested only
+while the value is moving. Custom painters provide `Painter::frame_time`
+to enable transitions; painters without a clock use the target immediately.
+
 ## File pickers
 
 Desktop and browser `FilePicker` use native selection dialogs. Android uses

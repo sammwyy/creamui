@@ -15,6 +15,11 @@ impl Checkbox {
         Checkbox { inner }
     }
 
+    pub fn transition(mut self, transition: creamui_core::Transition) -> Self {
+        self.inner = self.inner.transition(transition);
+        self
+    }
+
     pub fn customize(mut self, customize: impl FnOnce(&mut RawCheckbox)) -> Self {
         customize(&mut self.inner);
         self
@@ -37,6 +42,19 @@ impl Widget for Checkbox {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect);
+    }
+
+    fn has_transition(&self) -> bool {
+        self.inner.has_transition()
+    }
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        state: &mut creamui_core::TransitionState,
+    ) {
+        self.inner.paint_transition(painter, rect, content, state);
     }
 
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
@@ -101,6 +119,11 @@ impl Switch {
         }
     }
 
+    pub fn transition(mut self, transition: creamui_core::Transition) -> Self {
+        self.inner = self.inner.transition(transition);
+        self
+    }
+
     pub fn customize(mut self, customize: impl FnOnce(&mut RawSwitch)) -> Self {
         customize(&mut self.inner);
         self
@@ -122,6 +145,19 @@ impl Widget for Switch {
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         self.inner.paint(painter, rect)
     }
+    fn has_transition(&self) -> bool {
+        self.inner.has_transition()
+    }
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        content: Rect,
+        state: &mut creamui_core::TransitionState,
+    ) {
+        self.inner.paint_transition(painter, rect, content, state);
+    }
+
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         self.inner.on_click()
     }

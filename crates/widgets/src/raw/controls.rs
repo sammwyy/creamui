@@ -7,6 +7,7 @@ pub struct RawCheckbox {
     pub style: creamui_core::Style,
     pub box_size: f32,
     pub checked: bool,
+    pub transition: creamui_core::Transition,
     pub fill_color: Color,
     pub check_color: Color,
     pub on_click: Rc<dyn Fn()>,
@@ -32,6 +33,7 @@ impl RawCheckbox {
             .border(border_color, 1.5),
             box_size,
             checked,
+            transition: creamui_core::Transition::default(),
             fill_color,
             check_color: Color::rgb(255, 255, 255),
             on_click: Rc::new(on_click),
@@ -42,6 +44,54 @@ impl RawCheckbox {
     pub fn check_color(mut self, color: Color) -> Self {
         self.check_color = color;
         self
+    }
+
+    pub fn transition(mut self, transition: creamui_core::Transition) -> Self {
+        self.transition = transition;
+        self
+    }
+
+    fn paint_progress(&self, painter: &mut dyn Painter, rect: Rect, progress: f32) {
+        let radius = self.style.paint.corner_radius.unwrap_or(0.0);
+        let fade = |color: Color, opacity: f32| Color {
+            a: (color.a as f32 * opacity).round() as u8,
+            ..color
+        };
+        if self.checked && progress < 1.0 {
+            if let Some(border) = self.style.paint.border {
+                painter.stroke_rect_inside(
+                    rect,
+                    fade(
+                        border.color.resolve(&painter.color_scheme()),
+                        1.0 - progress,
+                    ),
+                    border.width,
+                    radius,
+                );
+            }
+        }
+        if progress <= 0.0 {
+            return;
+        }
+        painter.fill_rect(rect, fade(self.fill_color, progress), radius);
+        let p = |x: f32, y: f32| Point {
+            x: rect.x + rect.width * x,
+            y: rect.y + rect.height * y,
+        };
+        let start = p(0.25, 0.5);
+        let middle = p(0.43, 0.68);
+        let end = p(0.76, 0.32);
+        let interpolate = |from: Point, to: Point, amount: f32| Point {
+            x: from.x + (to.x - from.x) * amount,
+            y: from.y + (to.y - from.y) * amount,
+        };
+        let first = (progress / 0.35).min(1.0);
+        let second = ((progress - 0.35) / 0.65).clamp(0.0, 1.0);
+        let check_color = fade(self.check_color, progress);
+        painter.stroke_line(start, interpolate(start, middle, first), check_color, 1.8);
+        if second > 0.0 {
+            painter.stroke_line(middle, interpolate(middle, end, second), check_color, 1.8);
+        }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -73,19 +123,26 @@ impl Widget for RawCheckbox {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        if self.checked {
-            painter.fill_rect(
-                rect,
-                self.fill_color,
-                self.style.paint.corner_radius.unwrap_or(0.0),
-            );
-            let p = |x: f32, y: f32| Point {
-                x: rect.x + rect.width * x,
-                y: rect.y + rect.height * y,
-            };
-            painter.stroke_line(p(0.25, 0.5), p(0.43, 0.68), self.check_color, 1.8);
-            painter.stroke_line(p(0.43, 0.68), p(0.76, 0.32), self.check_color, 1.8);
-        }
+        self.paint_progress(painter, rect, if self.checked { 1.0 } else { 0.0 });
+    }
+
+    fn has_transition(&self) -> bool {
+        true
+    }
+
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        _: Rect,
+        state: &mut creamui_core::TransitionState,
+    ) {
+        let progress = state.value(
+            if self.checked { 1.0 } else { 0.0 },
+            self.transition,
+            painter,
+        );
+        self.paint_progress(painter, rect, progress);
     }
 
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
@@ -105,6 +162,7 @@ impl Widget for RawCheckbox {
 pub struct RawSwitch {
     pub style: creamui_core::Style,
     pub checked: bool,
+    pub transition: creamui_core::Transition,
     pub on_color: Color,
     pub off_color: Color,
     pub thumb_color: Color,
@@ -136,6 +194,7 @@ impl RawSwitch {
             }
             .into(),
             checked,
+            transition: creamui_core::Transition::default(),
             on_color,
             off_color,
             thumb_color,
@@ -174,6 +233,52 @@ impl RawSwitch {
         self
     }
 
+    pub fn transition(mut self, transition: creamui_core::Transition) -> Self {
+        self.transition = transition;
+        self
+    }
+
+    fn paint_progress(&self, painter: &mut dyn Painter, rect: Rect, progress: f32) {
+        let color = |on: Color, off: Color| off.mix(on, progress);
+        let base = color(self.on_color, self.off_color);
+        let hover = color(
+            self.hover_on_color.unwrap_or(self.on_color),
+            self.hover_off_color.unwrap_or(self.off_color),
+        );
+        let pressed = color(
+            self.pressed_on_color
+                .or(self.hover_on_color)
+                .unwrap_or(self.on_color),
+            self.pressed_off_color
+                .or(self.hover_off_color)
+                .unwrap_or(self.off_color),
+        );
+        let track_color = if !self.disabled && painter.pressed(rect) {
+            pressed
+        } else if !self.disabled && painter.hovered(rect) {
+            hover
+        } else {
+            base
+        };
+        let d = (rect.height - self.thumb_inset * 2.0).max(0.0);
+        let travel = (rect.width - d - self.thumb_inset * 2.0).max(0.0);
+        painter.fill_rect(
+            rect,
+            track_color,
+            self.track_radius.unwrap_or(rect.height / 2.0),
+        );
+        painter.fill_rect(
+            Rect {
+                x: rect.x + self.thumb_inset + travel * progress,
+                y: rect.y + self.thumb_inset,
+                width: d,
+                height: d,
+            },
+            self.thumb_color,
+            self.thumb_radius.unwrap_or(d / 2.0),
+        );
+    }
+
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -197,49 +302,26 @@ impl Widget for RawSwitch {
         creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let base = if self.checked {
-            self.on_color
-        } else {
-            self.off_color
-        };
-        let hover = if self.checked {
-            self.hover_on_color
-        } else {
-            self.hover_off_color
-        };
-        let pressed = if self.checked {
-            self.pressed_on_color
-        } else {
-            self.pressed_off_color
-        };
-        let track_color = if !self.disabled && painter.pressed(rect) {
-            pressed.or(hover).unwrap_or(base)
-        } else if !self.disabled && painter.hovered(rect) {
-            hover.unwrap_or(base)
-        } else {
-            base
-        };
-        let d = (rect.height - self.thumb_inset * 2.0).max(0.0);
-        painter.fill_rect(
-            rect,
-            track_color,
-            self.track_radius.unwrap_or(rect.height / 2.0),
-        );
-        painter.fill_rect(
-            Rect {
-                x: if self.checked {
-                    rect.x + rect.width - d - self.thumb_inset
-                } else {
-                    rect.x + self.thumb_inset
-                },
-                y: rect.y + self.thumb_inset,
-                width: d,
-                height: d,
-            },
-            self.thumb_color,
-            self.thumb_radius.unwrap_or(d / 2.0),
-        );
+        self.paint_progress(painter, rect, if self.checked { 1.0 } else { 0.0 });
     }
+    fn has_transition(&self) -> bool {
+        true
+    }
+    fn paint_transition(
+        &self,
+        painter: &mut dyn Painter,
+        rect: Rect,
+        _: Rect,
+        state: &mut creamui_core::TransitionState,
+    ) {
+        let progress = state.value(
+            if self.checked { 1.0 } else { 0.0 },
+            self.transition,
+            painter,
+        );
+        self.paint_progress(painter, rect, progress);
+    }
+
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         (!self.disabled).then(|| self.on_click.clone())
     }

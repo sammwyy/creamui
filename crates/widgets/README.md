@@ -4,6 +4,10 @@ The raw and themed component library for CreamUI.
 
 Use themed widgets such as `Button`, `TextInput`, `ScrollView`, and `ColorPicker` for the standard CreamUI appearance. Use the `Raw*` equivalents when your application needs to provide colors, radii, and interaction details directly.
 
+`Checkbox` and `Switch`, including their raw versions, animate state changes
+automatically. Configure them with `.transition(creamui_core::Transition::new(duration))`
+or disable animation with `.transition(creamui_core::Transition::NONE)`.
+
 `VirtualList` builds only visible rows. See `examples/virtual-list` for a large, mixed-height list.
 `VirtualTable` uses the same `VirtualListState` and loads cell text only for
 visible rows while keeping the header fixed above the scrolling body.

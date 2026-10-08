@@ -4,6 +4,12 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Checkboxes and switches animate checked-state changes with a configurable
+  160 ms ease-out transition. Switch thumbs slide as track colors blend;
+  checkbox fills fade and checks reveal progressively. Renderer-owned
+  `TransitionState` survives rebuilds and keyed reordering, reverses without
+  jumps, and requests frames only while moving. `Transition::NONE` disables
+  animation, and custom widgets can use the same transition hooks.
 - `View::new` defers mounting until a `MountCx` is available. `MountedView`
   owns a stable runtime root and binding scope, releases both on disposal or
   drop, and cleans up a partially mounted view after a panic. Deferred and

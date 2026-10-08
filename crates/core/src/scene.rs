@@ -163,9 +163,14 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
     }
 
     let reports_layout = reports_layout || new_children.iter().any(|child| child.reports_layout);
+    let transition = if old.widget.has_transition() && widget.has_transition() {
+        old.transition
+    } else {
+        RefCell::default()
+    };
     Instance {
         widget,
-        transition: old.transition,
+        transition,
         style: new_style,
         has_measure: new_has_measure,
         measure_fingerprint: new_measure_fingerprint,

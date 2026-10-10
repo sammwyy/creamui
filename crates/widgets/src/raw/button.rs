@@ -12,6 +12,7 @@ pub struct RawButton {
     pub on_drag_start: Option<Rc<dyn Fn(Point, Rect)>>,
     pub on_drag_end: Option<Rc<dyn Fn()>>,
     pub disabled: bool,
+    pub keyboard_focus: bool,
 }
 
 impl RawButton {
@@ -29,6 +30,7 @@ impl RawButton {
             on_drag_start: None,
             on_drag_end: None,
             disabled: false,
+            keyboard_focus: true,
         }
     }
 
@@ -79,6 +81,14 @@ impl RawButton {
         self.disabled = disabled;
         self
     }
+
+    /// Keeps the button clickable with the pointer while excluding it from
+    /// keyboard focus and tab order. Useful for pointer-only controls in a
+    /// surface that reserves typing for a text field.
+    pub fn keyboard_focus(mut self, enabled: bool) -> Self {
+        self.keyboard_focus = enabled;
+        self
+    }
 }
 
 impl Widget for RawButton {
@@ -87,7 +97,7 @@ impl Widget for RawButton {
     }
 
     fn focusable(&self) -> bool {
-        !self.disabled
+        !self.disabled && self.keyboard_focus
     }
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         if self.disabled {

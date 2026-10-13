@@ -28,6 +28,8 @@ pub struct RawScrollView {
     pub scrollbar: bool,
     pub scrollbar_width: f32,
     pub scrollbar_margin: f32,
+    pub scrollbar_top_inset: f32,
+    pub scrollbar_bottom_inset: f32,
     pub scrollbar_color: Color,
     pub scrollbar_hover_color: Option<Color>,
     pub scrollbar_pressed_color: Option<Color>,
@@ -53,6 +55,8 @@ impl RawScrollView {
             scrollbar: true,
             scrollbar_width: 6.0,
             scrollbar_margin: 2.0,
+            scrollbar_top_inset: 0.0,
+            scrollbar_bottom_inset: 0.0,
             // Faint at rest so it reads as a hint rather than competing
             // with full-width row content; brightens on hover/press so it's
             // still easy to find and grab.
@@ -106,6 +110,15 @@ impl RawScrollView {
     /// Gap between the scrollbar and the view's right edge. Default: `2.0`.
     pub fn scrollbar_margin(mut self, margin: f32) -> Self {
         self.scrollbar_margin = margin.max(0.0);
+        self
+    }
+
+    /// Insets the scrollbar track vertically without affecting the content
+    /// viewport. This is useful when a scroll view extends beneath window
+    /// chrome but its scrollbar should only read as page content.
+    pub fn scrollbar_vertical_inset(mut self, top: f32, bottom: f32) -> Self {
+        self.scrollbar_top_inset = top.max(0.0);
+        self.scrollbar_bottom_inset = bottom.max(0.0);
         self
     }
 
@@ -234,16 +247,20 @@ impl Widget for RawScrollView {
                 let bar_style = Style {
                     position: creamui_core::layout::Position::Absolute,
                     inset: creamui_core::layout::Rect {
-                        top: creamui_core::layout::LengthPercentageAuto::Length(0.0),
+                        top: creamui_core::layout::LengthPercentageAuto::Length(
+                            self.scrollbar_top_inset,
+                        ),
                         right: creamui_core::layout::LengthPercentageAuto::Length(
                             self.scrollbar_margin,
                         ),
-                        bottom: creamui_core::layout::LengthPercentageAuto::Auto,
+                        bottom: creamui_core::layout::LengthPercentageAuto::Length(
+                            self.scrollbar_bottom_inset,
+                        ),
                         left: creamui_core::layout::LengthPercentageAuto::Auto,
                     },
                     size: creamui_core::layout::Size {
                         width: creamui_core::layout::Dimension::Length(self.scrollbar_width),
-                        height: creamui_core::layout::Dimension::Percent(1.0),
+                        height: creamui_core::layout::Dimension::Auto,
                     },
                     ..Default::default()
                 };

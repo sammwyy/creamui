@@ -1938,10 +1938,12 @@ fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
         57 => Some(Key::Space),
         102 => Some(Key::Home),
         103 => Some(Key::Up),
+        104 => Some(Key::PageUp),
         105 => Some(Key::Left),
         106 => Some(Key::Right),
         107 => Some(Key::End),
         108 => Some(Key::Down),
+        109 => Some(Key::PageDown),
         111 => Some(Key::Delete),
         _ => None,
     };

@@ -18,6 +18,8 @@ pub enum Key {
     Right,
     Up,
     Down,
+    PageUp,
+    PageDown,
     Home,
     End,
 }

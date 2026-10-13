@@ -239,6 +239,8 @@ fn translate_key(key: &PlatformKey) -> Option<Key> {
         PlatformKey::Right => Some(Key::Right),
         PlatformKey::Up => Some(Key::Up),
         PlatformKey::Down => Some(Key::Down),
+        PlatformKey::PageUp => Some(Key::PageUp),
+        PlatformKey::PageDown => Some(Key::PageDown),
         PlatformKey::Home => Some(Key::Home),
         PlatformKey::End => Some(Key::End),
         _ => None,
@@ -2428,6 +2430,15 @@ impl WindowState {
 
     fn handle_key_input(&mut self, key: KeyInput) {
         self.set_focus_visible(true);
+        match key.key {
+            // Page keys scroll the container beneath the pointer even when
+            // it has no focused child. This keeps long views usable from a
+            // keyboard-only desktop setup, while retaining the usual nested
+            // scroll-view behaviour (the innermost container is selected).
+            Key::PageUp if self.scroll_page_at_pointer(-1.0) => return,
+            Key::PageDown if self.scroll_page_at_pointer(1.0) => return,
+            _ => {}
+        }
         if let Some(runtime) = self.runtime() {
             if key.key == Key::Tab {
                 let text_input = runtime.with_mut(|runtime| {
@@ -2469,6 +2480,44 @@ impl WindowState {
             handler(key);
             self.pipeline.invalidate_layout();
         }
+    }
+
+    /// Moves the innermost scroll view under the pointer by almost its
+    /// viewport height. Returning whether a target existed lets Page Up/Down
+    /// fall through to a focused widget when there is nothing to scroll.
+    fn scroll_page_at_pointer(&mut self, direction: f32) -> bool {
+        if let Some(runtime) = self.runtime() {
+            let handler = runtime.with(|runtime| {
+                let target = runtime.scroll_target(self.pointer_pos)?;
+                let node = runtime.get(target)?;
+                Some((node.layout.rect.height, node.events.on_scroll.clone()?))
+            });
+            if let Some((height, handler)) = handler {
+                handler(direction * height * 0.9);
+                return true;
+            }
+            return false;
+        }
+
+        let target = self.scene(|scene| {
+            let index = scene.scroll_hit_test(self.pointer_pos)?;
+            Some((
+                scene.scroll_rect_at(index)?.height,
+                scene.on_scroll_at(index)?.clone(),
+                scene.scroll_is_local_at(index),
+                scene.scroll_requires_layout_at(index),
+            ))
+        });
+        let Some((height, handler, local, layout)) = target else {
+            return false;
+        };
+        handler(direction * height * 0.9);
+        if layout {
+            self.pipeline.invalidate_layout();
+        } else if local {
+            self.pipeline.invalidate_paint();
+        }
+        true
     }
 
     fn handle_window_event(&mut self, event: WindowEvent) {
@@ -4465,6 +4514,34 @@ mod tests {
 
         assert!(deltas.borrow().is_empty());
         assert_eq!(clicks.get(), 1);
+    }
+
+    #[test]
+    fn page_keys_scroll_the_container_under_the_pointer() {
+        let deltas = Rc::new(RefCell::new(Vec::new()));
+        let clicks = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let deltas = deltas.clone();
+            let clicks = clicks.clone();
+            move |_| {
+                Box::new(TouchScrollWidget {
+                    deltas: deltas.clone(),
+                    clicks: clicks.clone(),
+                })
+            }
+        });
+        harness.state.pointer_pos = Point { x: 10.0, y: 10.0 };
+
+        for key in [PlatformKey::PageDown, PlatformKey::PageUp] {
+            harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+                key,
+                pressed: true,
+                synthetic: false,
+            }));
+        }
+
+        assert_eq!(deltas.borrow().as_slice(), &[90.0, -90.0]);
+        assert_eq!(clicks.get(), 0);
     }
 
     #[test]

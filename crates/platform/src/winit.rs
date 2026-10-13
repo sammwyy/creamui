@@ -700,6 +700,8 @@ fn from_winit_key(key: &WinitKey) -> Key {
         WinitKey::Named(NamedKey::ArrowRight) => Key::Right,
         WinitKey::Named(NamedKey::ArrowUp) => Key::Up,
         WinitKey::Named(NamedKey::ArrowDown) => Key::Down,
+        WinitKey::Named(NamedKey::PageUp) => Key::PageUp,
+        WinitKey::Named(NamedKey::PageDown) => Key::PageDown,
         WinitKey::Named(NamedKey::Home) => Key::Home,
         WinitKey::Named(NamedKey::End) => Key::End,
         WinitKey::Named(NamedKey::F3) => Key::F3,

@@ -47,6 +47,8 @@ pub use creamui_theme::{
 };
 #[cfg(feature = "system-theme")]
 pub use creamui_theme_loader as theme_loader;
+#[cfg(feature = "theme-watch")]
+pub use creamui_theme_watch as theme_watch;
 pub use creamui_widgets::*;
 
 #[cfg(feature = "image")]

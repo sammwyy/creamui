@@ -4,6 +4,13 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Add `creamui-theme-watch`. `ThemeListener::start` reloads the system
+  appearance without the application choosing a backend. The `dbus` feature
+  listens for `org.creamui.Theme.ReloadTheme` and links D-Bus only on Linux.
+  Windows, Android, and WebAssembly keep an idle listener. Disable the feature
+  to leave D-Bus out of a Linux build. The `creamui` facade exposes it as
+  `theme-watch`.
+
 - Add `creamui-router` with declarative routes, scoped providers and outlets,
   reactive location/params/query hooks, browser and memory history, and Android
   deep links and history restoration. Android root Back backgrounds the task

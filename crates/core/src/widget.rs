@@ -119,6 +119,12 @@ impl WindowDragHandle {
 /// Implemented by `creamui-render`'s display-list recorder and by test
 /// doubles; widgets never depend on a specific backend.
 pub trait Painter {
+    /// Number of physical pixels per logical pixel on this drawing surface.
+    /// Widgets that tile adjacent shapes can align shared edges to this grid.
+    fn scale_factor(&self) -> f32 {
+        1.0
+    }
+
     /// Color scheme used to resolve semantic [`crate::ColorToken`] values.
     fn color_scheme(&self) -> creamui_theme::ColorScheme {
         creamui_theme::ColorScheme::default()

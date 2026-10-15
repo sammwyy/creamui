@@ -252,6 +252,10 @@ impl SceneRecorder {
 }
 
 impl Painter for SceneRecorder {
+    fn scale_factor(&self) -> f32 {
+        self.scale
+    }
+
     fn focus_visible(&self) -> bool {
         self.focus_visible
     }

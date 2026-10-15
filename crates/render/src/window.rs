@@ -1439,6 +1439,7 @@ struct InstalledTray {
 
 type KeyboardHandler =
     Rc<RefCell<Option<Rc<dyn Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool>>>>;
+type PointerPresenceHandler = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
 
 /// A handle to a live window, for desktop-shell operations (resize, move,
 /// always-on-top) issued from outside the render loop — e.g. a click
@@ -1458,12 +1459,17 @@ pub struct WindowHandle {
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
+    pointer_presence_handler: PointerPresenceHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
     runtime: Option<SharedRuntime>,
 }
 
 impl WindowHandle {
+    /// Reports pointer presence independently of child widget hover regions.
+    pub fn on_pointer_presence(&self, handler: impl Fn(bool) + 'static) {
+        *self.pointer_presence_handler.borrow_mut() = Some(Rc::new(handler));
+    }
     /// Final decoration ownership; initially `Pending` on negotiating backends.
     /// A read inside a reactive effect subscribes it to compositor changes.
     pub fn decorations(&self) -> WindowDecorations {
@@ -1722,6 +1728,7 @@ struct WindowSpec {
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
+    pointer_presence_handler: PointerPresenceHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
 }
 
@@ -1921,6 +1928,7 @@ struct WindowState {
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
+    pointer_presence_handler: PointerPresenceHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
@@ -2582,6 +2590,10 @@ impl WindowState {
                 self.pipeline.invalidate_layout();
             }
             WindowEvent::CursorMoved { position, .. } => {
+                let callback = self.pointer_presence_handler.borrow().clone();
+                if let Some(callback) = callback {
+                    callback(true);
+                }
                 let scale = self.pipeline.scale_factor.peek();
                 self.pointer_pos = Point {
                     x: (position.x / scale) as f32,
@@ -2778,6 +2790,10 @@ impl WindowState {
                 self.pipeline.invalidate_paint();
             }
             WindowEvent::CursorLeft => {
+                let callback = self.pointer_presence_handler.borrow().clone();
+                if let Some(callback) = callback {
+                    callback(false);
+                }
                 self.set_pointer(None);
                 if let Some(runtime) = self.runtime() {
                     let previous = runtime.with_mut(|runtime| {
@@ -3265,6 +3281,7 @@ impl AppHandler {
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
             keyboard_handler: spec.keyboard_handler.clone(),
+            pointer_presence_handler: spec.pointer_presence_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
             runtime,
@@ -3283,6 +3300,7 @@ impl AppHandler {
             close_requested: spec.close_requested,
             focus_lost_handler: spec.focus_lost_handler,
             keyboard_handler: spec.keyboard_handler,
+            pointer_presence_handler: spec.pointer_presence_handler,
             last_input_serial: spec.last_input_serial,
             close_behavior: spec.options.close_behavior,
             frameless_resizable,
@@ -3867,6 +3885,7 @@ fn build_window_spec(
         close_requested: Rc::new(Cell::new(false)),
         focus_lost_handler: Rc::new(RefCell::new(None)),
         keyboard_handler: Rc::new(RefCell::new(None)),
+        pointer_presence_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
     }
 }
@@ -3993,6 +4012,7 @@ mod tests {
                 close_requested: spec.close_requested,
                 focus_lost_handler: spec.focus_lost_handler,
                 keyboard_handler: spec.keyboard_handler,
+                pointer_presence_handler: spec.pointer_presence_handler,
                 last_input_serial: spec.last_input_serial,
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
@@ -5796,6 +5816,27 @@ mod tests {
 
     struct HoverCountingWidget {
         paint_calls: Rc<Cell<usize>>,
+    }
+
+    #[test]
+    fn native_pointer_presence_is_reported_before_widget_hover_dispatch() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(HoverCountingWidget {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let recorded = events.clone();
+        *harness.state.pointer_presence_handler.borrow_mut() =
+            Some(Rc::new(move |inside| recorded.borrow_mut().push(inside)));
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 20.0, y: 20.0 },
+        });
+        harness.send(WindowEvent::CursorLeft);
+        assert_eq!(*events.borrow(), vec![true, true, false]);
     }
 
     impl creamui_core::Widget for HoverCountingWidget {

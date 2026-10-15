@@ -473,6 +473,20 @@ fn window_size_limits(size: LogicalSize, resizable: bool) -> ((u32, u32), Option
     }
 }
 
+fn panel_dimensions(role: WindowRole, size: LogicalSize) -> (u32, u32, i32) {
+    match role {
+        WindowRole::TopPanel | WindowRole::BottomPanel => {
+            let height = size.height.ceil().max(1.0).min(i32::MAX as f64) as u32;
+            (0, height, height as i32)
+        }
+        WindowRole::LeftPanel | WindowRole::RightPanel => {
+            let width = size.width.ceil().max(1.0).min(i32::MAX as f64) as u32;
+            (width, 0, width as i32)
+        }
+        _ => unreachable!("panel geometry requires a panel role"),
+    }
+}
+
 fn resize_edge(direction: ResizeDirection) -> ResizeEdge {
     match direction {
         ResizeDirection::East => ResizeEdge::Right,
@@ -780,33 +794,14 @@ fn create_layer_window(
             input_region.destroy();
         }
     } else {
-        let (anchor, width, height, exclusive_zone) = match attributes.role {
-            WindowRole::TopPanel => (
-                Anchor::Top | Anchor::Left | Anchor::Right,
-                0,
-                attributes.size.height.ceil().max(1.0) as u32,
-                attributes.size.height.ceil().max(1.0) as i32,
-            ),
-            WindowRole::BottomPanel => (
-                Anchor::Bottom | Anchor::Left | Anchor::Right,
-                0,
-                attributes.size.height.ceil().max(1.0) as u32,
-                attributes.size.height.ceil().max(1.0) as i32,
-            ),
-            WindowRole::LeftPanel => (
-                Anchor::Left | Anchor::Top | Anchor::Bottom,
-                attributes.size.width.ceil().max(1.0) as u32,
-                0,
-                attributes.size.width.ceil().max(1.0) as i32,
-            ),
-            WindowRole::RightPanel => (
-                Anchor::Right | Anchor::Top | Anchor::Bottom,
-                attributes.size.width.ceil().max(1.0) as u32,
-                0,
-                attributes.size.width.ceil().max(1.0) as i32,
-            ),
+        let anchor = match attributes.role {
+            WindowRole::TopPanel => Anchor::Top | Anchor::Left | Anchor::Right,
+            WindowRole::BottomPanel => Anchor::Bottom | Anchor::Left | Anchor::Right,
+            WindowRole::LeftPanel => Anchor::Left | Anchor::Top | Anchor::Bottom,
+            WindowRole::RightPanel => Anchor::Right | Anchor::Top | Anchor::Bottom,
             _ => unreachable!("only panel roles reach the panel setup"),
         };
+        let (width, height, exclusive_zone) = panel_dimensions(attributes.role, attributes.size);
         layer_surface.set_anchor(anchor);
         layer_surface.set_size(width, height);
         layer_surface.set_exclusive_zone(exclusive_zone);
@@ -830,10 +825,22 @@ fn create_layer_window(
     runtime.windows.insert(
         id,
         NativeWindow::Layer {
-            layer_surface,
+            layer_surface: layer_surface.clone(),
             handle: handle.clone(),
         },
     );
+    if matches!(
+        attributes.role,
+        WindowRole::TopPanel
+            | WindowRole::BottomPanel
+            | WindowRole::LeftPanel
+            | WindowRole::RightPanel
+    ) {
+        *handle
+            .panel_surface
+            .lock()
+            .expect("panel surface lock poisoned") = Some((attributes.role, layer_surface));
+    }
     Ok(handle)
 }
 
@@ -1611,6 +1618,7 @@ pub struct Window {
     integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
+    panel_surface: Mutex<Option<(WindowRole, ZwlrLayerSurfaceV1)>>,
 }
 
 impl Window {
@@ -1650,6 +1658,7 @@ impl Window {
             integration_requests,
             output_refresh,
             pointer_passthrough,
+            panel_surface: Mutex::new(None),
         }
     }
 
@@ -1736,6 +1745,18 @@ impl PlatformWindow for Window {
     }
 
     fn request_inner_size(&self, size: LogicalSize) {
+        if let Some((role, surface)) = self
+            .panel_surface
+            .lock()
+            .expect("panel surface lock poisoned")
+            .as_ref()
+        {
+            let (width, height, exclusive_zone) = panel_dimensions(*role, size);
+            surface.set_size(width, height);
+            surface.set_exclusive_zone(exclusive_zone);
+            self.surface.commit();
+            return;
+        }
         self.set_inner_size(PhysicalSize {
             width: size.width.ceil().max(1.0) as u32,
             height: size.height.ceil().max(1.0) as u32,
@@ -2012,6 +2033,29 @@ fn dispatch_with_timeout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panel_resize_preserves_anchored_length_and_updates_the_exclusive_zone() {
+        for role in [WindowRole::TopPanel, WindowRole::BottomPanel] {
+            assert_eq!(
+                panel_dimensions(role, LogicalSize::new(800.0, 2.0)),
+                (0, 2, 2)
+            );
+            assert_eq!(
+                panel_dimensions(role, LogicalSize::new(800.0, 76.0)),
+                (0, 76, 76)
+            );
+        }
+        for role in [WindowRole::LeftPanel, WindowRole::RightPanel] {
+            assert_eq!(
+                panel_dimensions(role, LogicalSize::new(2.0, 800.0)),
+                (2, 0, 2)
+            );
+            assert_eq!(
+                panel_dimensions(role, LogicalSize::new(76.0, 800.0)),
+                (76, 0, 76)
+            );
+        }
+    }
     use super::*;
 
     #[test]

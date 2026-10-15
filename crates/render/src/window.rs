@@ -1437,6 +1437,9 @@ struct InstalledTray {
     actions: HashMap<String, Rc<dyn Fn(&AppHandle)>>,
 }
 
+type KeyboardHandler =
+    Rc<RefCell<Option<Rc<dyn Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool>>>>;
+
 /// A handle to a live window, for desktop-shell operations (resize, move,
 /// always-on-top) issued from outside the render loop — e.g. a click
 /// handler. Cheap to clone; every clone shares the same underlying window.
@@ -1454,6 +1457,7 @@ pub struct WindowHandle {
     on_chrome_changed: Rc<dyn Fn()>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    keyboard_handler: KeyboardHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
     runtime: Option<SharedRuntime>,
@@ -1564,6 +1568,16 @@ impl WindowHandle {
     /// Registering a new callback replaces the previous one.
     pub fn on_focus_lost(&self, handler: impl Fn() + 'static) {
         *self.focus_lost_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    /// Handles native key events before focus traversal, widget shortcuts and devtools.
+    /// Return `true` to consume the event. Useful for terminal emulators, where
+    /// Tab and function keys must reach the child process unchanged.
+    pub fn on_keyboard_input(
+        &self,
+        handler: impl Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool + 'static,
+    ) {
+        *self.keyboard_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
     /// Hides the window while retaining its UI state and native resources.
@@ -1693,6 +1707,7 @@ struct WindowSpec {
     _runtime_subscription: Option<Rc<dyn Fn()>>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    keyboard_handler: KeyboardHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
 }
 
@@ -1891,6 +1906,7 @@ struct WindowState {
     pipeline: Rc<Pipeline>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    keyboard_handler: KeyboardHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
@@ -2802,6 +2818,11 @@ impl WindowState {
                 position,
             } => self.handle_touch(id, phase, position),
             WindowEvent::KeyboardInput(event) if !event.synthetic => {
+                let handler = self.keyboard_handler.borrow().clone();
+                if handler.is_some_and(|handler| handler(event.clone(), self.modifiers)) {
+                    self.pipeline.invalidate_paint();
+                    return;
+                }
                 if !event.pressed {
                     return;
                 }
@@ -3229,6 +3250,7 @@ impl AppHandler {
             on_chrome_changed,
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
+            keyboard_handler: spec.keyboard_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
             runtime,
@@ -3246,6 +3268,7 @@ impl AppHandler {
             pipeline,
             close_requested: spec.close_requested,
             focus_lost_handler: spec.focus_lost_handler,
+            keyboard_handler: spec.keyboard_handler,
             last_input_serial: spec.last_input_serial,
             close_behavior: spec.options.close_behavior,
             frameless_resizable,
@@ -3829,6 +3852,7 @@ fn build_window_spec(
         _runtime_subscription: runtime_subscription,
         close_requested: Rc::new(Cell::new(false)),
         focus_lost_handler: Rc::new(RefCell::new(None)),
+        keyboard_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
     }
 }
@@ -3954,6 +3978,7 @@ mod tests {
                 pipeline: spec.pipeline,
                 close_requested: spec.close_requested,
                 focus_lost_handler: spec.focus_lost_handler,
+                keyboard_handler: spec.keyboard_handler,
                 last_input_serial: spec.last_input_serial,
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
@@ -3998,6 +4023,92 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn native_keyboard_handler_consumes_tab_and_function_keys_before_builtin_actions() {
+        let widget_keys = Rc::new(Cell::new(0));
+        let keys = widget_keys.clone();
+        let mut harness = WindowEventHarness::new(move |_| {
+            let keys = keys.clone();
+            Box::new(
+                creamui_widgets::RawView::new(creamui_core::layout::Style {
+                    size: creamui_core::layout::Size {
+                        width: creamui_core::layout::Dimension::Length(40.0),
+                        height: creamui_core::layout::Dimension::Length(30.0),
+                    },
+                    ..Default::default()
+                })
+                .with_children(vec![
+                    Box::new(
+                        creamui_widgets::RawButton::new(
+                            creamui_core::layout::Style {
+                                size: creamui_core::layout::Size {
+                                    width: creamui_core::layout::Dimension::Length(40.0),
+                                    height: creamui_core::layout::Dimension::Length(30.0),
+                                },
+                                ..Default::default()
+                            },
+                            || {},
+                        )
+                        .on_key_press(move |_| keys.set(keys.get() + 1)),
+                    ),
+                    Box::new(creamui_widgets::RawButton::new(
+                        creamui_core::layout::Style {
+                            size: creamui_core::layout::Size {
+                                width: creamui_core::layout::Dimension::Length(40.0),
+                                height: creamui_core::layout::Dimension::Length(30.0),
+                            },
+                            ..Default::default()
+                        },
+                        || {},
+                    )),
+                ]),
+            )
+        });
+        harness.state.pipeline.focused.set(Some(0));
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let sink = received.clone();
+        *harness.state.keyboard_handler.borrow_mut() = Some(Rc::new(move |event, modifiers| {
+            sink.borrow_mut().push((event, modifiers));
+            true
+        }));
+        harness.send(WindowEvent::ModifiersChanged(PlatformModifiers {
+            ctrl: true,
+            ..Default::default()
+        }));
+        for key in [PlatformKey::Tab, PlatformKey::F3, PlatformKey::F12] {
+            for pressed in [true, false] {
+                harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+                    key: key.clone(),
+                    pressed,
+                    synthetic: false,
+                }));
+            }
+        }
+        assert_eq!(received.borrow().len(), 6);
+        assert!(received
+            .borrow()
+            .iter()
+            .all(|(_, modifiers)| modifiers.ctrl));
+        assert_eq!(harness.state.pipeline.focused.get(), Some(0));
+        assert_eq!(widget_keys.get(), 0);
+        // Unconsumed events continue through normal widget focus traversal.
+        *harness.state.keyboard_handler.borrow_mut() = Some(Rc::new(|_, _| false));
+        harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+            key: PlatformKey::Tab,
+            pressed: true,
+            synthetic: false,
+        }));
+        assert_eq!(received.borrow().len(), 6);
+        assert_eq!(harness.state.pipeline.focused.get(), Some(1));
+        harness.state.pipeline.focused.set(Some(0));
+        harness.send(WindowEvent::KeyboardInput(creamui_platform::KeyEvent {
+            key: PlatformKey::Enter,
+            pressed: true,
+            synthetic: false,
+        }));
+        assert_eq!(widget_keys.get(), 1);
     }
 
     #[test]

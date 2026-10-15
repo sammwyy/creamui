@@ -1944,6 +1944,7 @@ fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
         107 => Some(Key::End),
         108 => Some(Key::Down),
         109 => Some(Key::PageDown),
+        110 => Some(Key::Insert),
         111 => Some(Key::Delete),
         _ => None,
     };
@@ -1962,12 +1963,18 @@ fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
         return Key::Character(character);
     }
     match key {
+        59 => Key::F1,
+        60 => Key::F2,
         61 => Key::F3,
         62 => Key::F4,
         63 => Key::F5,
         64 => Key::F6,
         65 => Key::F7,
         66 => Key::F8,
+        67 => Key::F9,
+        68 => Key::F10,
+        87 => Key::F11,
+        88 => Key::F12,
         _ => Key::Other,
     }
 }
@@ -2006,6 +2013,21 @@ fn dispatch_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_function_keys_and_insert_are_preserved() {
+        for (code, expected) in [
+            (110, Key::Insert),
+            (59, Key::F1),
+            (60, Key::F2),
+            (67, Key::F9),
+            (68, Key::F10),
+            (87, Key::F11),
+            (88, Key::F12),
+        ] {
+            assert_eq!(keyboard_key(code, None), expected);
+        }
+    }
 
     #[test]
     fn resizable_windows_do_not_use_their_initial_size_as_a_minimum() {

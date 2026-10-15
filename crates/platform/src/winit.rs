@@ -704,12 +704,19 @@ fn from_winit_key(key: &WinitKey) -> Key {
         WinitKey::Named(NamedKey::PageDown) => Key::PageDown,
         WinitKey::Named(NamedKey::Home) => Key::Home,
         WinitKey::Named(NamedKey::End) => Key::End,
+        WinitKey::Named(NamedKey::Insert) => Key::Insert,
+        WinitKey::Named(NamedKey::F1) => Key::F1,
+        WinitKey::Named(NamedKey::F2) => Key::F2,
         WinitKey::Named(NamedKey::F3) => Key::F3,
         WinitKey::Named(NamedKey::F4) => Key::F4,
         WinitKey::Named(NamedKey::F5) => Key::F5,
         WinitKey::Named(NamedKey::F6) => Key::F6,
         WinitKey::Named(NamedKey::F7) => Key::F7,
         WinitKey::Named(NamedKey::F8) => Key::F8,
+        WinitKey::Named(NamedKey::F9) => Key::F9,
+        WinitKey::Named(NamedKey::F10) => Key::F10,
+        WinitKey::Named(NamedKey::F11) => Key::F11,
+        WinitKey::Named(NamedKey::F12) => Key::F12,
         _ => Key::Other,
     }
 }
@@ -785,6 +792,21 @@ mod tests {
             Some(Modifiers::default())
         );
         assert_eq!(keys.update(&winit::event::WindowEvent::Focused(true)), None);
+    }
+
+    #[test]
+    fn terminal_function_keys_and_insert_are_preserved() {
+        for (named, expected) in [
+            (NamedKey::Insert, Key::Insert),
+            (NamedKey::F1, Key::F1),
+            (NamedKey::F2, Key::F2),
+            (NamedKey::F9, Key::F9),
+            (NamedKey::F10, Key::F10),
+            (NamedKey::F11, Key::F11),
+            (NamedKey::F12, Key::F12),
+        ] {
+            assert_eq!(from_winit_key(&WinitKey::Named(named)), expected);
+        }
     }
 
     #[test]

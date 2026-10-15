@@ -65,6 +65,19 @@ handle directly. Resizable client, undecorated, and hybrid windows expose all
 eight resize edges; normal server decorations leave their edges to the
 compositor. A resizable window's initial size is not imposed as its minimum.
 
+## Native keyboard handling
+
+A terminal emulator can register `WindowHandle::on_keyboard_input` in its window
+ready callback. The handler receives a platform `KeyEvent` (including press and
+release) and the current modifiers before widget focus traversal, shortcuts and
+the built-in inspector. Return `true` to consume the event, or `false` to continue
+normal dispatch. Synthetic events are excluded. Registering again replaces the
+previous handler.
+
+This lets Tab, Insert and F1–F12 reach a child process without changing keyboard
+navigation in ordinary windows. The native Wayland and winit backends preserve
+these keys in `creamui_render::platform::Key`.
+
 ## Background apps and system tray
 
 `AppBuilder` retains the usual desktop behavior by default: it exits when

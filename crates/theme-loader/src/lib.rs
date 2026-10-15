@@ -227,10 +227,7 @@ pub fn config_path() -> Option<PathBuf> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .map(|path| path.join("cream").join("appearance.toml"))
+        Some(delib::xdg::XdgPaths::default().user_config_file("cream", "appearance.toml"))
     }
 }
 
@@ -244,15 +241,7 @@ pub fn data_dirs() -> Vec<PathBuf> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let mut paths = env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-            .into_iter()
-            .collect::<Vec<_>>();
-        let system =
-            env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-        paths.extend(env::split_paths(&system));
-        paths
+        delib::xdg::XdgPaths::default().data_search_paths()
     }
 }
 

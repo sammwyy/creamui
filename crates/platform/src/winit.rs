@@ -689,6 +689,19 @@ fn from_winit_key(key: &WinitKey) -> Key {
             "\u{1b}" => Key::Escape,
             _ => Key::Character(value.to_string()),
         },
+        WinitKey::Named(NamedKey::Control) => Key::Control,
+        WinitKey::Named(NamedKey::Alt | NamedKey::AltGraph) => Key::Alt,
+        WinitKey::Named(NamedKey::Shift) => Key::Shift,
+        WinitKey::Named(NamedKey::Super | NamedKey::Meta) => Key::Super,
+        WinitKey::Named(NamedKey::AudioVolumeUp) => Key::Media("XF86AudioRaiseVolume".into()),
+        WinitKey::Named(NamedKey::AudioVolumeDown) => Key::Media("XF86AudioLowerVolume".into()),
+        WinitKey::Named(NamedKey::AudioVolumeMute) => Key::Media("XF86AudioMute".into()),
+        WinitKey::Named(NamedKey::MediaPlayPause) => Key::Media("XF86AudioPlay".into()),
+        WinitKey::Named(NamedKey::MediaStop) => Key::Media("XF86AudioStop".into()),
+        WinitKey::Named(NamedKey::MediaTrackNext) => Key::Media("XF86AudioNext".into()),
+        WinitKey::Named(NamedKey::MediaTrackPrevious) => Key::Media("XF86AudioPrev".into()),
+        WinitKey::Named(NamedKey::BrightnessUp) => Key::Media("XF86MonBrightnessUp".into()),
+        WinitKey::Named(NamedKey::BrightnessDown) => Key::Media("XF86MonBrightnessDown".into()),
         WinitKey::Named(NamedKey::Space) => Key::Space,
         WinitKey::Named(NamedKey::Backspace) => Key::Backspace,
         WinitKey::Named(NamedKey::Delete) => Key::Delete,
@@ -797,6 +810,18 @@ mod tests {
     #[test]
     fn terminal_function_keys_and_insert_are_preserved() {
         for (named, expected) in [
+            (NamedKey::Control, Key::Control),
+            (NamedKey::Alt, Key::Alt),
+            (NamedKey::Shift, Key::Shift),
+            (NamedKey::Super, Key::Super),
+            (
+                NamedKey::AudioVolumeUp,
+                Key::Media("XF86AudioRaiseVolume".into()),
+            ),
+            (
+                NamedKey::BrightnessDown,
+                Key::Media("XF86MonBrightnessDown".into()),
+            ),
             (NamedKey::Insert, Key::Insert),
             (NamedKey::F1, Key::F1),
             (NamedKey::F2, Key::F2),

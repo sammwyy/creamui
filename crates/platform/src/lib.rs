@@ -109,6 +109,10 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn set_ime_allowed(&self, allowed: bool) {
         let _ = allowed;
     }
+    fn set_shortcuts_inhibited(&self, inhibited: bool) -> Result<(), String> {
+        let _ = inhibited;
+        Err("Shortcut inhibition is unavailable on this platform".into())
+    }
     /// Requests compositor-side background blur behind `region`, or clears
     /// it with `None`. Default: unsupported, for backends/compositors with
     /// no such protocol (the window stays plain-transparent instead).

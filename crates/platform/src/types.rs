@@ -356,6 +356,11 @@ pub struct Modifiers {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Key {
     Character(String),
+    Control,
+    Alt,
+    Shift,
+    Super,
+    Media(String),
     Space,
     Backspace,
     Delete,

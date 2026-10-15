@@ -1600,6 +1600,14 @@ impl WindowHandle {
         *self.keyboard_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
+    pub fn set_shortcuts_inhibited(&self, inhibited: bool) -> Result<(), String> {
+        self.window
+            .borrow()
+            .as_ref()
+            .ok_or_else(|| "Window is not ready".to_owned())?
+            .set_shortcuts_inhibited(inhibited)
+    }
+
     /// Hides the window while retaining its UI state and native resources.
     /// Use [`show`](Self::show) to make it visible again. Wayland does not
     /// support changing a window's visibility; use `close` plus

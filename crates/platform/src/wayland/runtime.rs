@@ -73,6 +73,7 @@ use xkbcommon::xkb;
 
 mod blur;
 mod integration;
+mod shortcuts;
 
 const USER_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
@@ -172,6 +173,8 @@ impl<T: 'static> EventLoop<T> {
             icon_pool,
         );
         let output_state = OutputState::new(&globals, &queue_handle);
+        runtime.borrow_mut().shortcuts =
+            shortcuts::ShortcutInhibition::bind(&globals, &queue_handle);
         let mut dispatch = DispatchState {
             runtime: runtime.clone(),
             shm,
@@ -200,6 +203,7 @@ impl<T: 'static> EventLoop<T> {
             runtime.borrow_mut().apply_interactive_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
             runtime.borrow_mut().apply_blur_requests(&queue_handle);
+            runtime.borrow_mut().apply_shortcut_requests(&queue_handle);
             runtime
                 .borrow_mut()
                 .apply_integration_requests(&queue_handle);
@@ -295,6 +299,7 @@ impl ActiveEventLoop<'_> {
             runtime.blur_requests.clone(),
             runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
+            runtime.shortcut_queue(),
             attributes.size,
             false,
         ));
@@ -358,6 +363,7 @@ impl ActiveEventLoop<'_> {
             runtime.blur_requests.clone(),
             runtime.integration_requests.clone(),
             runtime.output_refresh.clone(),
+            runtime.shortcut_queue(),
             attributes.size,
             false,
         ));
@@ -422,6 +428,8 @@ struct Runtime {
     blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
     integration: Option<integration::IntegrationBackend>,
     integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
+    shortcuts: Option<shortcuts::ShortcutInhibition>,
+    shortcut_requests: Arc<Mutex<Vec<(WindowId, bool)>>>,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     cursor_serial: Option<u32>,
     pointer_focus: Option<WindowId>,
@@ -545,6 +553,8 @@ impl Runtime {
             blur_requests: Arc::new(Mutex::new(Vec::new())),
             integration,
             integration_requests: Arc::new(Mutex::new(Vec::new())),
+            shortcuts: None,
+            shortcut_requests: Arc::new(Mutex::new(Vec::new())),
             cursor_shape_device: None,
             cursor_serial: None,
             pointer_focus: None,
@@ -588,6 +598,9 @@ impl Runtime {
                 .expect("window close request lock poisoned"),
         );
         for id in requests {
+            if let Some(backend) = self.shortcuts.as_mut() {
+                backend.forget(id);
+            }
             // Layer-shell surfaces do not necessarily unmap merely because
             // their last Rust proxy is dropped. Explicitly destroy them so a
             // panel replaced at another edge cannot remain mapped.
@@ -723,6 +736,25 @@ impl Runtime {
         }
     }
 
+    fn apply_shortcut_requests(&mut self, qh: &QueueHandle<DispatchState>) {
+        let requests = std::mem::take(
+            &mut *self
+                .shortcut_requests
+                .lock()
+                .expect("shortcut request lock"),
+        );
+        if let Some(backend) = self.shortcuts.as_mut() {
+            backend.apply(&self.windows, self.seat.as_ref(), requests, qh);
+        }
+    }
+
+    fn shortcut_queue(&self) -> Option<Arc<Mutex<Vec<(WindowId, bool)>>>> {
+        self.shortcuts
+            .as_ref()
+            .zip(self.seat.as_ref())
+            .map(|_| self.shortcut_requests.clone())
+    }
+
     /// Renders `icon` into a fresh `wl_surface` to hand to `start_drag`.
     fn create_icon_surface(
         &mut self,
@@ -819,6 +851,7 @@ fn create_layer_window(
         runtime.blur_requests.clone(),
         runtime.integration_requests.clone(),
         runtime.output_refresh.clone(),
+        runtime.shortcut_queue(),
         attributes.size,
         overlay,
     ));
@@ -1619,6 +1652,7 @@ pub struct Window {
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
     panel_surface: Mutex<Option<(WindowRole, ZwlrLayerSurfaceV1)>>,
+    shortcut_requests: Option<Arc<Mutex<Vec<(WindowId, bool)>>>>,
 }
 
 impl Window {
@@ -1634,6 +1668,7 @@ impl Window {
         blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
         integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
         output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
+        shortcut_requests: Option<Arc<Mutex<Vec<(WindowId, bool)>>>>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1659,6 +1694,7 @@ impl Window {
             output_refresh,
             pointer_passthrough,
             panel_surface: Mutex::new(None),
+            shortcut_requests,
         }
     }
 
@@ -1838,6 +1874,19 @@ impl PlatformWindow for Window {
             region,
         });
     }
+
+    fn set_shortcuts_inhibited(&self, inhibited: bool) -> Result<(), String> {
+        let requests = self
+            .shortcut_requests
+            .as_ref()
+            .ok_or_else(|| "Compositor does not support shortcut inhibition".to_owned())?;
+        requests
+            .lock()
+            .map_err(|_| "Shortcut request lock poisoned".to_owned())?
+            .push((self.id, inhibited));
+        self.request_redraw();
+        Ok(())
+    }
     fn set_compositor_integration(&self, request: Option<CompositorIntegrationRequest>) {
         let mut requests = self
             .integration_requests
@@ -1952,6 +2001,20 @@ fn keyboard_key(key: u32, xkb_state: Option<&xkb::State>) -> Key {
     // Backspace/Tab/Enter is a control character rather than empty, which
     // would otherwise smuggle it in as literal inserted text below.
     let structural = match key {
+        29 | 97 => Some(Key::Control),
+        42 | 54 => Some(Key::Shift),
+        56 | 100 => Some(Key::Alt),
+        125 | 126 => Some(Key::Super),
+        113 => Some(Key::Media("XF86AudioMute".into())),
+        114 => Some(Key::Media("XF86AudioLowerVolume".into())),
+        115 => Some(Key::Media("XF86AudioRaiseVolume".into())),
+        163 => Some(Key::Media("XF86AudioNext".into())),
+        164 => Some(Key::Media("XF86AudioPlay".into())),
+        165 => Some(Key::Media("XF86AudioPrev".into())),
+        166 => Some(Key::Media("XF86AudioStop".into())),
+        224 => Some(Key::Media("XF86MonBrightnessDown".into())),
+        225 => Some(Key::Media("XF86MonBrightnessUp".into())),
+        248 => Some(Key::Media("XF86AudioMicMute".into())),
         1 => Some(Key::Escape),
         14 => Some(Key::Backspace),
         15 => Some(Key::Tab),
@@ -2061,6 +2124,18 @@ mod tests {
     #[test]
     fn terminal_function_keys_and_insert_are_preserved() {
         for (code, expected) in [
+            (29, Key::Control),
+            (97, Key::Control),
+            (54, Key::Shift),
+            (100, Key::Alt),
+            (125, Key::Super),
+            (126, Key::Super),
+            (15, Key::Tab),
+            (114, Key::Media("XF86AudioLowerVolume".into())),
+            (115, Key::Media("XF86AudioRaiseVolume".into())),
+            (224, Key::Media("XF86MonBrightnessDown".into())),
+            (225, Key::Media("XF86MonBrightnessUp".into())),
+            (248, Key::Media("XF86AudioMicMute".into())),
             (110, Key::Insert),
             (59, Key::F1),
             (60, Key::F2),

@@ -66,7 +66,12 @@ impl Text {
     /// Sets the font size from the shared [`TextSize`] scale (`Md` matches
     /// the 14px default from [`Text::new`]).
     pub fn size(mut self, size: TextSize) -> Self {
-        self.inner.style.typography.font_size = Some(size.text_px());
+        self.inner.style.typography.font_size = Some(size.text_px() * use_theme().text_scale);
+        self
+    }
+
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.inner.style.typography.font_size = Some(size * use_theme().text_scale);
         self
     }
 }
@@ -107,6 +112,10 @@ pub struct Heading {
 impl_styled_inner!(Heading);
 
 impl Heading {
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.inner.style.typography.font_size = Some(size * use_theme().text_scale);
+        self
+    }
     /// A heading at an explicit [`TextSize`] step.
     pub fn sized(size: TextSize, text: impl Into<String>) -> Self {
         let theme = use_theme();
@@ -117,7 +126,7 @@ impl Heading {
                 match size {
                     TextSize::Xl => theme.typography.title,
                     TextSize::Md => theme.typography.section,
-                    _ => size.heading_px(),
+                    _ => size.heading_px() * theme.text_scale,
                 },
             )
             .bold(true)

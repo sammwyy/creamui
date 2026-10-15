@@ -7,6 +7,10 @@ pub struct TextInput {
 impl_styled_inner!(TextInput);
 
 impl TextInput {
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.inner = self.inner.font_size(size * use_theme().text_scale);
+        self
+    }
     /// Conceal the value while preserving UTF-8 editing and paste support.
     /// Copy/cut never export a password to the clipboard.
     pub fn password(mut self) -> Self {
@@ -43,13 +47,19 @@ impl TextInput {
         on_change: impl Fn(String) + 'static,
     ) -> Self {
         let theme = use_theme();
-        let inner = RawTextInput::new(style, value, 14.0, theme.text_primary, on_change)
-            .font_family(theme.font_family)
-            .background(theme.surface_elevated)
-            .border(theme.border, theme.input_border_width)
-            .corner_radius(theme.input_radius)
-            .selection_background(theme.selection_background)
-            .selection_text_color(theme.selection_text);
+        let inner = RawTextInput::new(
+            style,
+            value,
+            14.0 * theme.text_scale,
+            theme.text_primary,
+            on_change,
+        )
+        .font_family(theme.font_family)
+        .background(theme.surface_elevated)
+        .border(theme.border, theme.input_border_width)
+        .corner_radius(theme.input_radius)
+        .selection_background(theme.selection_background)
+        .selection_text_color(theme.selection_text);
         TextInput { inner }
     }
 
@@ -206,6 +216,10 @@ pub struct TextArea {
 impl_styled_inner!(TextArea);
 
 impl TextArea {
+    pub fn font_size(mut self, size: f32) -> Self {
+        self.inner = self.inner.font_size(size * use_theme().text_scale);
+        self
+    }
     pub fn default_style() -> Style {
         Style {
             size: creamui_core::layout::Size {
@@ -231,13 +245,19 @@ impl TextArea {
     ) -> Self {
         let theme = use_theme();
         Self {
-            inner: RawTextArea::new(style, value, 14.0, theme.text_primary, on_change)
-                .font_family(theme.font_family)
-                .background(theme.surface_elevated)
-                .border(theme.border, theme.input_border_width)
-                .corner_radius(theme.textarea_radius)
-                .selection_background(theme.selection_background)
-                .selection_text_color(theme.selection_text),
+            inner: RawTextArea::new(
+                style,
+                value,
+                14.0 * theme.text_scale,
+                theme.text_primary,
+                on_change,
+            )
+            .font_family(theme.font_family)
+            .background(theme.surface_elevated)
+            .border(theme.border, theme.input_border_width)
+            .corner_radius(theme.textarea_radius)
+            .selection_background(theme.selection_background)
+            .selection_text_color(theme.selection_text),
         }
     }
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {

@@ -216,6 +216,8 @@ impl Typography {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
     pub typography: Typography,
+    pub text_scale: f32,
+    pub high_contrast: bool,
     /// CSS-style default family stack (e.g. `"Inter, sans-serif"`) themed
     /// text widgets resolve against unless overridden per-widget.
     pub font_family: &'static str,
@@ -256,6 +258,8 @@ impl Theme {
     const fn base() -> Self {
         Self {
             typography: Typography::DEFAULT,
+            text_scale: 1.0,
+            high_contrast: false,
             font_family: creamui_fonts::DEFAULT_FAMILY,
             colors: ColorScheme::dark(),
             name: "Default",

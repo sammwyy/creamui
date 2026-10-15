@@ -1,3 +1,9 @@
+mod accessibility;
+pub use accessibility::{
+    accessibility_path, read_system_accessibility, write_system_accessibility,
+    AccessibilityPreferences,
+};
+
 use creamui_theme::{
     AccentPreset, AppearanceSelection, Color, ColorScheme, CornerStyle, ResolvedAppearance, Theme,
     ThemeDefinition,
@@ -15,6 +21,7 @@ pub enum ThemeLoadError {
     Io(std::io::Error),
     ConfigurationPathUnavailable,
     InvalidAppearance(toml::de::Error),
+    InvalidAccessibility(String),
     InvalidTheme {
         path: PathBuf,
         source: toml::de::Error,
@@ -43,6 +50,9 @@ impl fmt::Display for ThemeLoadError {
             }
             Self::InvalidAppearance(error) => {
                 write!(f, "invalid appearance configuration: {error}")
+            }
+            Self::InvalidAccessibility(error) => {
+                write!(f, "invalid accessibility configuration: {error}")
             }
             Self::InvalidTheme { path, source } => {
                 write!(f, "invalid theme file {}: {source}", path.display())
@@ -144,6 +154,11 @@ impl SystemThemeLoader {
             .unwrap_or(resolved.colors.accent);
         let corners = selection.corners.unwrap_or_default();
         resolved = resolved.with_accent(accent).with_corners(corners);
+        if let Some(path) = appearance_path.as_ref() {
+            resolved =
+                accessibility::read_accessibility(&path.with_file_name("accessibility.toml"))?
+                    .apply(resolved);
+        }
         Ok(ResolvedAppearance {
             theme_id,
             variant_id,

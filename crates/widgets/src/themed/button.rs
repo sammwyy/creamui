@@ -93,8 +93,13 @@ impl Button {
             _ => label.into(),
         };
         let mut style = centered_box_style(size.padding());
-        style.size.height = creamui_core::layout::Dimension::Length(size.height());
-        let text = RawText::new(label.clone(), foreground, size.font_size());
+        style.size.height =
+            creamui_core::layout::Dimension::Length(size.height() * theme.text_scale);
+        let text = RawText::new(
+            label.clone(),
+            foreground,
+            size.font_size() * theme.text_scale,
+        );
         let child: BoxedWidget = if state == ButtonState::Loading {
             let content = Style {
                 display: creamui_core::layout::Display::Flex,
@@ -201,7 +206,7 @@ impl Button {
             self.inner.children = vec![Box::new(RawText::new(
                 self.label.clone(),
                 self.theme.text_disabled,
-                self.size.font_size(),
+                self.size.font_size() * self.theme.text_scale,
             ))];
         } else if !disabled {
             if let Some(children) = self.enabled_children.take() {

@@ -386,6 +386,14 @@ impl Runtime {
         Some(self.focus_order[next_index])
     }
 
+    /// Returns the first focusable text editor in the retained focus order.
+    pub fn first_text_input(&self) -> Option<RuntimeNodeId> {
+        self.focus_order.iter().copied().find(|id| {
+            self.get(*id)
+                .is_some_and(|node| node.events.focusable && node.events.text_input)
+        })
+    }
+
     /// Walks from the node at `point` up through its ancestors to the
     /// nearest one with an `on_scroll` handler.
     pub fn scroll_target(&self, point: crate::Point) -> Option<RuntimeNodeId> {

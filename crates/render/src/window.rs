@@ -1570,6 +1570,20 @@ impl WindowHandle {
         *self.focus_lost_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
+    /// Moves keyboard focus to the first visible text input in this window.
+    /// This is useful when an application reveals a transient search field.
+    pub fn focus_text_input(&self) {
+        if let Some(runtime) = &self.runtime {
+            runtime.with_mut(|runtime| {
+                let focus = runtime.first_text_input();
+                runtime.set_focused(focus);
+            });
+            if let Some(window) = self.window.borrow().as_ref() {
+                window.request_redraw();
+            }
+        }
+    }
+
     /// Handles native key events before focus traversal, widget shortcuts and devtools.
     /// Return `true` to consume the event. Useful for terminal emulators, where
     /// Tab and function keys must reach the child process unchanged.

@@ -109,10 +109,16 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         let reports_layout = reports_layout || children.iter().any(|child| child.reports_layout);
         let has_pointer_barriers =
             widget.blocks_pointer() || children.iter().any(|child| child.has_pointer_barriers);
+        let paint_overflow = max_paint_overflow(&new_style).max(
+            children
+                .iter()
+                .map(|child| child.paint_overflow)
+                .fold(0.0, f32::max),
+        );
         return Instance {
             widget,
             transition: RefCell::default(),
-            paint_overflow: max_paint_overflow(&new_style),
+            paint_overflow,
             style: new_style,
             has_measure: new_has_measure,
             measure_fingerprint: new_measure_fingerprint,
@@ -124,12 +130,6 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
         };
     };
 
-    let paint_overflow =
-        if old.style.paint == new_style.paint && old.style.states == new_style.states {
-            old.paint_overflow
-        } else {
-            max_paint_overflow(&new_style)
-        };
     if old.style.layout != new_style.layout || old.style.border_width() != new_style.border_width()
     {
         tree.set_style(
@@ -157,6 +157,15 @@ fn reconcile(tree: &mut Tree, existing: Option<Instance>, mut widget: BoxedWidge
 
     let old_child_ids: Vec<taffy::NodeId> = old.children.iter().map(|c| c.node_id).collect();
     let new_children = reconcile_children(tree, &mut old.children, new_child_widgets);
+    // A clipping ancestor needs to know about decorations several levels
+    // below it. Otherwise an outline on a card inside a plain layout view
+    // reaches the scroll viewport with no headroom and gets cut at its edge.
+    let paint_overflow = max_paint_overflow(&new_style).max(
+        new_children
+            .iter()
+            .map(|child| child.paint_overflow)
+            .fold(0.0, f32::max),
+    );
 
     let child_ids: Vec<_> = new_children.iter().map(|c| c.node_id).collect();
     if child_ids != old_child_ids {
@@ -1612,6 +1621,31 @@ mod tests {
         assert!(
             clip.width > 10.0 && clip.height > 10.0,
             "child clip {clip:?} must have headroom for the child's outline overflow"
+        );
+    }
+
+    #[test]
+    fn a_clipping_container_preserves_an_outline_through_layout_wrappers() {
+        let mut renderer = Renderer::new();
+        let mut painter = ClipRecorder::default();
+        renderer.render(
+            Box::new(Root {
+                children: vec![Box::new(ClippingRoot {
+                    child: Some(Box::new(Root {
+                        children: vec![Box::new(OutlinedWidget { outline_width: 8.0 })],
+                    })),
+                })],
+            }),
+            VIEWPORT,
+            &mut painter,
+        );
+
+        let clip = painter
+            .last_push_clip_rect
+            .expect("a clipping container pushes a clip");
+        assert!(
+            clip.width > 10.0 && clip.height > 10.0,
+            "nested child outline must reach the clipping container: {clip:?}"
         );
     }
 

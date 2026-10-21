@@ -99,6 +99,34 @@ impl ImageData {
             })
     }
 
+    /// Creates image data from already-premultiplied RGBA8 pixels, skipping
+    /// the per-pixel premultiply pass (e.g. decoder output whose alpha is
+    /// already opaque).
+    pub fn from_premultiplied_rgba(
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    ) -> Result<Self, ImageError> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        let length = pixels.len();
+        if width == 0 || height == 0 || expected != Some(length) {
+            return Err(ImageError::InvalidPixels {
+                width,
+                height,
+                length,
+            });
+        }
+        RgbaImage::new(width, height, pixels)
+            .map(|image| Self { image })
+            .ok_or(ImageError::InvalidPixels {
+                width,
+                height,
+                length,
+            })
+    }
+
     pub fn width(&self) -> u32 {
         self.image.width()
     }

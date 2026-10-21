@@ -14,6 +14,7 @@ pub struct RawTextInput {
     pub on_selection_change: Rc<dyn Fn(TextSelection)>,
     pub on_submit: Rc<dyn Fn()>,
     pub on_key_press: Rc<dyn Fn(KeyInput)>,
+    pub on_focus_change: Rc<dyn Fn(bool)>,
     pub clipboard_enabled: bool,
     /// Paint bullets and prevent copying/cutting secrets to the clipboard.
     pub password: bool,
@@ -832,6 +833,7 @@ impl RawTextInput {
             on_selection_change: Rc::new(|_| {}),
             on_submit: Rc::new(|| {}),
             on_key_press: Rc::new(|_| {}),
+            on_focus_change: Rc::new(|_| {}),
             clipboard_enabled: true,
             password: false,
             paste_handler: None,
@@ -927,6 +929,12 @@ impl RawTextInput {
     /// its built-in text editing, selection, or clipboard behavior.
     pub fn on_key_press(mut self, on_key_press: impl Fn(KeyInput) + 'static) -> Self {
         self.on_key_press = Rc::new(on_key_press);
+        self
+    }
+
+    /// Observes focus transitions without changing text editing behaviour.
+    pub fn on_focus_change(mut self, on_focus_change: impl Fn(bool) + 'static) -> Self {
+        self.on_focus_change = Rc::new(on_focus_change);
         self
     }
 
@@ -1320,6 +1328,10 @@ impl Widget for RawTextInput {
 
     fn on_drag_with_content(&self, content: Rect) -> Option<Rc<dyn Fn(Point, Rect)>> {
         Some(self.drag_handler(Some(content), false))
+    }
+
+    fn on_focus_change(&self) -> Option<Rc<dyn Fn(bool)>> {
+        Some(self.on_focus_change.clone())
     }
 }
 

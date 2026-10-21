@@ -673,6 +673,12 @@ pub trait Widget {
         None
     }
 
+    /// Optional notification whenever this widget gains or loses keyboard
+    /// focus. The boolean is `true` on focus and `false` on blur.
+    fn on_focus_change(&self) -> Option<Rc<dyn Fn(bool)>> {
+        None
+    }
+
     /// Whether focusing this widget should enable the platform text input method.
     fn accepts_text_input(&self) -> bool {
         false
@@ -972,6 +978,10 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         self.widget.on_key()
+    }
+
+    fn on_focus_change(&self) -> Option<Rc<dyn Fn(bool)>> {
+        self.widget.on_focus_change()
     }
 
     fn accepts_text_input(&self) -> bool {

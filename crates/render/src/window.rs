@@ -41,7 +41,7 @@ use creamui_theme::{Color, Theme, ThemeProvider};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -691,6 +691,9 @@ struct Pipeline {
     window_drag: WindowDragHandle,
     clear_color: Color,
     focused: Cell<Option<usize>>,
+    /// A legacy widget tree may reveal a text field in response to a click
+    /// or shortcut. Focus it after that freshly-built scene is available.
+    pending_text_input_focus: Cell<bool>,
     caret_visible: Cell<bool>,
     pending_root: RefCell<Option<BoxedWidget>>,
     needs_layout: Cell<bool>,
@@ -959,6 +962,7 @@ impl Pipeline {
         let (logical, width, height, scale) = self.physical_size();
         let colors = self.theme.get().colors;
         let started = Instant::now();
+        let mut focus_callbacks: Vec<(Rc<dyn Fn(bool)>, bool)> = Vec::new();
         let mut frame = self.frame.borrow_mut();
         let FrameState {
             recorder,
@@ -987,19 +991,37 @@ impl Pipeline {
                 if let Some(next) =
                     renderer.paint(recorder, self.focused.get(), self.caret_visible.get())
                 {
+                    let previous_index = self.focused.get();
                     let entering_modal = scene
                         .as_ref()
                         .is_none_or(|previous| previous.modal_focus().is_none());
-                    let focused = if scene.is_some() {
+                    let focused = if self.pending_text_input_focus.replace(false) {
+                        next.first_text_input()
+                    } else if scene.is_some() {
                         previous_focus.and_then(|id| next.focus_index(id))
                     } else {
                         self.focused
                             .get()
                             .filter(|&index| next.focus_id_at(index).is_some())
                     };
-                    self.focused.set(
-                        focused.or_else(|| entering_modal.then(|| next.modal_focus()).flatten()),
-                    );
+                    let focused =
+                        focused.or_else(|| entering_modal.then(|| next.modal_focus()).flatten());
+                    if previous_index != focused {
+                        let previous_handler = previous_index.and_then(|index| {
+                            scene
+                                .as_ref()
+                                .and_then(|previous| previous.on_focus_change_at(index))
+                        });
+                        if let Some(handler) = previous_handler {
+                            focus_callbacks.push((handler, false));
+                        }
+                        if let Some(handler) =
+                            focused.and_then(|index| next.on_focus_change_at(index))
+                        {
+                            focus_callbacks.push((handler, true));
+                        }
+                    }
+                    self.focused.set(focused);
                     *scene = Some(next);
                 }
             }
@@ -1056,6 +1078,10 @@ impl Pipeline {
             recorder.recycle(stale);
         }
         report.record += started.elapsed();
+        drop(frame);
+        for (callback, focused) in focus_callbacks {
+            callback(focused);
+        }
     }
 
     /// Presents the pending display list, touching only what changed since
@@ -1440,6 +1466,8 @@ struct InstalledTray {
 type KeyboardHandler =
     Rc<RefCell<Option<Rc<dyn Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool>>>>;
 type PointerPresenceHandler = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
+type PointerMoveHandler = Rc<RefCell<Option<Rc<dyn Fn(Point)>>>>;
+type FileDropHandler = Rc<RefCell<Option<Rc<dyn Fn(Vec<std::path::PathBuf>)>>>>;
 
 /// A handle to a live window, for desktop-shell operations (resize, move,
 /// always-on-top) issued from outside the render loop — e.g. a click
@@ -1460,15 +1488,30 @@ pub struct WindowHandle {
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
+    pointer_move_handler: PointerMoveHandler,
+    file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
     runtime: Option<SharedRuntime>,
+    pipeline: Weak<Pipeline>,
 }
 
 impl WindowHandle {
     /// Reports pointer presence independently of child widget hover regions.
     pub fn on_pointer_presence(&self, handler: impl Fn(bool) + 'static) {
         *self.pointer_presence_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    /// Reports every pointer move over the window (logical coordinates).
+    /// Useful for chrome that auto-hides while the pointer is idle, e.g.
+    /// media-player overlays.
+    pub fn on_pointer_moved(&self, handler: impl Fn(Point) + 'static) {
+        *self.pointer_move_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    /// Reports files dropped onto the window (`text/uri-list` drops).
+    pub fn on_files_dropped(&self, handler: impl Fn(Vec<std::path::PathBuf>) + 'static) {
+        *self.file_drop_handler.borrow_mut() = Some(Rc::new(handler));
     }
     /// Final decoration ownership; initially `Pending` on negotiating backends.
     /// A read inside a reactive effect subscribes it to compositor changes.
@@ -1587,6 +1630,9 @@ impl WindowHandle {
             if let Some(window) = self.window.borrow().as_ref() {
                 window.request_redraw();
             }
+        } else if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.pending_text_input_focus.set(true);
+            pipeline.invalidate_paint();
         }
     }
 
@@ -1737,6 +1783,8 @@ struct WindowSpec {
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
+    pointer_move_handler: PointerMoveHandler,
+    file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
 }
 
@@ -1937,6 +1985,8 @@ struct WindowState {
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
+    pointer_move_handler: PointerMoveHandler,
+    file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
@@ -2287,6 +2337,31 @@ impl WindowState {
         self.set_ime_allowed(allowed);
     }
 
+    /// Updates legacy-widget focus and publishes blur/focus transitions after
+    /// the scene borrow has ended, so callbacks may safely update reactive
+    /// application state.
+    fn set_legacy_focus(&mut self, next: Option<usize>) -> bool {
+        let previous = self.pipeline.focused.replace(next);
+        if previous == next {
+            return false;
+        }
+        let (blur, focus) = self
+            .scene(|scene| {
+                Some((
+                    previous.and_then(|index| scene.on_focus_change_at(index)),
+                    next.and_then(|index| scene.on_focus_change_at(index)),
+                ))
+            })
+            .unwrap_or((None, None));
+        if let Some(callback) = blur {
+            callback(false);
+        }
+        if let Some(callback) = focus {
+            callback(true);
+        }
+        true
+    }
+
     fn cancel_pointer_interaction(&mut self) {
         if let Some(runtime) = self.runtime() {
             let drag_end = runtime.with_mut(|runtime| {
@@ -2511,7 +2586,7 @@ impl WindowState {
         if key.key == Key::Tab {
             let current = self.pipeline.focused.get();
             let next = self.scene(|scene| scene.next_focus(current, key.modifiers.shift));
-            self.pipeline.focused.set(next);
+            self.set_legacy_focus(next);
             self.refresh_ime_for_legacy_focus();
             self.restart_caret();
             self.pipeline.invalidate_paint();
@@ -2607,6 +2682,10 @@ impl WindowState {
                     x: (position.x / scale) as f32,
                     y: (position.y / scale) as f32,
                 };
+                let move_callback = self.pointer_move_handler.borrow().clone();
+                if let Some(move_callback) = move_callback {
+                    move_callback(self.pointer_pos);
+                }
                 self.set_pointer(Some(self.pointer_pos));
                 if self.runtime().is_some() {
                     self.runtime_pointer_moved();
@@ -2664,6 +2743,13 @@ impl WindowState {
                 if self.dragging.is_some() {
                     self.refresh_pending_drag();
                 }
+            }
+            WindowEvent::FilesDropped { paths } => {
+                let callback = self.file_drop_handler.borrow().clone();
+                if let Some(callback) = callback {
+                    callback(paths);
+                }
+                self.pipeline.invalidate_paint();
             }
             WindowEvent::DragLeft | WindowEvent::DragDropped => {
                 self.dragging = None;
@@ -2733,7 +2819,7 @@ impl WindowState {
                         moved: false,
                     });
                 }
-                if new_focus != self.pipeline.focused.replace(new_focus) {
+                if self.set_legacy_focus(new_focus) {
                     self.restart_caret();
                 }
                 self.refresh_ime_for_legacy_focus();
@@ -2828,6 +2914,9 @@ impl WindowState {
                 }
                 self.set_press_origin(None);
                 self.set_ime_allowed(false);
+                if self.runtime().is_none() {
+                    self.set_legacy_focus(None);
+                }
                 self.dragging = None;
                 self.pending_drag = None;
                 self.pipeline.invalidate_paint();
@@ -2868,7 +2957,7 @@ impl WindowState {
                     if let Some(runtime) = self.runtime() {
                         runtime.with_mut(|runtime| runtime.set_focused(None));
                     } else {
-                        self.pipeline.focused.set(None);
+                        self.set_legacy_focus(None);
                     }
                     self.set_ime_allowed(false);
                     self.pipeline.invalidate_paint();
@@ -3290,9 +3379,12 @@ impl AppHandler {
             focus_lost_handler: spec.focus_lost_handler.clone(),
             keyboard_handler: spec.keyboard_handler.clone(),
             pointer_presence_handler: spec.pointer_presence_handler.clone(),
+            pointer_move_handler: spec.pointer_move_handler.clone(),
+            file_drop_handler: spec.file_drop_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
             runtime,
+            pipeline: Rc::downgrade(&pipeline),
         });
 
         let now = Instant::now();
@@ -3309,6 +3401,8 @@ impl AppHandler {
             focus_lost_handler: spec.focus_lost_handler,
             keyboard_handler: spec.keyboard_handler,
             pointer_presence_handler: spec.pointer_presence_handler,
+            pointer_move_handler: spec.pointer_move_handler,
+            file_drop_handler: spec.file_drop_handler,
             last_input_serial: spec.last_input_serial,
             close_behavior: spec.options.close_behavior,
             frameless_resizable,
@@ -3848,6 +3942,7 @@ fn build_window_spec(
         window_drag,
         clear_color,
         focused: Cell::new(options.focus_first.then_some(0)),
+        pending_text_input_focus: Cell::new(false),
         caret_visible: Cell::new(true),
         pending_root: RefCell::new(None),
         needs_layout: Cell::new(true),
@@ -3894,6 +3989,8 @@ fn build_window_spec(
         focus_lost_handler: Rc::new(RefCell::new(None)),
         keyboard_handler: Rc::new(RefCell::new(None)),
         pointer_presence_handler: Rc::new(RefCell::new(None)),
+        pointer_move_handler: Rc::new(RefCell::new(None)),
+        file_drop_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
     }
 }

@@ -283,7 +283,13 @@ struct PaintOutputs {
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>, bool)>,
+    focusables: Vec<(
+        FocusId,
+        Option<Rect>,
+        Rc<dyn Fn(KeyInput)>,
+        bool,
+        Option<Rc<dyn Fn(bool)>>,
+    )>,
     /// `(visible_rect, full_rect, handler)` — hit-testing uses the
     /// clip-visible portion, but the handler is called with the widget's
     /// full (unclipped) rect so e.g. a slider can divide by its own real
@@ -656,6 +662,7 @@ fn paint_instance(
                 visible,
                 on_key,
                 instance.widget.accepts_text_input(),
+                instance.widget.on_focus_change(),
             ));
         }
     }
@@ -847,7 +854,13 @@ pub struct Scene {
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
-    focusables: Vec<(FocusId, Option<Rect>, Rc<dyn Fn(KeyInput)>, bool)>,
+    focusables: Vec<(
+        FocusId,
+        Option<Rect>,
+        Rc<dyn Fn(KeyInput)>,
+        bool,
+        Option<Rc<dyn Fn(bool)>>,
+    )>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
@@ -871,14 +884,14 @@ impl Scene {
     }
     /// Identity at a position in this scene's tab order.
     pub fn focus_id_at(&self, index: usize) -> Option<FocusId> {
-        self.focusables.get(index).map(|(id, _, _, _)| *id)
+        self.focusables.get(index).map(|(id, _, _, _, _)| *id)
     }
 
     /// Current tab position of a retained focusable widget.
     pub fn focus_index(&self, id: FocusId) -> Option<usize> {
         self.focusables
             .iter()
-            .position(|(candidate, _, _, _)| *candidate == id)
+            .position(|(candidate, _, _, _, _)| *candidate == id)
     }
 
     /// Cycle through visible keyboard controls in layout order.
@@ -932,20 +945,38 @@ impl Scene {
                     .map_or(0, |barrier| barrier.focusables),
             )
             .rev()
-            .find(|(_, (_, rect, _, _))| rect.is_some_and(|rect| rect.contains(point)))
+            .find(|(_, (_, rect, _, _, _))| rect.is_some_and(|rect| rect.contains(point)))
             .map(|(index, _)| index)
     }
 
     /// The keyboard handler at `index`, if it still exists this render.
     pub fn on_key_at(&self, index: usize) -> Option<&Rc<dyn Fn(KeyInput)>> {
-        self.focusables.get(index).map(|(_, _, handler, _)| handler)
+        self.focusables
+            .get(index)
+            .map(|(_, _, handler, _, _)| handler)
     }
 
     /// Whether the focusable at `index` accepts text from the platform IME.
     pub fn focus_accepts_text_input(&self, index: usize) -> bool {
         self.focusables
             .get(index)
-            .is_some_and(|(_, _, _, accepts_text_input)| *accepts_text_input)
+            .is_some_and(|(_, _, _, accepts_text_input, _)| *accepts_text_input)
+    }
+
+    /// Callback registered by the focusable at `index`, if any.
+    pub fn on_focus_change_at(&self, index: usize) -> Option<Rc<dyn Fn(bool)>> {
+        self.focusables
+            .get(index)
+            .and_then(|(_, _, _, _, handler)| handler.clone())
+    }
+
+    /// The first visible field that accepts platform text input.
+    pub fn first_text_input(&self) -> Option<usize> {
+        self.focusables
+            .iter()
+            .position(|(_, visible, _, accepts_text_input, _)| {
+                visible.is_some() && *accepts_text_input
+            })
     }
 
     /// Returns the index (into this scene's draggables) of the topmost
@@ -1308,7 +1339,7 @@ impl Renderer {
         }
         painter.pop_clip();
         *self.previous_focus_order.borrow_mut() =
-            out.focusables.iter().map(|(id, _, _, _)| *id).collect();
+            out.focusables.iter().map(|(id, _, _, _, _)| *id).collect();
         Some(Scene {
             modal: out.modal,
             pointer_barriers: out.pointer_barriers,

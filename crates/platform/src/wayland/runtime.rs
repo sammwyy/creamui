@@ -12,7 +12,7 @@ use raw_window_handle::{
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, Surface, SurfaceData},
     data_device_manager::{
-        data_device::{DataDevice, DataDeviceHandler},
+        data_device::{DataDevice, DataDeviceData, DataDeviceHandler},
         data_offer::{DataOfferHandler, DragOffer},
         data_source::{DataSourceHandler, DragSource},
         DataDeviceManagerState, WritePipe,
@@ -1414,11 +1414,21 @@ impl DataDeviceHandler for DispatchState {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_device::WlDataDevice,
+        data_device: &wl_data_device::WlDataDevice,
         x: f64,
         y: f64,
         wl_surface: &wl_surface::WlSurface,
     ) {
+        // Advertise that we take plain `file://` payload.
+        if let Some(offer) = data_device
+            .data::<DataDeviceData>()
+            .and_then(|data| data.drag_offer())
+        {
+            if offer.with_mime_types(|types| types.iter().any(|mime| mime == "text/uri-list")) {
+                offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+                offer.set_actions(DndAction::Copy, DndAction::Copy);
+            }
+        }
         let mut runtime = self.runtime.borrow_mut();
         let Some(id) = runtime.id_for_surface(wl_surface) else {
             return;
@@ -1441,10 +1451,17 @@ impl DataDeviceHandler for DispatchState {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_device::WlDataDevice,
+        data_device: &wl_data_device::WlDataDevice,
         x: f64,
         y: f64,
     ) {
+        // Keep accepting `text/uri-list` while the pointer moves.
+        if let Some(offer) = data_device
+            .data::<DataDeviceData>()
+            .and_then(|data| data.drag_offer())
+        {
+            offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+        }
         let mut runtime = self.runtime.borrow_mut();
         if let Some(id) = runtime.drag_target {
             runtime.events.push((
@@ -1466,8 +1483,29 @@ impl DataDeviceHandler for DispatchState {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_device::WlDataDevice,
+        data_device: &wl_data_device::WlDataDevice,
     ) {
+        // Pull `text/uri-list` payloads off the offer and turn them into
+        // a `FilesDropped` event for the drop target window.
+        if let Some(offer) = data_device
+            .data::<DataDeviceData>()
+            .and_then(|data| data.drag_offer())
+        {
+            if let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) {
+                let mut payload = String::new();
+                let _ = std::io::Read::read_to_string(&mut pipe, &mut payload);
+                let paths = crate::wayland::runtime::parse_uri_list(&payload);
+                let mut runtime = self.runtime.borrow_mut();
+                if !paths.is_empty() {
+                    if let Some(id) = runtime.drag_target {
+                        runtime
+                            .events
+                            .push((id, WindowEvent::FilesDropped { paths }));
+                    }
+                }
+            }
+            offer.destroy();
+        }
         let mut runtime = self.runtime.borrow_mut();
         if let Some(id) = runtime.drag_target.take() {
             runtime.events.push((id, WindowEvent::DragDropped));
@@ -2207,4 +2245,50 @@ mod tests {
         assert_eq!(current_refresh_interval(&[mode(0, true)]), None);
         assert_eq!(current_refresh_interval(&[mode(60_000, false)]), None);
     }
+}
+
+/// Parses a `text/uri-list` payload into local paths (`file://` only).
+pub(crate) fn parse_uri_list(payload: &str) -> Vec<std::path::PathBuf> {
+    payload
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.strip_prefix("file://"))
+        .filter_map(|rest| {
+            // `file://host/path` — only accept empty or localhost hosts.
+            let path = if rest.starts_with('/') {
+                rest
+            } else {
+                rest.split_once('/').map(|(_, p)| p)?
+            };
+            let decoded = percent_decode(path.as_bytes());
+            if decoded.is_empty() {
+                None
+            } else {
+                use std::os::unix::ffi::OsStringExt;
+                Some(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+                    decoded,
+                )))
+            }
+        })
+        .collect()
+}
+
+fn percent_decode(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(hex);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
 }

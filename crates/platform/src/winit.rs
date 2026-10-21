@@ -637,6 +637,9 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
             button: from_winit_mouse_button(button),
             serial: None,
         },
+        winit::event::WindowEvent::DroppedFile(path) => {
+            WindowEvent::FilesDropped { paths: vec![path] }
+        }
         winit::event::WindowEvent::CursorLeft { .. } => WindowEvent::CursorLeft,
         winit::event::WindowEvent::Focused(focused) => WindowEvent::Focused(focused),
         winit::event::WindowEvent::MouseWheel { delta, .. } => WindowEvent::MouseWheel {

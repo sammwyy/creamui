@@ -81,6 +81,12 @@ impl TextInput {
         self
     }
 
+    /// Called when this input gains or loses keyboard focus.
+    pub fn on_focus_change(mut self, on_focus_change: impl Fn(bool) + 'static) -> Self {
+        self.inner = self.inner.on_focus_change(on_focus_change);
+        self
+    }
+
     fn with_paste_controller(mut self, controller: &crate::TextController) -> Self {
         let controller = controller.clone();
         self.inner = self.inner.paste_handler(move || controller.paste());
@@ -153,6 +159,10 @@ impl Widget for TextInput {
 
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
         self.inner.on_key()
+    }
+
+    fn on_focus_change(&self) -> Option<Rc<dyn Fn(bool)>> {
+        Widget::on_focus_change(&self.inner)
     }
 
     fn cursor_icon(&self) -> Option<CursorIcon> {

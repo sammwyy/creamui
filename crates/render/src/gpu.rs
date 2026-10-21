@@ -483,6 +483,9 @@ struct ImageTexture {
     used: u64,
     /// Renderers whose latest frame draws this texture.
     holders: u32,
+    /// Streaming frames (video) are evicted almost immediately once no
+    /// widget draws them; keeping 300 of them would waste gigabytes of VRAM.
+    transient: bool,
 }
 
 /// How many times a `width` x `height` image can be halved while staying at
@@ -632,7 +635,7 @@ impl GpuShared {
             ..Default::default()
         });
         let atlas = GlyphAtlas::new(&device, &atlas_layout, &sampler, INITIAL_ATLAS_SIZE, 0);
-        let empty = upload_image(&device, &queue, 1, 1, &[0; 4]);
+        let empty = upload_image(&device, &queue, 1, 1, &[0; 4], false);
         let empty_image = image_group(&device, &image_layout, &empty);
         Rc::new(RefCell::new(GpuShared {
             device,
@@ -788,12 +791,18 @@ impl GpuShared {
             let (w, h, out) = halve(width, height, scaled.as_deref().unwrap_or(&pixels));
             (width, height, scaled) = (w, h, Some(out));
         }
+        // Large non-reloadable images are streaming frames (video, canvas):
+        // each is uploaded once and evicted, so spending ~4x the pixel work
+        // on a CPU mip chain per frame stalls the renderer. One level is
+        // enough — they are drawn near their native size.
+        let single_level = !image.is_reloadable() && width as u64 * height as u64 >= 512 * 512;
         let texture = upload_image(
             &self.device,
             &self.queue,
             width,
             height,
             scaled.as_deref().unwrap_or(&pixels),
+            single_level,
         );
         drop(pixels);
         let discarded = image.discard_pixels();
@@ -816,14 +825,23 @@ impl GpuShared {
                 level,
                 used: frame,
                 holders,
+                transient: single_level,
             },
         );
     }
 
     fn evict_images(&mut self) {
         let horizon = self.frame.saturating_sub(IMAGE_CACHE_FRAMES);
-        self.images
-            .retain(|_, texture| texture.holders > 0 || texture.used >= horizon);
+        let transient_horizon = self.frame.saturating_sub(2);
+        self.images.retain(|_, texture| {
+            texture.holders > 0
+                || texture.used
+                    >= if texture.transient {
+                        transient_horizon
+                    } else {
+                        horizon
+                    }
+        });
     }
 
     fn release_images(&mut self, ids: &[u64]) {
@@ -841,13 +859,22 @@ fn upload_image(
     width: u32,
     height: u32,
     pixels: &[u8],
+    single_level: bool,
 ) -> wgpu::Texture {
-    let mip_count = u32::BITS - width.max(height).leading_zeros();
-    let mut mip_pixels = Vec::with_capacity(pixels.len() * 4 / 3);
+    let mip_count = if single_level {
+        1
+    } else {
+        u32::BITS - width.max(height).leading_zeros()
+    };
+    let mut mip_pixels = Vec::with_capacity(if single_level {
+        pixels.len()
+    } else {
+        pixels.len() * 4 / 3
+    });
     mip_pixels.extend_from_slice(pixels);
     let (mut mip_width, mut mip_height) = (width, height);
     let mut previous = None;
-    while mip_width > 1 || mip_height > 1 {
+    while !single_level && (mip_width > 1 || mip_height > 1) {
         let (next_width, next_height, next) =
             halve(mip_width, mip_height, previous.as_deref().unwrap_or(pixels));
         mip_pixels.extend_from_slice(&next);

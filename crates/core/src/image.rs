@@ -99,6 +99,13 @@ impl RgbaImage {
             .clone()
     }
 
+    /// Whether this image can drop and later rebuild its pixels (created
+    /// with [`RgbaImage::reloadable`]). Non-reloadable images — typically
+    /// generated or streaming frames — keep their pixels.
+    pub fn is_reloadable(&self) -> bool {
+        self.store.reload.is_some()
+    }
+
     /// Drops the decoded pixels of a [`RgbaImage::reloadable`] image, for
     /// every clone sharing them. Returns whether anything was dropped.
     pub fn discard_pixels(&self) -> bool {

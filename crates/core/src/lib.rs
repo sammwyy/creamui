@@ -15,6 +15,7 @@ mod scene;
 mod style;
 mod virtualize;
 mod widget;
+mod window_controls;
 
 pub use animation::{Easing, Transition, TransitionState};
 pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT_MAX_RECTS};
@@ -28,6 +29,9 @@ pub use style::{
     Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
 pub use virtualize::{visible_range, HeightIndex};
+pub use window_controls::{
+    TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,
+};
 pub use widget::{
     keyed, BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled,
     TextAlign, Widget, WidgetKey, WindowDragHandle,

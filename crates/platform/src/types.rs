@@ -184,6 +184,10 @@ pub enum BlurRegion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompositorIntegrationRequest {
     Hybrid,
+    /// An application-drawn titlebar: `Hybrid` overlay controls when the
+    /// compositor offers them, otherwise client-side decorations so the
+    /// application can draw its own controls.
+    Titlebar,
 }
 
 /// Effective integration selected by the compositor.
@@ -217,11 +221,24 @@ pub enum WindowDecorationMode {
     Hybrid,
 }
 
+/// A standard window button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptionButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
 /// Negotiated frame and the logical-pixel rectangle reserved for overlay controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WindowDecorations {
     pub mode: WindowDecorationMode,
     pub controls: CompositorControls,
+    pub maximized: bool,
+    /// A client-drawn button whose input the platform intercepts while the
+    /// pointer hovers it (the maximize button that opens snap layouts on
+    /// Windows), so the application can still paint its hover state.
+    pub hovered: Option<CaptionButton>,
 }
 
 /// Standard xdg-decoration and optional overlay integration negotiate independently.
@@ -231,6 +248,7 @@ pub(crate) struct DecorationNegotiation {
     requested: bool,
     standard: WindowDecorationMode,
     hybrid: Option<CompositorControls>,
+    maximized: bool,
 }
 
 #[cfg(all(feature = "wayland", target_os = "linux"))]
@@ -244,7 +262,12 @@ impl DecorationNegotiation {
                 WindowDecorationMode::None
             },
             hybrid: None,
+            maximized: false,
         }
+    }
+
+    pub(crate) fn set_maximized(&mut self, maximized: bool) {
+        self.maximized = maximized;
     }
 
     pub(crate) fn configure(&mut self, server: bool) -> WindowDecorations {
@@ -272,10 +295,14 @@ impl DecorationNegotiation {
             Some(controls) => WindowDecorations {
                 mode: WindowDecorationMode::Hybrid,
                 controls,
+                maximized: self.maximized,
+                hovered: None,
             },
             None => WindowDecorations {
                 mode: self.standard,
                 controls: CompositorControls::default(),
+                maximized: self.maximized,
+                hovered: None,
             },
         }
     }
@@ -541,7 +568,8 @@ mod tests {
             state.integrate(CompositorIntegrationMode::Hybrid, controls),
             WindowDecorations {
                 mode: WindowDecorationMode::Hybrid,
-                controls
+                controls,
+                ..Default::default()
             }
         );
         // A standard configure must not erase a negotiated overlay.
@@ -550,7 +578,7 @@ mod tests {
             state.integrate(CompositorIntegrationMode::None, controls),
             WindowDecorations {
                 mode: WindowDecorationMode::Client,
-                controls: CompositorControls::default()
+                ..Default::default()
             }
         );
         state.configure(true);

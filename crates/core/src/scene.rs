@@ -298,6 +298,8 @@ struct PaintOutputs {
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
     window_drag_content: Vec<Rect>,
+    /// Depth of enclosing widgets whose intrinsic content passes window drags.
+    window_drag_passthrough: u32,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
@@ -690,7 +692,7 @@ fn paint_instance(
             }
             // Intrinsic content (text, icons, images, inputs) is not empty
             // background even when it has no click handler of its own.
-            if instance.has_measure {
+            if instance.has_measure && out.window_drag_passthrough == 0 {
                 out.window_drag_content.push(visible);
             }
             let on_scroll_bounded = instance.widget.on_scroll_bounded();
@@ -768,6 +770,10 @@ fn paint_instance(
     } else {
         mode
     };
+    let passes_window_drag = instance.widget.passes_window_drag();
+    if passes_window_drag {
+        out.window_drag_passthrough += 1;
+    }
     for child in &instance.children {
         paint_instance(
             tree,
@@ -801,6 +807,9 @@ fn paint_instance(
                 pointer,
             );
         }
+    }
+    if passes_window_drag {
+        out.window_drag_passthrough -= 1;
     }
     if scrolls {
         painter.pop_scroll_layer();

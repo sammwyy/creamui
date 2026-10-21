@@ -723,6 +723,13 @@ pub trait Widget {
         None
     }
 
+    /// Lets the window drag region underneath show through this widget's
+    /// intrinsic content (text, icons, images) and that of its descendants.
+    /// Interactive descendants keep their own input either way.
+    fn passes_window_drag(&self) -> bool {
+        false
+    }
+
     /// Optional scroll-wheel handler, called with the vertical scroll delta
     /// (in logical pixels; positive scrolls content up, i.e. reveals
     /// content further down) when the pointer is over this widget's rect.
@@ -1004,6 +1011,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_window_drag(&self) -> Option<Rc<dyn Fn()>> {
         self.widget.on_window_drag()
+    }
+    fn passes_window_drag(&self) -> bool {
+        self.widget.passes_window_drag()
     }
     fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
         self.widget.on_scroll()

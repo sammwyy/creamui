@@ -69,7 +69,7 @@ mod blair {
                 });
                 object.set_hybrid(matches!(
                     request.request,
-                    Some(CompositorIntegrationRequest::Hybrid)
+                    Some(CompositorIntegrationRequest::Hybrid | CompositorIntegrationRequest::Titlebar)
                 ) as i32);
             }
         }
@@ -142,6 +142,10 @@ mod blair {
     ) {
         let mut runtime = state.runtime.borrow_mut();
         if let Some(native) = runtime.windows.get(&window_id) {
+            if mode == CompositorIntegrationMode::None && native.handle().wants_titlebar_fallback() {
+                log::debug!("creamui-platform: overlay controls declined, using client decorations");
+                native.request_client_decorations();
+            }
             let decorations = native.handle().configure_integration(mode, controls);
             runtime
                 .events

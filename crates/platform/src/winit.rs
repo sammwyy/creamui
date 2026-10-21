@@ -29,8 +29,18 @@ use crate::{
 
 type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
 
+/// Win32 keeps its native frame around a client-drawn caption; other winit
+/// platforms drop the frame and leave the controls to the application.
+enum Titlebar {
+    #[cfg(target_os = "windows")]
+    Win32(crate::windows_titlebar::CustomFrame),
+    Frameless,
+}
+
 pub struct Window {
     inner: winit::window::Window,
+    /// Present while the application draws the titlebar itself.
+    titlebar: Mutex<Option<Titlebar>>,
     #[cfg(target_os = "android")]
     ids: WindowIds,
     id: WindowId,
@@ -137,15 +147,55 @@ impl Window {
     }
 }
 
+impl Window {
+    fn install_titlebar(&self) -> Titlebar {
+        #[cfg(target_os = "windows")]
+        if let Ok(RawWindowHandle::Win32(handle)) =
+            self.inner.window_handle().map(|handle| handle.as_raw())
+        {
+            return Titlebar::Win32(crate::windows_titlebar::CustomFrame::install(
+                handle.hwnd.get(),
+            ));
+        }
+        self.inner.set_decorations(false);
+        Titlebar::Frameless
+    }
+}
+
 impl PlatformWindow for Window {
     fn window_decorations(&self) -> crate::WindowDecorations {
+        let titlebar = self.titlebar.lock().expect("titlebar lock poisoned");
+        let hovered = match titlebar.as_ref() {
+            #[cfg(target_os = "windows")]
+            Some(Titlebar::Win32(frame)) if frame.maximize_hovered() => {
+                Some(crate::CaptionButton::Maximize)
+            }
+            _ => None,
+        };
         crate::WindowDecorations {
-            mode: if self.inner.is_decorated() {
+            mode: if titlebar.is_some() {
+                crate::WindowDecorationMode::Client
+            } else if self.inner.is_decorated() {
                 crate::WindowDecorationMode::Server
             } else {
                 crate::WindowDecorationMode::None
             },
+            maximized: self.inner.is_maximized(),
+            hovered,
             ..Default::default()
+        }
+    }
+    fn set_compositor_integration(&self, request: Option<crate::CompositorIntegrationRequest>) {
+        let mut titlebar = self.titlebar.lock().expect("titlebar lock poisoned");
+        let wanted = request == Some(crate::CompositorIntegrationRequest::Titlebar);
+        if wanted == titlebar.is_some() {
+            return;
+        }
+        if wanted {
+            log::debug!("creamui-platform: drawing the titlebar inside the window");
+            *titlebar = Some(self.install_titlebar());
+        } else if let Some(Titlebar::Frameless) = titlebar.take() {
+            self.inner.set_decorations(true);
         }
     }
     fn id(&self) -> WindowId {
@@ -313,6 +363,7 @@ impl ActiveEventLoop<'_> {
                     .insert(inner.id(), id);
                 Arc::new(Window {
                     inner,
+                    titlebar: Mutex::new(None),
                     #[cfg(target_os = "android")]
                     ids: self.ids.clone(),
                     id,

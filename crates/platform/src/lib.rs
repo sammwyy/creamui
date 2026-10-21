@@ -7,6 +7,8 @@ mod types;
 pub mod wayland;
 #[cfg(target_arch = "wasm32")]
 mod web_insets;
+#[cfg(target_os = "windows")]
+mod windows_titlebar;
 #[cfg(not(all(feature = "wayland", target_os = "linux")))]
 mod winit;
 

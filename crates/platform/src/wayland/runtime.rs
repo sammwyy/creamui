@@ -731,6 +731,22 @@ impl Runtime {
                 .lock()
                 .expect("integration request lock poisoned"),
         );
+        for request in &requests {
+            let Some(native) = self.windows.get(&request.window_id) else {
+                continue;
+            };
+            let titlebar = request.request == Some(CompositorIntegrationRequest::Titlebar);
+            let was_titlebar = native
+                .handle()
+                .titlebar_fallback
+                .swap(titlebar, Ordering::AcqRel);
+            if titlebar && self.integration.is_none() {
+                log::debug!("creamui-platform: no overlay integration, using client decorations");
+                native.request_decoration_mode(DecorationMode::Client);
+            } else if was_titlebar && !titlebar {
+                native.request_decoration_mode(DecorationMode::Server);
+            }
+        }
         if let Some(backend) = self.integration.as_mut() {
             backend.apply(&self.windows, &requests, qh);
         }
@@ -919,6 +935,18 @@ impl NativeWindow {
             Self::Toplevel { handle, .. } | Self::Popup { handle, .. } => handle,
             Self::Layer { handle, .. } => handle,
         }
+    }
+
+    /// Only toplevels have an xdg-decoration to negotiate.
+    fn request_decoration_mode(&self, mode: DecorationMode) {
+        if let Self::Toplevel { window, .. } = self {
+            window.request_decoration_mode(Some(mode));
+        }
+    }
+
+    #[cfg_attr(not(feature = "window-integration-blair"), allow(dead_code))]
+    fn request_client_decorations(&self) {
+        self.request_decoration_mode(DecorationMode::Client);
     }
 }
 
@@ -1617,12 +1645,15 @@ impl WindowHandler for DispatchState {
             native.handle().set_inner_size(size);
             native.handle().set_ready();
         }
-        let decorations = runtime.windows[&id]
-            .handle()
-            .decorations
-            .lock()
-            .expect("decoration lock poisoned")
-            .configure(configure.decoration_mode == DecorationMode::Server);
+        let decorations = {
+            let mut negotiation = runtime.windows[&id]
+                .handle()
+                .decorations
+                .lock()
+                .expect("decoration lock poisoned");
+            negotiation.set_maximized(configure.state.contains(WindowState::MAXIMIZED));
+            negotiation.configure(configure.decoration_mode == DecorationMode::Server)
+        };
         runtime
             .events
             .push((id, WindowEvent::DecorationsChanged(decorations)));
@@ -1679,6 +1710,9 @@ pub struct Window {
     inner_size: Mutex<PhysicalSize>,
     ready: AtomicBool,
     decorations: Mutex<DecorationNegotiation>,
+    /// Set while an application titlebar is requested; overlay rejection
+    /// then falls back to client-side decorations.
+    titlebar_fallback: AtomicBool,
     requested_redraw: AtomicBool,
     visible: AtomicBool,
     close_requests: Arc<Mutex<Vec<WindowId>>>,
@@ -1721,6 +1755,7 @@ impl Window {
             }),
             ready: AtomicBool::new(false),
             decorations: Mutex::new(DecorationNegotiation::new(false)),
+            titlebar_fallback: AtomicBool::new(false),
             requested_redraw: AtomicBool::new(true),
             visible: AtomicBool::new(false),
             close_requests,
@@ -1750,6 +1785,11 @@ impl Window {
 
     fn pointer_passthrough(&self) -> bool {
         self.pointer_passthrough
+    }
+
+    #[cfg_attr(not(feature = "window-integration-blair"), allow(dead_code))]
+    fn wants_titlebar_fallback(&self) -> bool {
+        self.titlebar_fallback.load(Ordering::Acquire)
     }
 
     fn configure_integration(

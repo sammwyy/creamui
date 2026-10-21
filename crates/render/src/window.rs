@@ -24,17 +24,18 @@ use crate::web::WebState;
 use creamui_core::runtime::{IntoView, MountedView, Mutation, SharedRuntime, View};
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
+    TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,
     WindowDragHandle,
 };
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 use creamui_platform::AndroidApp;
 use creamui_platform::{
-    ActiveEventLoop, ApplicationHandler, BlurRegion, CompositorIntegrationRequest, ControlFlow,
-    CursorIcon as PlatformCursorIcon, DragIcon, EventLoop, EventLoopProxy, InputSerial,
-    Key as PlatformKey, LogicalPosition, LogicalSize, Modifiers as PlatformModifiers, MouseButton,
-    MouseScrollDelta, PlatformWindow, PopupOptions as PlatformPopupOptions, PopupPlacement,
-    ResizeDirection, WindowAttributes as PlatformWindowAttributes, WindowDecorationMode,
-    WindowDecorations, WindowEvent, WindowId, WindowLevel, WindowRole,
+    ActiveEventLoop, ApplicationHandler, BlurRegion, CaptionButton, CompositorIntegrationRequest,
+    ControlFlow, CursorIcon as PlatformCursorIcon, DragIcon, EventLoop, EventLoopProxy,
+    InputSerial, Key as PlatformKey, LogicalPosition, LogicalSize, Modifiers as PlatformModifiers,
+    MouseButton, MouseScrollDelta, PlatformWindow, PopupOptions as PlatformPopupOptions,
+    PopupPlacement, ResizeDirection, WindowAttributes as PlatformWindowAttributes,
+    WindowDecorationMode, WindowDecorations, WindowEvent, WindowId, WindowLevel, WindowRole,
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
@@ -198,6 +199,84 @@ pub enum CloseBehavior {
 fn set_if_changed<T: Clone + PartialEq + 'static>(signal: &Signal<T>, value: T) {
     if signal.peek() != value {
         signal.set(value);
+    }
+}
+
+/// Window actions and decoration state handed to in-window titlebars.
+struct TitlebarBridge {
+    window: SharedWindow,
+    decorations: Signal<WindowDecorations>,
+    close_requested: Rc<Cell<bool>>,
+    requested: Cell<bool>,
+    applied: Cell<bool>,
+}
+
+impl TitlebarBridge {
+    /// Titlebars ask during their first build, which can precede the
+    /// platform window; the request is replayed once the window exists.
+    fn apply(&self) {
+        if !self.requested.get() || self.applied.get() {
+            return;
+        }
+        if let Some(window) = self.window.borrow().as_ref() {
+            self.applied.set(true);
+            log::debug!("creamui-render: requesting an application titlebar");
+            window.set_compositor_integration(Some(CompositorIntegrationRequest::Titlebar));
+            window.request_redraw();
+        }
+    }
+}
+
+struct SharedTitlebar(Rc<TitlebarBridge>);
+
+impl WindowControlsBackend for SharedTitlebar {
+    fn state(&self) -> TitlebarState {
+        titlebar_state(self.0.decorations.get())
+    }
+    fn request_titlebar(&self) {
+        self.0.requested.set(true);
+        self.0.apply();
+    }
+    fn minimize(&self) {
+        if let Some(window) = self.0.window.borrow().as_ref() {
+            window.set_minimized(true);
+        }
+    }
+    fn toggle_maximize(&self) {
+        if let Some(window) = self.0.window.borrow().as_ref() {
+            window.set_maximized(!self.0.decorations.peek().maximized);
+        }
+    }
+    fn close(&self) {
+        self.0.close_requested.set(true);
+        if let Some(window) = self.0.window.borrow().as_ref() {
+            window.request_redraw();
+        }
+    }
+}
+
+fn titlebar_state(decorations: WindowDecorations) -> TitlebarState {
+    let controls = decorations.controls;
+    TitlebarState {
+        mode: match decorations.mode {
+            WindowDecorationMode::Pending => TitlebarMode::Pending,
+            WindowDecorationMode::Server => TitlebarMode::Server,
+            WindowDecorationMode::Client => TitlebarMode::Client,
+            WindowDecorationMode::Hybrid => TitlebarMode::Overlay,
+            WindowDecorationMode::None => TitlebarMode::None,
+        },
+        overlay: Rect {
+            x: controls.x as f32,
+            y: controls.y as f32,
+            width: controls.width as f32,
+            height: controls.height as f32,
+        },
+        maximized: decorations.maximized,
+        hovered: decorations.hovered.map(|button| match button {
+            CaptionButton::Minimize => WindowButton::Minimize,
+            CaptionButton::Maximize => WindowButton::Maximize,
+            CaptionButton::Close => WindowButton::Close,
+        }),
     }
 }
 
@@ -477,6 +556,7 @@ fn with_window_scope<R>(
     system_bars: &Signal<SystemBars>,
     window_drag: &WindowDragHandle,
     decorations: &Signal<WindowDecorations>,
+    window_controls: &WindowControls,
     f: impl FnOnce() -> R,
 ) -> R {
     creamui_reactive::with_context_scope(|| {
@@ -492,6 +572,7 @@ fn with_window_scope<R>(
         });
         creamui_reactive::provide_context(window_drag.clone());
         creamui_reactive::provide_context(decorations.clone());
+        creamui_reactive::provide_context(window_controls.clone());
         f()
     })
 }
@@ -689,6 +770,8 @@ struct Pipeline {
     source: UiSource,
     theme: ThemeProvider,
     window_drag: WindowDragHandle,
+    titlebar: Rc<TitlebarBridge>,
+    window_controls: WindowControls,
     clear_color: Color,
     focused: Cell<Option<usize>>,
     /// A legacy widget tree may reveal a text field in response to a click
@@ -798,6 +881,7 @@ impl Pipeline {
             &self.chrome.mode,
             &self.window_drag,
             &self.decorations,
+            &self.window_controls,
             || {
                 #[cfg(feature = "router")]
                 creamui_reactive::provide_context(self.router_host.clone());
@@ -2645,17 +2729,10 @@ impl WindowState {
         match event {
             WindowEvent::DecorationsChanged(decorations) => {
                 log::debug!("creamui-render: negotiated decorations: {:?}", decorations);
-                self.frameless_resizable = self.resizable
-                    && matches!(
-                        decorations.mode,
-                        WindowDecorationMode::Client
-                            | WindowDecorationMode::None
-                            | WindowDecorationMode::Hybrid
-                    );
-                set_if_changed(&self.pipeline.decorations, decorations);
-                self.pipeline.invalidate_layout();
+                self.sync_decorations(decorations);
             }
             WindowEvent::Resized(new_size) => {
+                self.poll_decorations();
                 if new_size.width == 0 || new_size.height == 0 {
                     return;
                 }
@@ -3034,8 +3111,39 @@ impl WindowState {
                 });
             }
             WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers,
-            WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::RedrawRequested => {
+                self.poll_decorations();
+                self.redraw();
+            }
             _ => {}
+        }
+    }
+
+    fn sync_decorations(&mut self, decorations: WindowDecorations) {
+        self.frameless_resizable = self.resizable
+            && matches!(
+                decorations.mode,
+                WindowDecorationMode::Client
+                    | WindowDecorationMode::None
+                    | WindowDecorationMode::Hybrid
+            );
+        if self.pipeline.decorations.peek() != decorations {
+            self.pipeline.decorations.set(decorations);
+            self.pipeline.invalidate_layout();
+        }
+    }
+
+    /// Backends without decoration events (winit) change maximized state,
+    /// frame ownership and platform hover synchronously; pick those up here.
+    fn poll_decorations(&mut self) {
+        let polled = self
+            .pipeline
+            .window
+            .borrow()
+            .as_ref()
+            .map(|window| window.window_decorations());
+        if let Some(decorations) = polled {
+            self.sync_decorations(decorations);
         }
     }
 
@@ -3335,6 +3443,7 @@ impl AppHandler {
         set_if_changed(&pipeline.decorations, window.window_decorations());
         pipeline.scale_factor.set(window.scale_factor());
         *pipeline.window.borrow_mut() = Some(window.clone());
+        pipeline.titlebar.apply();
         {
             let physical = window.inner_size();
             let scale = window.scale_factor();
@@ -3874,6 +3983,23 @@ fn build_window_spec(
 
     let window: SharedWindow = Rc::new(RefCell::new(None));
     let last_input_serial = Rc::new(Cell::new(None));
+    let close_requested = Rc::new(Cell::new(false));
+    let decorations = Signal::new(WindowDecorations {
+        mode: if options.decorations && popup.is_none() {
+            WindowDecorationMode::Pending
+        } else {
+            WindowDecorationMode::None
+        },
+        ..Default::default()
+    });
+    let titlebar = Rc::new(TitlebarBridge {
+        window: window.clone(),
+        decorations: decorations.clone(),
+        close_requested: close_requested.clone(),
+        requested: Cell::new(false),
+        applied: Cell::new(false),
+    });
+    let window_controls = WindowControls::new(SharedTitlebar(titlebar.clone()));
     let window_drag = WindowDragHandle::new({
         let window = window.clone();
         let last_input_serial = last_input_serial.clone();
@@ -3921,14 +4047,7 @@ fn build_window_spec(
             height: options.height as f32,
         }),
         safe_area: Signal::new(SafeArea::ZERO),
-        decorations: Signal::new(WindowDecorations {
-            mode: if options.decorations && popup.is_none() {
-                WindowDecorationMode::Pending
-            } else {
-                WindowDecorationMode::None
-            },
-            ..Default::default()
-        }),
+        decorations,
         chrome: SystemChrome {
             mode: Signal::new(options.system_bars),
             occupied: Signal::new(SafeArea::ZERO),
@@ -3940,6 +4059,8 @@ fn build_window_spec(
         source: source.clone(),
         theme: ThemeProvider::new(options.theme),
         window_drag,
+        titlebar,
+        window_controls,
         clear_color,
         focused: Cell::new(options.focus_first.then_some(0)),
         pending_text_input_focus: Cell::new(false),
@@ -3985,7 +4106,7 @@ fn build_window_spec(
         pipeline,
         _effect: effect,
         _runtime_subscription: runtime_subscription,
-        close_requested: Rc::new(Cell::new(false)),
+        close_requested,
         focus_lost_handler: Rc::new(RefCell::new(None)),
         keyboard_handler: Rc::new(RefCell::new(None)),
         pointer_presence_handler: Rc::new(RefCell::new(None)),
@@ -4118,6 +4239,8 @@ mod tests {
                 focus_lost_handler: spec.focus_lost_handler,
                 keyboard_handler: spec.keyboard_handler,
                 pointer_presence_handler: spec.pointer_presence_handler,
+                pointer_move_handler: spec.pointer_move_handler,
+                file_drop_handler: spec.file_drop_handler,
                 last_input_serial: spec.last_input_serial,
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
@@ -4359,6 +4482,7 @@ mod tests {
                 width: 96,
                 height: 28,
             },
+            ..Default::default()
         };
         harness.send(WindowEvent::DecorationsChanged(overlay));
         assert_eq!(observed.borrow().last(), Some(&overlay));

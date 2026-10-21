@@ -296,13 +296,28 @@ struct PaintOutputs {
     /// width regardless of how much of it a scroll ancestor currently shows.
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
-    window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
+    window_drags: Vec<(Rect, Rc<dyn Fn()>, RegionMarks)>,
     window_drag_content: Vec<Rect>,
     /// Depth of enclosing widgets whose intrinsic content passes window drags.
     window_drag_passthrough: u32,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
+}
+
+/// How many regions of each kind were recorded before a window drag region.
+/// Only regions recorded later (its descendants and anything painted above
+/// it) can take a press away from that drag region.
+#[derive(Clone, Copy)]
+struct RegionMarks {
+    hits: usize,
+    hits_at: usize,
+    focusables: usize,
+    draggables: usize,
+    drag_starts: usize,
+    content: usize,
+    cursors: usize,
+    hovers: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -688,7 +703,17 @@ fn paint_instance(
                 out.drag_starts.push((visible, rect, on_drag_start));
             }
             if let Some(handler) = instance.widget.on_window_drag() {
-                out.window_drags.push((visible, handler));
+                let marks = RegionMarks {
+                    hits: out.hits.len(),
+                    hits_at: out.hits_at.len(),
+                    focusables: out.focusables.len(),
+                    draggables: out.draggables.len(),
+                    drag_starts: out.drag_starts.len(),
+                    content: out.window_drag_content.len(),
+                    cursors: out.cursors.len(),
+                    hovers: out.hovers.len(),
+                };
+                out.window_drags.push((visible, handler, marks));
             }
             // Intrinsic content (text, icons, images, inputs) is not empty
             // background even when it has no click handler of its own.
@@ -872,7 +897,7 @@ pub struct Scene {
     )>,
     draggables: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>, Option<Rc<dyn Fn()>>)>,
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
-    window_drags: Vec<(Rect, Rc<dyn Fn()>)>,
+    window_drags: Vec<(Rect, Rc<dyn Fn()>, RegionMarks)>,
     window_drag_content: Vec<Rect>,
     scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
@@ -1035,25 +1060,36 @@ impl Scene {
         if self.pointer_barrier(point).is_some() {
             return None;
         }
-        if self
-            .window_drag_content
-            .iter()
-            .any(|rect| rect.contains(point))
-            || self.hit_test(point).is_some()
-            || self.hit_test_at(point).is_some()
-            || self.focus_hit_test(point).is_some()
-            || self.drag_hit_test(point).is_some()
-            || self.drag_start_at(point).is_some()
-            || self.hover_hit_test(point).is_some()
-            || self.cursor_hit_test(point).is_some()
-        {
-            return None;
-        }
-        self.window_drags
+        let (_, handler, marks) = self
+            .window_drags
             .iter()
             .rev()
-            .find(|(rect, _)| rect.contains(point))
-            .map(|(_, handler)| handler.clone())
+            .find(|(rect, _, _)| rect.contains(point))?;
+        fn above<T>(
+            regions: &[T],
+            from: usize,
+            rect: impl Fn(&T) -> Option<Rect>,
+            point: Point,
+        ) -> bool {
+            regions
+                .get(from..)
+                .unwrap_or_default()
+                .iter()
+                .any(|region| rect(region).is_some_and(|rect| rect.contains(point)))
+        }
+        let covered = above(
+            &self.window_drag_content,
+            marks.content,
+            |r| Some(*r),
+            point,
+        ) || above(&self.hits, marks.hits, |r| Some(r.0), point)
+            || above(&self.hits_at, marks.hits_at, |r| Some(r.0), point)
+            || above(&self.focusables, marks.focusables, |r| r.1, point)
+            || above(&self.draggables, marks.draggables, |r| Some(r.0), point)
+            || above(&self.drag_starts, marks.drag_starts, |r| Some(r.0), point)
+            || above(&self.cursors, marks.cursors, |r| Some(r.0), point)
+            || above(&self.hovers, marks.hovers, |r| Some(r.0), point);
+        (!covered).then(|| handler.clone())
     }
 
     /// Returns the index (into this scene's scrollables) of the topmost

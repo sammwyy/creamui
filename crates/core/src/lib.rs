@@ -29,12 +29,12 @@ pub use style::{
     Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
 pub use virtualize::{visible_range, HeightIndex};
-pub use window_controls::{
-    TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,
-};
 pub use widget::{
     keyed, BoxedWidget, CursorIcon, Key, KeyInput, MeasureFn, Modifiers, Painter, Styled,
     TextAlign, Widget, WidgetKey, WindowDragHandle,
+};
+pub use window_controls::{
+    TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,
 };
 
 /// Taffy's layout-only primitives. [`crate::Style`] is CreamUI's common

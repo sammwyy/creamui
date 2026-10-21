@@ -15,10 +15,9 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClientRect, IsZoomed, SetWindowPos, ShowWindow, HTCLIENT, HTMAXBUTTON, HTTOP,
-    NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE, WM_MOUSEMOVE, WM_NCCALCSIZE,
-    WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE,
-    WM_NCMOUSEMOVE,
+    NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE, WM_MOUSEMOVE, WM_NCCALCSIZE, WM_NCHITTEST,
+    WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
 };
 
 /// Logical size of one caption button. Client titlebars draw their
@@ -151,11 +150,12 @@ unsafe extern "system" fn subclass_proc(
             // Keep the default side and bottom borders but drop the caption.
             // A maximized window hangs its frame off-screen, so its client
             // area must start below that border to stay fully visible.
-            params.rgrc[0].top = top + if IsZoomed(window) != 0 {
-                resize_border(window)
-            } else {
-                0
-            };
+            params.rgrc[0].top = top
+                + if IsZoomed(window) != 0 {
+                    resize_border(window)
+                } else {
+                    0
+                };
             0
         }
         WM_NCHITTEST => {

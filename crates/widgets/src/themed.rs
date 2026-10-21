@@ -49,6 +49,7 @@ mod scroll;
 mod selection;
 mod surfaces;
 mod text;
+mod titlebar;
 mod typography;
 
 pub use avatar::*;
@@ -64,4 +65,5 @@ pub use scroll::*;
 pub use selection::*;
 pub use surfaces::*;
 pub use text::*;
+pub use titlebar::*;
 pub use typography::*;

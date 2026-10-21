@@ -65,6 +65,35 @@ handle directly. Resizable client, undecorated, and hybrid windows expose all
 eight resize edges; normal server decorations leave their edges to the
 compositor. A resizable window's initial size is not imposed as its minimum.
 
+### Application titlebars
+
+`creamui_widgets::AppTitlebar` is a titlebar drawn by the application that
+adapts to whatever the platform offers. Building one requests
+`CompositorIntegrationRequest::Titlebar` once per window:
+
+- With compositor overlay controls (`Hybrid`, e.g. Blair) the content keeps
+  clear of `WindowDecorations::controls`, on whichever side the compositor puts
+  them. When they lead, the `start` and `end` slots swap.
+- Otherwise the window switches to client-side decorations (xdg-decoration
+  client mode on Wayland, a frameless window on X11) and the titlebar draws its
+  own minimize, maximize and close buttons at the end.
+- On Windows the native frame stays (resize borders, shadow, Aero Snap); only
+  the caption is removed. The titlebar draws Windows-style buttons, and the
+  maximize button is hit-tested by the system so the snap layouts flyout opens.
+
+```rust
+AppTitlebar::new(size.width)
+    .start(settings_button)
+    .center(Text::new(title))
+    .end(share_button)
+```
+
+Empty background and the intrinsic content of the center slot move the window;
+buttons in any slot keep their input. Window actions and the decoration state
+are available to custom chrome through the `creamui_core::WindowControls`
+context. A window drag region only yields to regions recorded inside or above
+it, so an app-wide click target painted underneath no longer blocks dragging.
+
 ## Native keyboard handling
 
 A terminal emulator can register `WindowHandle::on_keyboard_input` in its window

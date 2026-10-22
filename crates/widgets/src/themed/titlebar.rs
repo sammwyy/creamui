@@ -46,6 +46,7 @@ impl CaptionStyle {
 /// trade places so app actions stay away from them.
 pub struct AppTitlebar {
     style: CoreStyle,
+    origin_x: f32,
     width: f32,
     height: f32,
     padding: f32,
@@ -80,6 +81,7 @@ impl AppTitlebar {
         );
         Self {
             style: CoreStyle::default(),
+            origin_x: 0.0,
             width,
             height: 40.0,
             padding: 8.0,
@@ -99,6 +101,14 @@ impl AppTitlebar {
 
     pub fn height(mut self, height: f32) -> Self {
         self.height = height;
+        self
+    }
+
+    /// Horizontal window coordinate where this titlebar begins. This lets a
+    /// titlebar embedded beside a sidebar reserve compositor controls whose
+    /// rectangles are reported in window coordinates.
+    pub fn origin_x(mut self, origin_x: f32) -> Self {
+        self.origin_x = origin_x;
         self
     }
 
@@ -175,7 +185,8 @@ impl AppTitlebar {
     /// Whether the platform's controls sit at the start of the titlebar.
     pub fn controls_lead(&self) -> bool {
         self.state.mode == TitlebarMode::Overlay
-            && self.state.overlay.x + self.state.overlay.width / 2.0 < self.width / 2.0
+            && self.state.overlay.x + self.state.overlay.width / 2.0
+                < self.origin_x + self.width / 2.0
     }
 
     fn effective_height(&self) -> f32 {
@@ -196,9 +207,15 @@ impl AppTitlebar {
             TitlebarMode::Overlay => {
                 let overlay = self.state.overlay;
                 if self.controls_lead() {
-                    (overlay.x + overlay.width + OVERLAY_GAP, 0.0)
+                    (
+                        (overlay.x + overlay.width + OVERLAY_GAP - self.origin_x).max(0.0),
+                        0.0,
+                    )
                 } else {
-                    (0.0, (self.width - overlay.x + OVERLAY_GAP).max(0.0))
+                    (
+                        0.0,
+                        (self.origin_x + self.width - overlay.x + OVERLAY_GAP).max(0.0),
+                    )
                 }
             }
             TitlebarMode::Client => (0.0, client_controls_width(self.caption_style)),

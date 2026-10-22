@@ -4,6 +4,18 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Add `AppTitlebar`, an application-drawn titlebar with start, center and end
+  slots. It requests the new `CompositorIntegrationRequest::Titlebar`: overlay
+  controls where the compositor offers them (slots mirror when the controls
+  lead), client-side decorations with drawn Linux or Windows caption buttons
+  otherwise. On Windows the native frame, shadow and snap layouts flyout are
+  kept around a client-drawn caption. Windows expose `WindowControls`
+  (decoration state, minimize, maximize, close) to the widgets they build, and
+  `WindowDecorations` reports `maximized` and platform-handled button hover.
+- `Widget::passes_window_drag` lets intrinsic content such as a title show the
+  window drag region through it. A drag region now only yields to regions
+  recorded inside or above it.
+
 - Add `creamui-theme-watch`. `ThemeListener::start` reloads the system
   appearance without the application choosing a backend. The `dbus` feature
   listens for `org.creamui.Theme.ReloadTheme` and links D-Bus only on Linux.

@@ -3,6 +3,15 @@
 Current limitations and work still to do. Implemented changes belong in
 `CHANGELOG.md` rather than this list.
 
+## Window chrome
+
+- Exercise the Win32 `AppTitlebar` frame on Windows 10 and 11 hardware: caption
+  removal, maximized insets, top-edge resizing and the snap layouts flyout are
+  only covered by cross-compilation so far.
+- Report the maximized state from Wayland toplevel configures to apps that
+  keep their own frame (`WindowDecorations::maximized` currently follows the
+  configure but no test drives it).
+
 ## Persistent runtime
 
 - Rewrite `jsx!` and `#[component]` to mount through `MountCx`, including

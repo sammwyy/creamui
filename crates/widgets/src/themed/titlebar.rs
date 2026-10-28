@@ -58,6 +58,7 @@ pub struct AppTitlebar {
     start: Vec<BoxedWidget>,
     center: Option<BoxedWidget>,
     end: Vec<BoxedWidget>,
+    body: Option<BoxedWidget>,
     state: TitlebarState,
     controls: Option<WindowControls>,
     drag: Option<WindowDragHandle>,
@@ -93,6 +94,7 @@ impl AppTitlebar {
             start: Vec::new(),
             center: None,
             end: Vec::new(),
+            body: None,
             state,
             controls,
             drag: creamui_reactive::try_use_context(),
@@ -174,6 +176,14 @@ impl AppTitlebar {
 
     pub fn end_boxed(mut self, child: BoxedWidget) -> Self {
         self.end.push(child);
+        self
+    }
+
+    /// Fills the titlebar's safe content area, keeping clear of platform or
+    /// client caption controls. This is useful for application-specific
+    /// toolbars that need to grow across the available width.
+    pub fn body_boxed(mut self, child: BoxedWidget) -> Self {
+        self.body = Some(child);
         self
     }
 
@@ -305,6 +315,27 @@ impl Widget for AppTitlebar {
             LengthPercentage::Length(if client { 0.0 } else { trail.max(self.padding) });
         let mut children: Vec<BoxedWidget> =
             vec![Box::new(RawView::new(layout).with_children(slots))];
+        if let Some(body) = self.body.take() {
+            let body_lead = lead.max(self.padding);
+            let body_trail = if client {
+                trail
+            } else {
+                trail.max(self.padding)
+            };
+            children.push(Box::new(DragThrough(
+                RawView::new(Style {
+                    position: Position::Absolute,
+                    inset: creamui_core::layout::Rect {
+                        left: LengthPercentageAuto::Length(body_lead),
+                        right: LengthPercentageAuto::Length(body_trail),
+                        top: LengthPercentageAuto::Length(0.0),
+                        bottom: LengthPercentageAuto::Length(0.0),
+                    },
+                    ..Default::default()
+                })
+                .child(body),
+            )));
+        }
         if let Some(center) = self.center.take() {
             let side = lead.max(trail) + self.center_margin;
             children.push(Box::new(DragThrough(

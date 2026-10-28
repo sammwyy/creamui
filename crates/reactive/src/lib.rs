@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::rc::{Rc, Weak};
 
 type ContextScope = Rc<RefCell<HashMap<TypeId, Rc<dyn Any>>>>;
+type Unsubscribe = Box<dyn Fn(&Rc<EffectState>)>;
 
 thread_local! {
     static EFFECT_STACK: RefCell<Vec<Rc<EffectState>>> = const { RefCell::new(Vec::new()) };
@@ -109,7 +110,7 @@ struct EffectState {
     /// Unsubscribes collected while the previous execution read signals.
     /// They are run before the next execution so a conditional view only
     /// remains subscribed to the branch it currently renders.
-    dependencies: RefCell<Vec<Box<dyn Fn(&Rc<EffectState>)>>>,
+    dependencies: RefCell<Vec<Unsubscribe>>,
 }
 
 /// Handle to a running [`create_effect`] closure. Drop it to stop the effect
@@ -270,11 +271,13 @@ impl Subscribers {
                 true
             }
             Self::Many(subscribers) => {
-                if subscribers.contains_key(&state.id) {
-                    false
-                } else {
-                    subscribers.insert(state.id, Rc::downgrade(state));
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    subscribers.entry(state.id)
+                {
+                    entry.insert(Rc::downgrade(state));
                     true
+                } else {
+                    false
                 }
             }
         }

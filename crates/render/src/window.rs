@@ -4127,6 +4127,10 @@ mod tests {
     #[derive(Default)]
     struct InteractiveTestWindow {
         requests: std::sync::Mutex<Vec<(InputSerial, Option<ResizeDirection>)>>,
+        decorations: std::sync::Mutex<WindowDecorations>,
+        minimized: std::sync::Mutex<Vec<bool>>,
+        maximized: std::sync::Mutex<Vec<bool>>,
+        size: std::sync::Mutex<Option<creamui_platform::PhysicalSize>>,
     }
 
     impl raw_window_handle::HasDisplayHandle for InteractiveTestWindow {
@@ -4161,17 +4165,27 @@ mod tests {
             1.0
         }
         fn inner_size(&self) -> creamui_platform::PhysicalSize {
-            creamui_platform::PhysicalSize {
-                width: 100,
-                height: 100,
-            }
+            self.size
+                .lock()
+                .unwrap()
+                .unwrap_or(creamui_platform::PhysicalSize {
+                    width: 100,
+                    height: 100,
+                })
         }
         fn is_ready(&self) -> bool {
             true
         }
         fn set_visible(&self, _: bool) {}
-        fn set_minimized(&self, _: bool) {}
-        fn set_maximized(&self, _: bool) {}
+        fn window_decorations(&self) -> WindowDecorations {
+            *self.decorations.lock().unwrap()
+        }
+        fn set_minimized(&self, minimized: bool) {
+            self.minimized.lock().unwrap().push(minimized);
+        }
+        fn set_maximized(&self, maximized: bool) {
+            self.maximized.lock().unwrap().push(maximized);
+        }
         fn set_window_level(&self, _: WindowLevel) {}
         fn drag_window(&self) -> Result<(), String> {
             panic!("must pass the pointer serial to move")
@@ -4436,6 +4450,77 @@ mod tests {
                 (InputSerial(43), Some(ResizeDirection::West))
             ]
         );
+    }
+
+    #[test]
+    fn app_titlebar_clicks_minimize_maximize_restore_and_close_through_the_window_bridge() {
+        use creamui_widgets::{AppTitlebar, CaptionStyle, Text};
+
+        for style in [CaptionStyle::Round, CaptionStyle::Windows] {
+            let observed = Rc::new(RefCell::new(Vec::new()));
+            let mut harness = WindowEventHarness::new({
+                let observed = observed.clone();
+                move |size| {
+                    let titlebar = AppTitlebar::new(size.width)
+                        .caption_style(style)
+                        .center(Text::new("Custom titlebar"));
+                    observed.borrow_mut().push(titlebar.state());
+                    Box::new(titlebar)
+                }
+            });
+            let window = Arc::new(InteractiveTestWindow::default());
+            *window.size.lock().unwrap() = Some(creamui_platform::PhysicalSize {
+                width: 600,
+                height: 100,
+            });
+            *harness.state.pipeline.window.borrow_mut() = Some(window.clone());
+            harness.state.queue_viewport(Size {
+                width: 600.0,
+                height: 100.0,
+            });
+            let mut click = |button, maximized| {
+                let decorations = WindowDecorations {
+                    mode: WindowDecorationMode::Client,
+                    maximized,
+                    ..Default::default()
+                };
+                *window.decorations.lock().unwrap() = decorations;
+                harness.send(WindowEvent::DecorationsChanged(decorations));
+                harness.state.redraw();
+                assert_eq!(observed.borrow().last().unwrap().mode, TitlebarMode::Client);
+                assert_eq!(observed.borrow().last().unwrap().maximized, maximized);
+                let (width, gap, y) = match style {
+                    CaptionStyle::Round => (24.0, 10.0, 20.0),
+                    CaptionStyle::Windows => (46.0, 0.0, 16.0),
+                };
+                let index = match button {
+                    WindowButton::Minimize => 2.0,
+                    WindowButton::Maximize => 1.0,
+                    WindowButton::Close => 0.0,
+                };
+                harness.send(WindowEvent::CursorMoved {
+                    position: creamui_platform::PhysicalPosition {
+                        x: 600.0 - gap - width / 2.0 - index * (width + gap),
+                        y,
+                    },
+                });
+                for pressed in [true, false] {
+                    harness.send(WindowEvent::MouseInput {
+                        pressed,
+                        button: MouseButton::Left,
+                        serial: Some(InputSerial(42)),
+                    });
+                }
+            };
+            click(WindowButton::Minimize, false);
+            click(WindowButton::Maximize, false);
+            click(WindowButton::Maximize, true);
+            click(WindowButton::Close, false);
+            assert_eq!(*window.minimized.lock().unwrap(), [true]);
+            assert_eq!(*window.maximized.lock().unwrap(), [true, false]);
+            assert!(harness.state.close_requested.get());
+            assert!(window.requests.lock().unwrap().is_empty());
+        }
     }
 
     #[test]

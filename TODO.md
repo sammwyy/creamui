@@ -8,9 +8,6 @@ Current limitations and work still to do. Implemented changes belong in
 - Exercise the Win32 `AppTitlebar` frame on Windows 10 and 11 hardware: caption
   removal, maximized insets, top-edge resizing and the snap layouts flyout are
   only covered by cross-compilation so far.
-- Report the maximized state from Wayland toplevel configures to apps that
-  keep their own frame (`WindowDecorations::maximized` currently follows the
-  configure but no test drives it).
 
 ## Persistent runtime
 
@@ -38,3 +35,11 @@ Current limitations and work still to do. Implemented changes belong in
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
   opaque backdrop; otherwise it repaints the layer viewport.
+
+## Tooling
+
+- Clear existing strict Clippy diagnostics in `creamui-core` and `creamui-render`.
+  `cargo clippy -p creamui-render --all-targets -- -D warnings` currently fails
+  on complex callback types, large enum variants, macro paths and other style
+  diagnostics. Keep public API and renderer allocation changes separate from
+  mechanical lint cleanup.

@@ -71,3 +71,7 @@ windows-sys = { version = "0.59", features = [
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server"] }

@@ -4,6 +4,13 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Native Wayland titlebar controls send minimize, maximize and restore requests
+  through xdg-shell. Repeated state requests coalesce per window, and actions
+  queued after closing a window are discarded. Protocol and renderer tests
+  cover the returned maximized state and caption-button clicks through
+  `WindowControls`. `AppTitlebar` also enables client controls when the window
+  was initially created without decorations.
+
 - Add `AppTitlebar`, an application-drawn titlebar with start, center and end
   slots. It requests the new `CompositorIntegrationRequest::Titlebar`: overlay
   controls where the compositor offers them (slots mirror when the controls

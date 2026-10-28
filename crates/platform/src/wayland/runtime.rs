@@ -96,12 +96,6 @@ struct LoopState {
     control_flow: Mutex<ControlFlow>,
 }
 
-impl Default for ControlFlow {
-    fn default() -> Self {
-        Self::Wait
-    }
-}
-
 pub struct EventLoop<T: 'static> {
     events: Arc<Mutex<Vec<T>>>,
     state: Arc<LoopState>,
@@ -138,6 +132,14 @@ impl<T: 'static> EventLoop<T> {
 
     pub fn run_app<H: ApplicationHandler<T>>(self, handler: &mut H) -> Result<(), String> {
         let connection = Connection::connect_to_env().map_err(|error| error.to_string())?;
+        self.run_app_on_connection(handler, connection)
+    }
+
+    fn run_app_on_connection<H: ApplicationHandler<T>>(
+        self,
+        handler: &mut H,
+        connection: Connection,
+    ) -> Result<(), String> {
         let (globals, mut event_queue) =
             registry_queue_init::<DispatchState>(&connection).map_err(|error| error.to_string())?;
         let queue_handle = event_queue.handle();
@@ -199,6 +201,7 @@ impl<T: 'static> EventLoop<T> {
                 handler.user_event(&active, event);
             }
             runtime.borrow_mut().close_requested();
+            runtime.borrow_mut().apply_window_state_requests();
             runtime.borrow_mut().apply_cursor_requests();
             runtime.borrow_mut().apply_interactive_requests();
             runtime.borrow_mut().apply_drag_requests(&queue_handle);
@@ -293,6 +296,7 @@ impl ActiveEventLoop<'_> {
             window.wl_surface().clone(),
             runtime.display.clone(),
             runtime.close_requests.clone(),
+            runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.interactive_requests.clone(),
@@ -357,6 +361,7 @@ impl ActiveEventLoop<'_> {
             popup.wl_surface().clone(),
             runtime.display.clone(),
             runtime.close_requests.clone(),
+            runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
             runtime.drag_requests.clone(),
             runtime.interactive_requests.clone(),
@@ -412,6 +417,7 @@ impl PlatformBackend for ActiveEventLoop<'_> {
 }
 
 type RcRuntime = std::rc::Rc<RefCell<Runtime>>;
+type ShortcutRequests = Arc<Mutex<Vec<(WindowId, bool)>>>;
 
 struct Runtime {
     compositor: CompositorState,
@@ -429,7 +435,7 @@ struct Runtime {
     integration: Option<integration::IntegrationBackend>,
     integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
     shortcuts: Option<shortcuts::ShortcutInhibition>,
-    shortcut_requests: Arc<Mutex<Vec<(WindowId, bool)>>>,
+    shortcut_requests: ShortcutRequests,
     cursor_shape_device: Option<WpCursorShapeDeviceV1>,
     cursor_serial: Option<u32>,
     pointer_focus: Option<WindowId>,
@@ -437,6 +443,7 @@ struct Runtime {
     pointer_over_passthrough: bool,
     keyboard_focus: Option<WindowId>,
     close_requests: Arc<Mutex<Vec<WindowId>>>,
+    window_state_requests: Arc<Mutex<HashMap<WindowId, WindowStateRequest>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     windows: HashMap<WindowId, NativeWindow>,
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
@@ -466,6 +473,12 @@ struct InteractiveRequest {
     serial: u32,
     /// `None` means move; otherwise resize the specified edges.
     resize: Option<ResizeDirection>,
+}
+
+#[derive(Default)]
+struct WindowStateRequest {
+    maximized: Option<bool>,
+    minimize: bool,
 }
 
 fn window_size_limits(size: LogicalSize, resizable: bool) -> ((u32, u32), Option<(u32, u32)>) {
@@ -562,6 +575,7 @@ impl Runtime {
             pointer_over_passthrough: false,
             keyboard_focus: None,
             close_requests: Arc::new(Mutex::new(Vec::new())),
+            window_state_requests: Arc::new(Mutex::new(HashMap::new())),
             cursor_requests: Arc::new(Mutex::new(Vec::new())),
             windows: HashMap::new(),
             output_refresh: Arc::new(Mutex::new(HashMap::new())),
@@ -623,6 +637,33 @@ impl Runtime {
             }
             if self.keyboard_focus == Some(id) {
                 self.keyboard_focus = None;
+            }
+        }
+    }
+
+    fn apply_window_state_requests(&mut self) {
+        let requests = std::mem::take(
+            &mut *self
+                .window_state_requests
+                .lock()
+                .expect("window state request lock poisoned"),
+        );
+        for (id, request) in requests {
+            let Some(NativeWindow::Toplevel { window, .. }) = self.windows.get(&id) else {
+                log::debug!("creamui-platform: ignoring state request for non-toplevel {id:?}");
+                continue;
+            };
+            if let Some(maximized) = request.maximized {
+                log::debug!("creamui-platform: setting {id:?} maximized={maximized}");
+                if maximized {
+                    window.set_maximized();
+                } else {
+                    window.unset_maximized();
+                }
+            }
+            if request.minimize {
+                log::debug!("creamui-platform: minimizing {id:?}");
+                window.set_minimized();
             }
         }
     }
@@ -740,6 +781,12 @@ impl Runtime {
                 .handle()
                 .titlebar_fallback
                 .swap(titlebar, Ordering::AcqRel);
+            native
+                .handle()
+                .decorations
+                .lock()
+                .expect("decoration lock poisoned")
+                .set_titlebar(titlebar);
             if titlebar && self.integration.is_none() {
                 log::debug!("creamui-platform: no overlay integration, using client decorations");
                 native.request_decoration_mode(DecorationMode::Client);
@@ -764,7 +811,7 @@ impl Runtime {
         }
     }
 
-    fn shortcut_queue(&self) -> Option<Arc<Mutex<Vec<(WindowId, bool)>>>> {
+    fn shortcut_queue(&self) -> Option<ShortcutRequests> {
         self.shortcuts
             .as_ref()
             .zip(self.seat.as_ref())
@@ -861,6 +908,7 @@ fn create_layer_window(
         surface,
         runtime.display.clone(),
         runtime.close_requests.clone(),
+        runtime.window_state_requests.clone(),
         runtime.cursor_requests.clone(),
         runtime.drag_requests.clone(),
         runtime.interactive_requests.clone(),
@@ -1716,6 +1764,7 @@ pub struct Window {
     requested_redraw: AtomicBool,
     visible: AtomicBool,
     close_requests: Arc<Mutex<Vec<WindowId>>>,
+    window_state_requests: Arc<Mutex<HashMap<WindowId, WindowStateRequest>>>,
     cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
     interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
@@ -1724,7 +1773,7 @@ pub struct Window {
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
     panel_surface: Mutex<Option<(WindowRole, ZwlrLayerSurfaceV1)>>,
-    shortcut_requests: Option<Arc<Mutex<Vec<(WindowId, bool)>>>>,
+    shortcut_requests: Option<ShortcutRequests>,
 }
 
 impl Window {
@@ -1734,13 +1783,14 @@ impl Window {
         surface: wl_surface::WlSurface,
         display: wl_display::WlDisplay,
         close_requests: Arc<Mutex<Vec<WindowId>>>,
+        window_state_requests: Arc<Mutex<HashMap<WindowId, WindowStateRequest>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
         drag_requests: Arc<Mutex<Vec<DragRequest>>>,
         interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
         blur_requests: Arc<Mutex<Vec<BlurRequest>>>,
         integration_requests: Arc<Mutex<Vec<IntegrationRequest>>>,
         output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
-        shortcut_requests: Option<Arc<Mutex<Vec<(WindowId, bool)>>>>,
+        shortcut_requests: Option<ShortcutRequests>,
         size: LogicalSize,
         pointer_passthrough: bool,
     ) -> Self {
@@ -1759,6 +1809,7 @@ impl Window {
             requested_redraw: AtomicBool::new(true),
             visible: AtomicBool::new(false),
             close_requests,
+            window_state_requests,
             cursor_requests,
             drag_requests,
             interactive_requests,
@@ -1792,6 +1843,7 @@ impl Window {
         self.titlebar_fallback.load(Ordering::Acquire)
     }
 
+    #[cfg_attr(not(feature = "window-integration-blair"), allow(dead_code))]
     fn configure_integration(
         &self,
         mode: CompositorIntegrationMode,
@@ -1897,8 +1949,26 @@ impl PlatformWindow for Window {
     fn set_visible(&self, visible: bool) {
         self.visible.store(visible, Ordering::Release);
     }
-    fn set_minimized(&self, _: bool) {}
-    fn set_maximized(&self, _: bool) {}
+    fn set_minimized(&self, minimized: bool) {
+        if !minimized {
+            log::debug!("creamui-platform: xdg-shell cannot restore a minimized window");
+            return;
+        }
+        self.window_state_requests
+            .lock()
+            .expect("window state request lock poisoned")
+            .entry(self.id)
+            .or_default()
+            .minimize = true;
+    }
+    fn set_maximized(&self, maximized: bool) {
+        self.window_state_requests
+            .lock()
+            .expect("window state request lock poisoned")
+            .entry(self.id)
+            .or_default()
+            .maximized = Some(maximized);
+    }
     fn set_window_level(&self, _: WindowLevel) {}
     fn drag_window(&self) -> Result<(), String> {
         Err("Wayland interactive move requires an input serial".to_owned())
@@ -2172,121 +2242,6 @@ fn dispatch_with_timeout(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn panel_resize_preserves_anchored_length_and_updates_the_exclusive_zone() {
-        for role in [WindowRole::TopPanel, WindowRole::BottomPanel] {
-            assert_eq!(
-                panel_dimensions(role, LogicalSize::new(800.0, 2.0)),
-                (0, 2, 2)
-            );
-            assert_eq!(
-                panel_dimensions(role, LogicalSize::new(800.0, 76.0)),
-                (0, 76, 76)
-            );
-        }
-        for role in [WindowRole::LeftPanel, WindowRole::RightPanel] {
-            assert_eq!(
-                panel_dimensions(role, LogicalSize::new(2.0, 800.0)),
-                (2, 0, 2)
-            );
-            assert_eq!(
-                panel_dimensions(role, LogicalSize::new(76.0, 800.0)),
-                (76, 0, 76)
-            );
-        }
-    }
-    use super::*;
-
-    #[test]
-    fn terminal_function_keys_and_insert_are_preserved() {
-        for (code, expected) in [
-            (29, Key::Control),
-            (97, Key::Control),
-            (54, Key::Shift),
-            (100, Key::Alt),
-            (125, Key::Super),
-            (126, Key::Super),
-            (15, Key::Tab),
-            (114, Key::Media("XF86AudioLowerVolume".into())),
-            (115, Key::Media("XF86AudioRaiseVolume".into())),
-            (224, Key::Media("XF86MonBrightnessDown".into())),
-            (225, Key::Media("XF86MonBrightnessUp".into())),
-            (248, Key::Media("XF86AudioMicMute".into())),
-            (110, Key::Insert),
-            (59, Key::F1),
-            (60, Key::F2),
-            (67, Key::F9),
-            (68, Key::F10),
-            (87, Key::F11),
-            (88, Key::F12),
-        ] {
-            assert_eq!(keyboard_key(code, None), expected);
-        }
-    }
-
-    #[test]
-    fn resizable_windows_do_not_use_their_initial_size_as_a_minimum() {
-        let size = LogicalSize::new(1120.0, 760.0);
-        assert_eq!(window_size_limits(size, true), ((1, 1), None));
-        assert_eq!(
-            window_size_limits(size, false),
-            ((1120, 760), Some((1120, 760)))
-        );
-    }
-
-    #[test]
-    fn all_resize_directions_map_to_wayland_edges() {
-        for (direction, edge) in [
-            (ResizeDirection::North, ResizeEdge::Top),
-            (ResizeDirection::South, ResizeEdge::Bottom),
-            (ResizeDirection::East, ResizeEdge::Right),
-            (ResizeDirection::West, ResizeEdge::Left),
-            (ResizeDirection::NorthWest, ResizeEdge::TopLeft),
-            (ResizeDirection::NorthEast, ResizeEdge::TopRight),
-            (ResizeDirection::SouthWest, ResizeEdge::BottomLeft),
-            (ResizeDirection::SouthEast, ResizeEdge::BottomRight),
-        ] {
-            assert_eq!(resize_edge(direction), edge);
-        }
-    }
-
-    #[test]
-    fn wayland_axis_deltas_match_the_platform_scroll_convention() {
-        assert_eq!(
-            wayland_axis_delta(wl_pointer::Axis::VerticalScroll, 12.0),
-            Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
-                x: 0.0,
-                y: -12.0
-            }))
-        );
-        assert_eq!(
-            wayland_axis_delta(wl_pointer::Axis::HorizontalScroll, 8.0),
-            Some(MouseScrollDelta::PixelDelta(PhysicalPosition {
-                x: -8.0,
-                y: 0.0
-            }))
-        );
-    }
-
-    #[test]
-    fn refresh_interval_uses_the_current_positive_mode() {
-        let mode = |refresh_rate, current| Mode {
-            dimensions: (1920, 1080),
-            refresh_rate,
-            current,
-            preferred: false,
-        };
-        assert_eq!(
-            current_refresh_interval(&[mode(144_000, false), mode(120_000, true)]),
-            Some(Duration::from_nanos(8_333_333))
-        );
-        assert_eq!(current_refresh_interval(&[mode(0, true)]), None);
-        assert_eq!(current_refresh_interval(&[mode(60_000, false)]), None);
-    }
-}
-
 /// Parses a `text/uri-list` payload into local paths (`file://` only).
 pub(crate) fn parse_uri_list(payload: &str) -> Vec<std::path::PathBuf> {
     payload
@@ -2332,3 +2287,6 @@ fn percent_decode(bytes: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

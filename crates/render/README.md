@@ -94,6 +94,12 @@ are available to custom chrome through the `creamui_core::WindowControls`
 context. A window drag region only yields to regions recorded inside or above
 it, so an app-wide click target painted underneath no longer blocks dragging.
 
+Native Wayland sends minimize, maximize and restore actions through xdg-shell.
+The maximize button follows the compositor's configured state, including
+changes made outside the application. Restoring a minimized window remains a
+window-manager action: xdg-shell has no inverse of its minimize request, so
+`set_minimized(false)` cannot restore a native Wayland window.
+
 ## Native keyboard handling
 
 A terminal emulator can register `WindowHandle::on_keyboard_input` in its window

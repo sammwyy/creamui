@@ -246,6 +246,7 @@ pub struct WindowDecorations {
 #[cfg(all(feature = "wayland", target_os = "linux"))]
 pub(crate) struct DecorationNegotiation {
     requested: bool,
+    titlebar: bool,
     standard: WindowDecorationMode,
     hybrid: Option<CompositorControls>,
     maximized: bool,
@@ -256,6 +257,7 @@ impl DecorationNegotiation {
     pub(crate) fn new(requested: bool) -> Self {
         Self {
             requested,
+            titlebar: false,
             standard: if requested {
                 WindowDecorationMode::Pending
             } else {
@@ -268,6 +270,10 @@ impl DecorationNegotiation {
 
     pub(crate) fn set_maximized(&mut self, maximized: bool) {
         self.maximized = maximized;
+    }
+
+    pub(crate) fn set_titlebar(&mut self, titlebar: bool) {
+        self.titlebar = titlebar;
     }
 
     pub(crate) fn configure(&mut self, server: bool) -> WindowDecorations {
@@ -299,7 +305,11 @@ impl DecorationNegotiation {
                 hovered: None,
             },
             None => WindowDecorations {
-                mode: self.standard,
+                mode: if self.titlebar && self.standard == WindowDecorationMode::None {
+                    WindowDecorationMode::Client
+                } else {
+                    self.standard
+                },
                 controls: CompositorControls::default(),
                 maximized: self.maximized,
                 hovered: None,
@@ -541,7 +551,9 @@ pub enum WindowEvent {
     Other,
 }
 
+#[derive(Default)]
 pub enum ControlFlow {
+    #[default]
     Wait,
     WaitUntil(Instant),
 }
@@ -595,6 +607,14 @@ mod tests {
             undecorated.configure(false).mode,
             WindowDecorationMode::None
         );
+        undecorated.set_titlebar(true);
+        assert_eq!(undecorated.effective().mode, WindowDecorationMode::Client);
+        assert_eq!(
+            undecorated.configure(false).mode,
+            WindowDecorationMode::Client
+        );
+        undecorated.set_titlebar(false);
+        assert_eq!(undecorated.effective().mode, WindowDecorationMode::None);
         // A compositor may force server decoration even if none was requested.
         assert_eq!(
             undecorated.configure(true).mode,

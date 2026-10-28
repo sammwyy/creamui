@@ -173,7 +173,7 @@ impl IntegrationBackend {
     pub(super) fn bind(globals: &GlobalList, qh: &QueueHandle<DispatchState>) -> Option<Self> {
         #[cfg(feature = "window-integration-blair")]
         {
-            return blair::BlairIntegration::bind(globals, qh).map(|blair| Self { blair });
+            blair::BlairIntegration::bind(globals, qh).map(|blair| Self { blair })
         }
         #[cfg(not(feature = "window-integration-blair"))]
         {

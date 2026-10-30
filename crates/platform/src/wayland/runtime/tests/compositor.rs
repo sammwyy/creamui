@@ -18,6 +18,7 @@ use wayland_server::{
 pub(super) struct Compositor {
     stop: Arc<AtomicBool>,
     actions: Arc<Mutex<Vec<&'static str>>>,
+    minimums: Arc<Mutex<Vec<(i32, i32)>>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -26,9 +27,11 @@ impl Compositor {
         let (server, client) = UnixStream::pair().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let actions = Arc::new(Mutex::new(Vec::new()));
+        let minimums = Arc::new(Mutex::new(Vec::new()));
         let thread = thread::spawn({
             let stop = stop.clone();
             let actions = actions.clone();
+            let minimums = minimums.clone();
             move || {
                 let mut display = Display::<State>::new().unwrap();
                 let mut handle = display.handle();
@@ -38,6 +41,7 @@ impl Compositor {
                 handle.insert_client(server, Arc::new(())).unwrap();
                 let mut state = State {
                     windows: Vec::new(),
+                    minimums,
                     actions,
                     proxy,
                     serial: 0,
@@ -53,10 +57,15 @@ impl Compositor {
             Self {
                 stop,
                 actions,
+                minimums,
                 thread: Some(thread),
             },
             Connection::from_socket(client).unwrap(),
         )
+    }
+
+    pub(super) fn minimums(&self) -> Vec<(i32, i32)> {
+        self.minimums.lock().unwrap().clone()
     }
 
     pub(super) fn actions(&self) -> Vec<&'static str> {
@@ -81,6 +90,7 @@ struct Window {
 struct State {
     windows: Vec<Window>,
     actions: Arc<Mutex<Vec<&'static str>>>,
+    minimums: Arc<Mutex<Vec<(i32, i32)>>>,
     proxy: EventLoopProxy<Event>,
     serial: u32,
 }
@@ -240,6 +250,10 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
         _: &mut DataInit<'_, Self>,
     ) {
         let maximized = match request {
+            xdg_toplevel::Request::SetMinSize { width, height } => {
+                state.minimums.lock().unwrap().push((width, height));
+                None
+            }
             xdg_toplevel::Request::SetMaximized => Some(true),
             xdg_toplevel::Request::UnsetMaximized => Some(false),
             xdg_toplevel::Request::SetMinimized => {

@@ -226,6 +226,11 @@ impl PlatformWindow for Window {
     fn request_inner_size(&self, size: LogicalSize) {
         self.request_inner_size(size);
     }
+    fn set_min_inner_size(&self, size: Option<LogicalSize>) {
+        self.inner.set_min_inner_size(
+            size.map(|size| winit::dpi::LogicalSize::new(size.width, size.height)),
+        );
+    }
     fn set_outer_position(&self, position: LogicalPosition) {
         self.set_outer_position(position);
     }

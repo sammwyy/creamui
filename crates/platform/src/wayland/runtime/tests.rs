@@ -38,16 +38,19 @@ impl ApplicationHandler<Event> for App {
             match self.states.len() {
                 1 => {
                     assert!(!decorations.maximized);
+                    window.set_min_inner_size(Some(LogicalSize::new(640.0, 480.0)));
                     window.set_minimized(false);
                     window.set_maximized(false);
                     window.set_maximized(true);
                 }
                 2 => {
                     assert!(decorations.maximized);
+                    window.set_min_inner_size(Some(LogicalSize::new(960.0, 560.0)));
                     window.set_maximized(false);
                 }
                 3 => {
                     assert!(!decorations.maximized);
+                    window.set_min_inner_size(None);
                     window.set_minimized(true);
                 }
                 _ => panic!("unexpected configure"),
@@ -108,6 +111,7 @@ fn exercise_titlebar(decorations: bool) {
             .collect::<Vec<_>>(),
         [false, true, false]
     );
+    assert_eq!(server.minimums(), [(1, 1), (640, 480), (960, 560), (0, 0)]);
     assert_eq!(
         server.actions(),
         ["maximize", "restore", "minimize", "close"]

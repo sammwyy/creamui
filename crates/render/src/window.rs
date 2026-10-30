@@ -1649,6 +1649,14 @@ impl WindowHandle {
         self.decorations.get()
     }
 
+    pub fn set_min_size(&self, size: Option<(u32, u32)>) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_min_inner_size(size.map(|(width, height)| {
+                LogicalSize::new(width.max(1) as f64, height.max(1) as f64)
+            }));
+        }
+    }
+
     /// Requests a new logical-pixel window size. The actual resize (and any
     /// resulting `Resized` event) happens asynchronously, same as a user
     /// dragging the window border.
@@ -4264,6 +4272,7 @@ mod tests {
 
     #[derive(Default)]
     struct InteractiveTestWindow {
+        minimum: std::sync::Mutex<Vec<Option<LogicalSize>>>,
         requests: std::sync::Mutex<Vec<(InputSerial, Option<ResizeDirection>)>>,
         decorations: std::sync::Mutex<WindowDecorations>,
         minimized: std::sync::Mutex<Vec<bool>>,
@@ -4292,6 +4301,9 @@ mod tests {
         fn request_redraw(&self) {}
         fn close(&self) {}
         fn request_inner_size(&self, _: LogicalSize) {}
+        fn set_min_inner_size(&self, size: Option<LogicalSize>) {
+            self.minimum.lock().unwrap().push(size);
+        }
         fn set_outer_position(&self, _: LogicalPosition) {}
         fn outer_position(&self) -> Option<creamui_platform::PhysicalPosition> {
             None

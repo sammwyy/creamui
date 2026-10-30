@@ -62,6 +62,7 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
     fn close(&self);
     fn set_title(&self, _title: &str) {}
     fn request_inner_size(&self, size: LogicalSize);
+    fn set_min_inner_size(&self, size: Option<LogicalSize>);
     fn set_outer_position(&self, position: LogicalPosition);
     fn outer_position(&self) -> Option<PhysicalPosition>;
     fn monitor_size(&self) -> Option<PhysicalSize>;

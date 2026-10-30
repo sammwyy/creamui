@@ -207,6 +207,16 @@ radius, and outline before calling a widget's content-specific `paint` method.
 Pointer, focus, and component-owned disabled states are composed rather than
 being mutually exclusive.
 
+## Desktop window sizes
+
+`WindowHandle::resize(width, height)` requests a logical-pixel client size.
+`WindowHandle::set_min_size(Some((width, height)))` changes the native minimum
+client size; pass `None` to clear that constraint. Apply it in the window-ready
+callback, then update it when switching layouts with different requirements.
+The winit desktop backend forwards the minimum to the native window; native
+Wayland sends `xdg_toplevel.set_min_size` and commits the surface state. Requested
+resizes are asynchronous and the window manager owns the final configured size.
+
 ## Next steps
 
 - Browse [components](components.md) for the component families and their state model.

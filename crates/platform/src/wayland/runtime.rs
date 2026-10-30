@@ -477,6 +477,7 @@ struct InteractiveRequest {
 
 #[derive(Default)]
 struct WindowStateRequest {
+    minimum: Option<Option<(u32, u32)>>,
     title: Option<String>,
     maximized: Option<bool>,
     minimize: bool,
@@ -654,6 +655,10 @@ impl Runtime {
                 log::debug!("creamui-platform: ignoring state request for non-toplevel {id:?}");
                 continue;
             };
+            if let Some(minimum) = request.minimum {
+                window.set_min_size(minimum);
+                window.commit();
+            }
             if let Some(title) = request.title {
                 window.set_title(title);
             }
@@ -1942,6 +1947,19 @@ impl PlatformWindow for Window {
         self.request_redraw();
     }
 
+    fn set_min_inner_size(&self, size: Option<LogicalSize>) {
+        self.window_state_requests
+            .lock()
+            .expect("window state request lock poisoned")
+            .entry(self.id)
+            .or_default()
+            .minimum = Some(size.map(|size| {
+            (
+                size.width.ceil().max(1.0) as u32,
+                size.height.ceil().max(1.0) as u32,
+            )
+        }));
+    }
     fn set_outer_position(&self, _: LogicalPosition) {}
     fn outer_position(&self) -> Option<PhysicalPosition> {
         None

@@ -19,7 +19,8 @@ creamui = { version = "0.1", features = ["jsx", "image"] }
 | `dynamic` | Dynamic runtime client and ABI types |
 | `ffi` | Shared-library C ABI and ABI types |
 | `devtools` | `creamui-devtools`, re-exported as `creamui::devtools` |
-| `theme-watch` | Live appearance reloads as `creamui::theme_watch`. Linux uses the session bus; Windows, Android, and WebAssembly stay idle |
+| `system-theme` | Automatic theme resolution, live `AppBuilder::system_theme()`, host queries as `creamui::appearance`, and `use_system_appearance()` |
+| `theme-watch` | Host, session snapshot and config notifications as `creamui::theme_watch`; native Linux and Windows backends |
 | `full` | Every optional integration |
 
 Use modules such as `creamui::widgets`, `creamui::theme`, and `creamui::render`, or import common items directly from `creamui`.

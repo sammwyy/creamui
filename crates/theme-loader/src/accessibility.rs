@@ -117,15 +117,30 @@ pub fn write_system_accessibility(
 }
 
 pub(crate) fn read_accessibility(path: &Path) -> Result<AccessibilityPreferences, ThemeLoadError> {
+    read_with_defaults(path, AccessibilityPreferences::default())
+}
+
+pub(crate) fn read_with_defaults(
+    path: &Path,
+    defaults: AccessibilityPreferences,
+) -> Result<AccessibilityPreferences, ThemeLoadError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Overrides {
+        high_contrast: Option<bool>,
+        text_scale: Option<f32>,
+    }
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AccessibilityPreferences::default())
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(defaults),
         Err(error) => return Err(ThemeLoadError::Io(error)),
     };
-    let preferences: AccessibilityPreferences = toml::from_str(&source)
+    let overrides: Overrides = toml::from_str(&source)
         .map_err(|error| ThemeLoadError::InvalidAccessibility(error.to_string()))?;
+    let preferences = AccessibilityPreferences {
+        high_contrast: overrides.high_contrast.unwrap_or(defaults.high_contrast),
+        text_scale: overrides.text_scale.unwrap_or(defaults.text_scale),
+    };
     preferences.validate()?;
     Ok(preferences)
 }

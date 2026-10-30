@@ -8,7 +8,12 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
+[features]
+default = ["portal"]
+portal = ["creamui-appearance/portal"]
+
 [dependencies]
+creamui-appearance = { workspace = true, default-features = false }
 creamui-theme = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

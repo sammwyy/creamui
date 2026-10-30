@@ -50,6 +50,14 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
+#[cfg(feature = "system-theme")]
+#[path = "system_appearance.rs"]
+mod system_appearance;
+#[cfg(feature = "system-theme")]
+thread_local! {
+    static SYSTEM_APPEARANCE: creamui_theme::SystemAppearanceProvider = Default::default();
+}
+
 /// How long the text-input caret stays in each visibility phase while
 /// blinking (on, then off, then on again).
 const CARET_BLINK_INTERVAL: Duration = Duration::from_millis(530);
@@ -769,6 +777,9 @@ struct Pipeline {
     window: SharedWindow,
     source: UiSource,
     theme: ThemeProvider,
+    follow_system_theme: Cell<bool>,
+    #[cfg(feature = "system-theme")]
+    system_appearance: creamui_theme::SystemAppearanceProvider,
     window_drag: WindowDragHandle,
     titlebar: Rc<TitlebarBridge>,
     window_controls: WindowControls,
@@ -885,6 +896,8 @@ impl Pipeline {
             || {
                 #[cfg(feature = "router")]
                 creamui_reactive::provide_context(self.router_host.clone());
+                #[cfg(feature = "system-theme")]
+                creamui_reactive::provide_context(self.system_appearance.clone());
                 f()
             },
         )
@@ -1305,6 +1318,7 @@ pub struct AppHandle {
 }
 
 struct AppCommands {
+    system_theme: Option<Theme>,
     windows: Vec<PendingWindow>,
     exit_requested: bool,
     proxy: EventLoopProxy<AppEvent>,
@@ -1325,7 +1339,14 @@ impl AppHandle {
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
         build_ui: impl Fn(Size) -> V + 'static,
     ) {
-        self.commands.borrow_mut().windows.push(PendingWindow {
+        let mut commands = self.commands.borrow_mut();
+        let mut options = options;
+        if let Some(theme) = commands.system_theme {
+            options.theme = theme;
+        }
+        let follow_system_theme = commands.system_theme.is_some();
+        commands.windows.push(PendingWindow {
+            follow_system_theme,
             options,
             popup: None,
             clear_color,
@@ -1341,7 +1362,14 @@ impl AppHandle {
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
         runtime: SharedRuntime,
     ) {
-        self.commands.borrow_mut().windows.push(PendingWindow {
+        let mut commands = self.commands.borrow_mut();
+        let mut options = options;
+        if let Some(theme) = commands.system_theme {
+            options.theme = theme;
+        }
+        let follow_system_theme = commands.system_theme.is_some();
+        commands.windows.push(PendingWindow {
+            follow_system_theme,
             options,
             popup: None,
             clear_color,
@@ -1361,7 +1389,14 @@ impl AppHandle {
         on_window_ready: impl FnOnce(WindowHandle) + 'static,
         build_ui: impl Fn(Size) -> V + 'static,
     ) {
-        self.commands.borrow_mut().windows.push(PendingWindow {
+        let mut commands = self.commands.borrow_mut();
+        let mut options = options;
+        if let Some(theme) = commands.system_theme {
+            options.theme = theme;
+        }
+        let follow_system_theme = commands.system_theme.is_some();
+        commands.windows.push(PendingWindow {
+            follow_system_theme,
             options,
             popup: Some(popup),
             clear_color,
@@ -1818,8 +1853,12 @@ impl WindowHandle {
     }
 
     /// Replaces the window's theme. `use_theme()` reflects it on the next
-    /// rebuild, which this schedules immediately.
+    /// rebuild, which this schedules immediately. This window stops following
+    /// the automatic system theme; the system appearance hook remains live.
     pub fn set_theme(&self, theme: Theme) {
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.follow_system_theme.set(false);
+        }
         self.theme.set(theme);
     }
 
@@ -1910,6 +1949,7 @@ pub struct AppBuilder {
 /// (so a single shared `wgpu::Instance` can be started once, up front, if
 /// any of them need it).
 struct PendingWindow {
+    follow_system_theme: bool,
     options: WindowOptions,
     popup: Option<PopupOptions>,
     clear_color: Color,
@@ -1940,6 +1980,9 @@ impl AppBuilder {
         self
     }
 
+    /// Follow the host appearance at startup and while running. A desktop's
+    /// named variant is preserved when available; otherwise resolve light/dark.
+    /// Explicit loader/config selections retain priority over host preferences.
     #[cfg(feature = "system-theme")]
     pub fn system_theme(mut self) -> Result<Self, creamui_theme_loader::ThemeLoadError> {
         let resolved = creamui_theme_loader::SystemThemeLoader::new().load()?;
@@ -1949,6 +1992,7 @@ impl AppBuilder {
         let theme = resolved.theme;
         for spec in &mut self.specs {
             spec.options.theme = theme;
+            spec.follow_system_theme = true;
         }
         self.system_theme = Some(theme);
         Ok(self)
@@ -1992,6 +2036,7 @@ impl AppBuilder {
             options.theme = theme;
         }
         self.specs.push(PendingWindow {
+            follow_system_theme: self.system_theme.is_some(),
             options,
             popup: None,
             clear_color,
@@ -2014,6 +2059,7 @@ impl AppBuilder {
             options.theme = theme;
         }
         self.specs.push(PendingWindow {
+            follow_system_theme: self.system_theme.is_some(),
             options,
             popup: None,
             clear_color,
@@ -2029,6 +2075,7 @@ impl AppBuilder {
     pub fn run(self) {
         run_windows(
             self.specs,
+            self.system_theme,
             self.on_panic,
             self.on_started,
             self.exit_when_last_window_closes,
@@ -2045,6 +2092,7 @@ impl AppBuilder {
         creamui_router::android::install(app.clone());
         run_windows(
             self.specs,
+            self.system_theme,
             self.on_panic,
             self.on_started,
             self.exit_when_last_window_closes,
@@ -3304,6 +3352,8 @@ impl WindowState {
 /// The shared [`ApplicationHandler`] driving every window opened by
 /// [`AppBuilder`] (and, for a single window, [`run`]) from one event loop.
 struct AppHandler {
+    #[cfg(feature = "system-theme")]
+    _appearance_monitor: system_appearance::Monitor,
     /// Drained the first time `resumed` runs.
     pending: Vec<WindowSpec>,
     commands: Rc<RefCell<AppCommands>>,
@@ -3554,6 +3604,14 @@ impl AppHandler {
 }
 
 enum AppEvent {
+    #[cfg(all(
+        feature = "system-theme",
+        any(target_os = "linux", target_os = "windows")
+    ))]
+    SystemAppearance(
+        creamui_theme::SystemAppearance,
+        Option<Box<creamui_theme::ResolvedAppearance>>,
+    ),
     #[cfg(all(feature = "tray", target_os = "linux"))]
     TrayMenu(String),
     BackgroundJob(u64, Box<dyn Any + Send>),
@@ -3645,6 +3703,41 @@ impl ApplicationHandler<AppEvent> for AppHandler {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop<'_>, event: AppEvent) {
         match event {
+            #[cfg(all(
+                feature = "system-theme",
+                any(target_os = "linux", target_os = "windows")
+            ))]
+            AppEvent::SystemAppearance(appearance, resolved) => {
+                // Release command borrows before signals trigger application effects.
+                let following = self.commands.borrow().system_theme.is_some();
+                if let Some(resolved) = resolved.as_ref().filter(|_| following) {
+                    if let Some(family) = &resolved.font_family {
+                        creamui_fonts::use_system_font(family);
+                    }
+                    let mut commands = self.commands.borrow_mut();
+                    commands.system_theme = Some(resolved.theme);
+                    for pending in &mut commands.windows {
+                        if pending.follow_system_theme {
+                            pending.options.theme = resolved.theme;
+                        }
+                    }
+                }
+                creamui_reactive::batch(|| {
+                    SYSTEM_APPEARANCE.with(|provider| provider.set(appearance));
+                    if let Some(resolved) = resolved {
+                        for spec in &self.pending {
+                            if spec.pipeline.follow_system_theme.get() {
+                                spec.pipeline.theme.set(resolved.theme);
+                            }
+                        }
+                        for state in self.windows.values() {
+                            if state.pipeline.follow_system_theme.get() {
+                                state.pipeline.theme.set(resolved.theme);
+                            }
+                        }
+                    }
+                });
+            }
             #[cfg(all(feature = "tray", target_os = "linux"))]
             AppEvent::TrayMenu(id) => {
                 for tray in &self.trays {
@@ -3803,6 +3896,7 @@ pub fn run_android<V: WindowContent>(
 
 fn run_windows(
     specs: Vec<PendingWindow>,
+    system_theme: Option<Theme>,
     on_panic: Option<PanicHandler>,
     on_started: Option<Box<dyn FnOnce(AppHandle)>>,
     exit_when_last_window_closes: bool,
@@ -3862,6 +3956,8 @@ fn run_windows(
     let multiple_windows = specs.len() > 1;
     let initial_window_count = specs.len();
 
+    #[cfg(feature = "system-theme")]
+    SYSTEM_APPEARANCE.with(|provider| provider.set(creamui_appearance::query()));
     let pending: Vec<WindowSpec> = specs
         .into_iter()
         .enumerate()
@@ -3890,6 +3986,7 @@ fn run_windows(
     event_loop.set_control_flow(ControlFlow::Wait);
 
     let commands = Rc::new(RefCell::new(AppCommands {
+        system_theme,
         windows: Vec::new(),
         exit_requested: false,
         proxy: event_loop.create_proxy(),
@@ -3900,6 +3997,11 @@ fn run_windows(
         commands: commands.clone(),
     };
     let handler = AppHandler {
+        #[cfg(feature = "system-theme")]
+        _appearance_monitor: system_appearance::Monitor::start(
+            event_loop.create_proxy(),
+            system_theme.is_some(),
+        ),
         pending,
         commands,
         app,
@@ -3974,6 +4076,7 @@ fn build_window_spec(
     multiple_windows: bool,
 ) -> WindowSpec {
     let PendingWindow {
+        follow_system_theme,
         options,
         popup,
         clear_color,
@@ -4058,6 +4161,9 @@ fn build_window_spec(
         window,
         source: source.clone(),
         theme: ThemeProvider::new(options.theme),
+        follow_system_theme: Cell::new(follow_system_theme),
+        #[cfg(feature = "system-theme")]
+        system_appearance: SYSTEM_APPEARANCE.with(Clone::clone),
         window_drag,
         titlebar,
         window_controls,
@@ -4233,6 +4339,7 @@ mod tests {
             let spec = build_window_spec(
                 0,
                 PendingWindow {
+                    follow_system_theme: false,
                     options: WindowOptions {
                         width: 100,
                         height: 100,
@@ -5574,6 +5681,33 @@ mod tests {
         assert!(shifted.0 > shifted.2 && (80..160).contains(&shifted.0));
     }
 
+    #[cfg(feature = "system-theme")]
+    #[test]
+    fn fixed_theme_window_observes_host_variant_changes_through_the_hook() {
+        use creamui_theme::{use_system_appearance, SystemAppearance, SystemColorScheme};
+        SYSTEM_APPEARANCE.with(|provider| provider.set(SystemAppearance::default()));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let output = seen.clone();
+        let mut harness = WindowEventHarness::new(move |_| {
+            output
+                .borrow_mut()
+                .push(use_system_appearance().get().variant);
+            Box::new(BlankWidget)
+        });
+        let fixed_theme = harness.state.pipeline.theme.get();
+        SYSTEM_APPEARANCE.with(|provider| {
+            provider.set(SystemAppearance {
+                color_scheme: SystemColorScheme::Dark,
+                variant: Some("midnight".into()),
+                ..Default::default()
+            })
+        });
+        harness.state.redraw();
+        assert_eq!(seen.borrow().last(), Some(&Some("midnight".into())));
+        assert_eq!(harness.state.pipeline.theme.get(), fixed_theme);
+        SYSTEM_APPEARANCE.with(|provider| provider.set(SystemAppearance::default()));
+    }
+
     #[test]
     fn runtime_window_rebuilds_theme_tokens_after_theme_change() {
         let mut runtime = Runtime::new();
@@ -6438,6 +6572,7 @@ mod tests {
     #[test]
     fn spawn_background_runs_work_off_thread_and_resolve_background_job_delivers_it() {
         let commands = Rc::new(RefCell::new(AppCommands {
+            system_theme: None,
             windows: Vec::new(),
             exit_requested: false,
             proxy: test_proxy(),
@@ -6481,6 +6616,7 @@ mod tests {
     #[test]
     fn resolve_background_job_is_a_no_op_for_an_unknown_or_already_resolved_id() {
         let commands = Rc::new(RefCell::new(AppCommands {
+            system_theme: None,
             windows: Vec::new(),
             exit_requested: false,
             proxy: test_proxy(),

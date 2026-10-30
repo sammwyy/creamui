@@ -1,15 +1,13 @@
-//! Tells a running application when the persisted CreamUI appearance changed.
-//!
-//! Call [`ThemeListener::start`] and wait on [`ThemeListener::recv`]. The crate
-//! selects the backend: Linux builds with the `dbus` feature subscribe to the
-//! session bus, and every other build keeps an idle listener that never wakes.
-//! `publish` announces a change after the appearance file has been saved.
-//!
-//! The `dbus` feature is on by default and links the D-Bus client only on
-//! Linux. Windows, Android, and WebAssembly ignore it. A Linux build leaves
-//! the client out with `default-features = false`.
+//! Live host, session snapshot, and persisted CreamUI appearance notifications.
+//! Linux follows the public Settings portal; Windows follows UISettings.
+//! File checks and a bounded native query also cover missed notifications and
+//! desktops without a portal. Dropping the listener stops its worker.
 
-use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    mpsc, Arc,
+};
+static REVISION: AtomicU64 = AtomicU64::new(0);
 use std::time::Duration;
 
 #[cfg(all(feature = "dbus", target_os = "linux"))]
@@ -51,20 +49,29 @@ impl std::error::Error for ThemeWatchError {}
 /// on it.
 pub struct ThemeListener {
     events: mpsc::Receiver<()>,
+    stop: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    _keepalive: Option<mpsc::Sender<()>>,
+}
+impl Drop for ThemeListener {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl ThemeListener {
-    /// Starts the backend selected for this build and returns immediately.
-    ///
-    /// Linux with the `dbus` feature follows [`SIGNAL`] on the session bus.
-    /// Every other build stays pending, so the startup call is the same on
-    /// every platform.
+    /// Subscribe immediately. Native workers are available on Linux and
+    /// Windows; unsupported targets keep an idle listener. Native backends
+    /// send an initial reconciliation event after subscribing.
     pub fn start() -> Self {
-        #[cfg(all(feature = "dbus", target_os = "linux"))]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            dbus::start()
+            start_native()
         }
-        #[cfg(not(all(feature = "dbus", target_os = "linux")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             idle_listener()
         }
@@ -89,6 +96,7 @@ impl ThemeListener {
 ///
 /// The idle backend reports success without sending anything.
 pub fn publish() -> Result<(), ThemeWatchError> {
+    REVISION.fetch_add(1, Ordering::Release);
     #[cfg(all(feature = "dbus", target_os = "linux"))]
     {
         dbus::publish()
@@ -101,14 +109,95 @@ pub fn publish() -> Result<(), ThemeWatchError> {
 
 /// Keeps the channel open so [`ThemeListener::recv`] waits instead of looking
 /// like a backend that failed to start.
-#[cfg(any(test, not(all(feature = "dbus", target_os = "linux"))))]
+#[cfg(any(test, not(any(target_os = "linux", target_os = "windows"))))]
 fn idle_listener() -> ThemeListener {
     let (sender, events) = mpsc::channel();
-    static HOLD: std::sync::Mutex<Vec<mpsc::Sender<()>>> = std::sync::Mutex::new(Vec::new());
-    if let Ok(mut hold) = HOLD.lock() {
-        hold.push(sender);
+    ThemeListener {
+        events,
+        stop: Arc::default(),
+        worker: None,
+        _keepalive: Some(sender),
     }
-    ThemeListener { events }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn start_native() -> ThemeListener {
+    let (sender, events) = mpsc::sync_channel(1);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let worker = std::thread::Builder::new()
+        .name("creamui-appearance".into())
+        .spawn(move || {
+            let dirty = Arc::new(AtomicBool::new(false));
+            let _native = creamui_appearance::NativeSubscription::start(dirty.clone());
+            #[cfg(all(feature = "dbus", target_os = "linux"))]
+            let mut bus = dbus::connect(dirty.clone());
+            let mut previous = creamui_appearance::query();
+            let mut files = file_stamps();
+            let mut revision = REVISION.load(Ordering::Acquire);
+            let mut next_query = std::time::Instant::now() + Duration::from_secs(2);
+            // Reconcile after subscription: startup resolution may have happened
+            // immediately before the desktop changed or this worker connected.
+            let _ = sender.try_send(());
+            while !stopped.load(Ordering::Acquire) {
+                #[cfg(all(feature = "dbus", target_os = "linux"))]
+                if let Some(connection) = &bus {
+                    if connection.process(Duration::from_millis(200)).is_err() {
+                        bus = None;
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                #[cfg(not(all(feature = "dbus", target_os = "linux")))]
+                std::thread::sleep(Duration::from_millis(200));
+                let current_files = file_stamps();
+                let current_revision = REVISION.load(Ordering::Acquire);
+                let mut changed = current_files != files
+                    || current_revision != revision
+                    || dirty.swap(false, Ordering::AcqRel);
+                files = current_files;
+                revision = current_revision;
+                if std::time::Instant::now() >= next_query {
+                    #[cfg(all(feature = "dbus", target_os = "linux"))]
+                    if bus.is_none() {
+                        bus = dbus::connect(dirty.clone());
+                    }
+                    let current = creamui_appearance::query();
+                    changed |= current != previous;
+                    previous = current;
+                    next_query = std::time::Instant::now() + Duration::from_secs(2);
+                }
+                if changed
+                    && matches!(
+                        sender.try_send(()),
+                        Err(mpsc::TrySendError::Disconnected(_))
+                    )
+                {
+                    break;
+                }
+            }
+        })
+        .map_err(|error| log::error!("failed to start appearance listener: {error}"))
+        .ok();
+    ThemeListener {
+        events,
+        stop,
+        worker,
+        _keepalive: None,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn file_stamps() -> Vec<(std::path::PathBuf, Option<(std::time::SystemTime, u64)>)> {
+    creamui_theme_loader::watch_paths()
+        .into_iter()
+        .map(|path| {
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| Some((m.modified().ok()?, m.len())));
+            (path, stamp)
+        })
+        .collect()
 }
 
 #[cfg(test)]

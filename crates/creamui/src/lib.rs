@@ -12,6 +12,8 @@ pub use creamui_render as render;
 pub use creamui_theme as theme;
 pub use creamui_widgets as widgets;
 
+#[cfg(feature = "system-theme")]
+pub use creamui_appearance as appearance;
 pub use creamui_core::runtime::{IntoView, MountCx, MountedView, View};
 pub use creamui_core::{
     Background, Border, BoxShadow, BoxedWidget, ColorToken, ColorValue, Easing, EdgeValues,
@@ -42,8 +44,9 @@ pub use creamui_router::{
     RouterBuilder, RouterError, RouterOutlet, RouterProvider,
 };
 pub use creamui_theme::{
-    use_theme, AccentPreset, AppearanceSelection, Color, ColorScheme, ResolvedAppearance, Theme,
-    ThemeDefinition, ThemeProvider, Typography,
+    use_system_appearance, use_theme, AccentPreset, AppearanceSelection, AppearanceSource, Color,
+    ColorScheme, ResolvedAppearance, SystemAppearance, SystemAppearanceProvider, SystemColorScheme,
+    Theme, ThemeDefinition, ThemeProvider, Typography,
 };
 #[cfg(feature = "system-theme")]
 pub use creamui_theme_loader as theme_loader;

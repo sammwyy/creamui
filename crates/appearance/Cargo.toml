@@ -1,0 +1,22 @@
+[package]
+name = "creamui-appearance"
+description = "Host appearance queries for CreamUI, without a renderer or toolkit dependency"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["portal"]
+portal = ["dep:dbus"]
+
+[dependencies]
+creamui-theme.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = { version = "0.9", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.52", features = ["UI_ViewManagement", "Foundation", "Win32_Foundation", "Win32_System_WinRT", "Win32_System_Registry", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }

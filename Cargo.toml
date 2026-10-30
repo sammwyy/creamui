@@ -9,6 +9,7 @@ members = [
     "crates/theme",
     "crates/theme-loader",
     "crates/theme-watch",
+    "crates/appearance",
     "crates/fonts",
     "crates/widgets",
     "crates/image",
@@ -62,8 +63,9 @@ creamui-router = { version = "0.2.0", path = "crates/router" }
 creamui = { version = "0.2.0", path = "crates/creamui" }
 creamui-core = { version = "0.2.0", path = "crates/core" }
 creamui-theme = { version = "0.2.0", path = "crates/theme" }
-creamui-theme-loader = { version = "0.2.0", path = "crates/theme-loader" }
+creamui-theme-loader = { version = "0.2.0", path = "crates/theme-loader", default-features = false }
 creamui-theme-watch = { version = "0.2.0", path = "crates/theme-watch" }
+creamui-appearance = { version = "0.2.0", path = "crates/appearance", default-features = false }
 creamui-fonts = { version = "0.2.0", path = "crates/fonts" }
 creamui-widgets = { version = "0.2.0", path = "crates/widgets" }
 creamui-image = { version = "0.2.0", path = "crates/image" }

@@ -15,6 +15,8 @@ struct Snapshot {
     schema: u32,
     theme_id: String,
     variant_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color_scheme: Option<String>,
     accent: String,
     font_family: String,
     corners: String,
@@ -33,6 +35,17 @@ macro_rules! style_fields { ($callback:ident, $($args:tt)*) => { $callback!($($a
     sidebar_item_gap, menu_radius, menu_item_radius); }; }
 
 pub fn appearance_snapshot(appearance: &ResolvedAppearance) -> Result<String, ThemeLoadError> {
+    appearance_snapshot_with_scheme(
+        appearance,
+        creamui_appearance::known_variant_scheme(&appearance.variant_id).unwrap_or_default(),
+    )
+}
+
+/// Export an arbitrary named variant with its declared standard preference.
+pub fn appearance_snapshot_with_scheme(
+    appearance: &ResolvedAppearance,
+    scheme: creamui_theme::SystemColorScheme,
+) -> Result<String, ThemeLoadError> {
     let theme = appearance.theme;
     let c = theme.colors;
     let mut colors = BTreeMap::new();
@@ -66,6 +79,7 @@ pub fn appearance_snapshot(appearance: &ResolvedAppearance) -> Result<String, Th
     ]);
     toml::to_string_pretty(&Snapshot {
         schema: 1,
+        color_scheme: Some(scheme.as_str().into()),
         theme_id: appearance.theme_id.clone(),
         variant_id: appearance.variant_id.clone(),
         accent: hex(appearance.accent),
@@ -91,6 +105,13 @@ pub fn load_appearance_snapshot(path: &Path) -> Result<ResolvedAppearance, Theme
 pub fn parse_appearance_snapshot(source: &str) -> Result<ResolvedAppearance, ThemeLoadError> {
     let snapshot: Snapshot = toml::from_str(source).map_err(ThemeLoadError::InvalidAppearance)?;
     let invalid = |message: &str| ThemeLoadError::InvalidThemeDefinition(message.into());
+    if snapshot
+        .color_scheme
+        .as_deref()
+        .is_some_and(|s| creamui_appearance::parse_scheme(s).is_none())
+    {
+        return Err(invalid("invalid snapshot color scheme"));
+    }
     if snapshot.schema != 1
         || !snapshot.text_scale.is_finite()
         || !(0.75..=2.0).contains(&snapshot.text_scale)

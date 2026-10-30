@@ -12,12 +12,12 @@ categories = ["gui", "os::linux-apis"]
 
 [features]
 default = ["dbus"]
-# Session-bus backend. The `dbus` crate is linked only on Linux. Windows,
-# Android, and WebAssembly keep the idle backend even when this is enabled.
-# Disable it (`default-features = false`) to keep D-Bus out of a Linux build.
-dbus = ["dep:dbus"]
+# Public portal notifications and queries; linked only on Linux.
+dbus = ["dep:dbus", "creamui-appearance/portal", "creamui-theme-loader/portal"]
 
 [dependencies]
+creamui-appearance = { workspace = true, default-features = false }
+creamui-theme-loader = { workspace = true, default-features = false }
 log = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]

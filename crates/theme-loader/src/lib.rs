@@ -5,12 +5,13 @@ pub use accessibility::{
     AccessibilityPreferences,
 };
 pub use snapshot::{
-    appearance_snapshot, intern_font_family, load_appearance_snapshot, parse_appearance_snapshot,
+    appearance_snapshot, appearance_snapshot_with_scheme, intern_font_family,
+    load_appearance_snapshot, parse_appearance_snapshot,
 };
 
 use creamui_theme::{
-    AccentPreset, AppearanceSelection, Color, ColorScheme, CornerStyle, ResolvedAppearance, Theme,
-    ThemeDefinition,
+    AccentPreset, AppearanceSelection, Color, ColorScheme, CornerStyle, ResolvedAppearance,
+    SystemAppearance, SystemColorScheme, Theme, ThemeDefinition,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -133,7 +134,21 @@ impl SystemThemeLoader {
         self
     }
 
+    /// Query the host and resolve the best available native appearance.
     pub fn load(self) -> Result<ResolvedAppearance, ThemeLoadError> {
+        let system = if self.ignore_environment {
+            creamui_appearance::query_native()
+        } else {
+            creamui_appearance::query()
+        };
+        self.load_with_system(&system)
+    }
+
+    /// Resolve with an already queried preference, without another host query.
+    pub fn load_with_system(
+        self,
+        system: &SystemAppearance,
+    ) -> Result<ResolvedAppearance, ThemeLoadError> {
         // A stable session variable selects a desktop-provided native source;
         // changes are delivered by the normal ThemeListener, not env mutation.
         let environment_selects_theme =
@@ -143,31 +158,48 @@ impl SystemThemeLoader {
             && self.selection.variant.is_none()
             && !environment_selects_theme
         {
-            if let Some(path) = env::var_os("CREAMUI_APPEARANCE") {
-                let mut appearance = load_appearance_snapshot(Path::new(&path))?;
-                let environment = environment_selection()?;
-                if let Some(accent) = self.selection.accent.or(environment.accent) {
+            if let Some(mut appearance) = creamui_appearance::desktop_snapshot_path()
+                .and_then(|path| load_appearance_snapshot(&path).ok())
+            {
+                // A session source precedes the legacy saved selection, which
+                // Coconut may have already migrated into its own theme store.
+                let overrides = merge_selection(
+                    AppearanceSelection::default(),
+                    environment_selection()?,
+                    self.selection,
+                );
+                if let Some(accent) = overrides.accent {
                     appearance.accent = accent;
                     appearance.theme = appearance.theme.with_accent(accent);
                 }
-                if let Some(family) = self.selection.font_family.or(environment.font_family) {
+                if let Some(family) = overrides.font_family {
                     appearance.theme.font_family = intern_font_family(&family);
                     appearance.font_family = Some(family);
                 }
-                if let Some(corners) = self.selection.corners {
+                if let Some(corners) = overrides.corners {
                     appearance.theme = appearance.theme.with_corners(corners);
                     appearance.corners = corners;
                 }
                 return Ok(appearance);
             }
         }
-        self.load_from_paths(config_path(), data_dirs())
+        self.load_from_paths_with_system(config_path(), data_dirs(), system)
     }
 
     pub fn load_from_paths(
         self,
         appearance_path: Option<PathBuf>,
         data_dirs: Vec<PathBuf>,
+    ) -> Result<ResolvedAppearance, ThemeLoadError> {
+        self.load_from_paths_with_system(appearance_path, data_dirs, &SystemAppearance::default())
+    }
+
+    /// Deterministic counterpart to `load_with_system`, useful for custom stores.
+    pub fn load_from_paths_with_system(
+        self,
+        appearance_path: Option<PathBuf>,
+        data_dirs: Vec<PathBuf>,
+        system: &SystemAppearance,
     ) -> Result<ResolvedAppearance, ThemeLoadError> {
         let config = match appearance_path.as_deref() {
             Some(path) if path.is_file() => read_appearance(path)?,
@@ -184,7 +216,7 @@ impl SystemThemeLoader {
         let variant_id = selection
             .variant
             .clone()
-            .unwrap_or_else(|| theme.default_variant.clone());
+            .unwrap_or_else(|| automatic_variant(&theme, &data_dirs, system));
         let mut resolved =
             theme
                 .variant(&variant_id)
@@ -195,13 +227,24 @@ impl SystemThemeLoader {
         let accent = selection
             .accent
             .or(theme.default_accent)
+            .or(system.accent)
             .unwrap_or(resolved.colors.accent);
         let corners = selection.corners.unwrap_or_default();
         resolved = resolved.with_accent(accent).with_corners(corners);
-        if let Some(path) = appearance_path.as_ref() {
-            resolved =
-                accessibility::read_accessibility(&path.with_file_name("accessibility.toml"))?
-                    .apply(resolved);
+        let defaults = AccessibilityPreferences {
+            high_contrast: system.high_contrast,
+            ..Default::default()
+        };
+        let preferences = match appearance_path.as_ref() {
+            Some(path) => accessibility::read_with_defaults(
+                &path.with_file_name("accessibility.toml"),
+                defaults,
+            )?,
+            None => defaults,
+        };
+        resolved = preferences.apply(resolved);
+        if let Some(family) = &selection.font_family {
+            resolved.font_family = intern_font_family(family);
         }
         Ok(ResolvedAppearance {
             theme_id,
@@ -212,6 +255,75 @@ impl SystemThemeLoader {
             corners,
         })
     }
+}
+
+fn automatic_variant(
+    theme: &ThemeDefinition,
+    roots: &[PathBuf],
+    system: &SystemAppearance,
+) -> String {
+    if let Some(id) = &system.variant {
+        if theme.variants.contains_key(id) {
+            return id.clone();
+        }
+    }
+    if system.color_scheme == SystemColorScheme::NoPreference {
+        return theme.default_variant.clone();
+    }
+    // Metadata is optional: existing light/dark/midnight themes retain their
+    // meaning, while arbitrary names can declare an explicit classification.
+    let metadata = roots
+        .iter()
+        .filter_map(|root| theme_path(root, &theme.id).ok())
+        .find(|path| path.is_file())
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|source| toml::from_str::<ThemeFile>(&source).ok());
+    let matches = |id: &str| {
+        metadata
+            .as_ref()
+            .and_then(|f| f.variants.get(id))
+            .and_then(|v| v.appearance.as_deref())
+            .and_then(creamui_appearance::parse_scheme)
+            .or_else(|| creamui_appearance::known_variant_scheme(id))
+            == Some(system.color_scheme)
+    };
+    if matches(&theme.default_variant) {
+        return theme.default_variant.clone();
+    }
+    let canonical = system.color_scheme.as_str();
+    if theme.variants.contains_key(canonical) && matches(canonical) {
+        return canonical.into();
+    }
+    theme
+        .variants
+        .keys()
+        .find(|id| matches(id))
+        .cloned()
+        .unwrap_or_else(|| theme.default_variant.clone())
+}
+
+/// Files whose replacement should trigger resolution again. Missing files are
+/// included, so creating a selection or installing a theme is also observed.
+pub fn watch_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = creamui_appearance::desktop_snapshot_path() {
+        paths.push(path);
+    }
+    if let Some(path) = config_path() {
+        paths.push(path.with_file_name("accessibility.toml"));
+        let saved = read_appearance(&path).unwrap_or_default();
+        let id = env::var("CREAMUI_THEME")
+            .ok()
+            .or(saved.theme)
+            .unwrap_or_else(|| "default".into());
+        paths.push(path);
+        paths.extend(
+            data_dirs()
+                .iter()
+                .filter_map(|root| theme_path(root, &id).ok()),
+        );
+    }
+    paths
 }
 
 pub fn builtin_theme() -> ThemeDefinition {
@@ -411,6 +523,8 @@ struct AccentPresetFile {
 
 #[derive(Deserialize)]
 struct VariantFile {
+    /// Classify arbitrary variant names for automatic host preference matching.
+    appearance: Option<String>,
     colors: ColorSchemeFile,
 }
 
@@ -460,6 +574,15 @@ fn theme_from_file(file: ThemeFile) -> Result<ThemeDefinition, ThemeLoadError> {
     {
         return Err(ThemeLoadError::InvalidThemeDefinition(
             "a theme needs an id, name, and existing default variant".into(),
+        ));
+    }
+    if file.variants.values().any(|v| {
+        v.appearance
+            .as_deref()
+            .is_some_and(|s| !matches!(s, "light" | "dark"))
+    }) {
+        return Err(ThemeLoadError::InvalidThemeDefinition(
+            "variant appearance must be light or dark".into(),
         ));
     }
     let variants = file
@@ -588,6 +711,165 @@ success = "#151515"
 "##,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn host_preferences_choose_supported_variants_without_overriding_explicit_choices() {
+        let _guard = lock();
+        for (scheme, variant, expected) in [
+            (SystemColorScheme::Light, None, "light"),
+            (SystemColorScheme::Dark, None, "dark"),
+            (SystemColorScheme::Dark, Some("midnight"), "midnight"),
+            (SystemColorScheme::Dark, Some("unavailable"), "dark"),
+            (SystemColorScheme::NoPreference, None, "dark"),
+        ] {
+            let system = SystemAppearance {
+                color_scheme: scheme,
+                variant: variant.map(str::to_owned),
+                ..Default::default()
+            };
+            let resolved = SystemThemeLoader::new()
+                .without_environment()
+                .load_from_paths_with_system(None, vec![], &system)
+                .unwrap();
+            assert_eq!(resolved.variant_id, expected);
+            let explicit = SystemThemeLoader::new()
+                .without_environment()
+                .variant("light")
+                .load_from_paths_with_system(None, vec![], &system)
+                .unwrap();
+            assert_eq!(explicit.variant_id, "light");
+        }
+    }
+
+    #[test]
+    fn arbitrary_variants_declare_mode_and_local_accessibility_overrides_host_defaults() {
+        let _guard = lock();
+        let root = temporary_dir("host-variants");
+        write_theme(&root, "custom");
+        let path = theme_path(&root, "custom").unwrap();
+        let source = fs::read_to_string(&path)
+            .unwrap()
+            .replace(
+                "[variants.latte.colors]",
+                "[variants.latte]\nappearance = 'light'\n[variants.latte.colors]",
+            )
+            .replace(
+                "[variants.oled.colors]",
+                "[variants.oled]\nappearance = 'dark'\n[variants.oled.colors]",
+            );
+        fs::write(path, source).unwrap();
+        let selection = root.join("appearance.toml");
+        fs::write(&selection, "theme = 'custom'").unwrap();
+        fs::write(root.join("accessibility.toml"), "text_scale = 1.5").unwrap();
+        let system = SystemAppearance {
+            color_scheme: SystemColorScheme::Dark,
+            high_contrast: true,
+            ..Default::default()
+        };
+        let resolve = || {
+            SystemThemeLoader::new()
+                .without_environment()
+                .load_from_paths_with_system(Some(selection.clone()), vec![root.clone()], &system)
+                .unwrap()
+        };
+        let resolved = resolve();
+        assert_eq!(resolved.variant_id, "oled");
+        assert!(resolved.theme.high_contrast);
+        assert_eq!(resolved.theme.text_scale, 1.5);
+        fs::write(root.join("accessibility.toml"), "high_contrast = false").unwrap();
+        assert!(!resolve().theme.high_contrast);
+        fs::write(&selection, "theme = 'custom'\nvariant = 'latte'").unwrap();
+        assert_eq!(resolve().variant_id, "latte");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn session_snapshot_precedes_legacy_selection_but_explicit_variants_win() {
+        let _guard = lock();
+        let root = temporary_dir("session-source");
+        let keys = [
+            "CREAMUI_APPEARANCE",
+            "CREAMUI_THEME",
+            "CREAMUI_VARIANT",
+            "CREAMUI_ACCENT",
+            "CREAMUI_FONT",
+            "XDG_CONFIG_HOME",
+            "APPDATA",
+        ];
+        let previous: Vec<_> = keys.iter().map(|key| (*key, env::var_os(key))).collect();
+        unsafe {
+            for key in keys {
+                env::remove_var(key);
+            }
+            env::set_var("XDG_CONFIG_HOME", &root);
+            env::set_var("APPDATA", &root);
+            env::set_var("CREAMUI_APPEARANCE", root.join("native.toml"));
+        }
+        let path = config_path().unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "theme = 'obsolete-migrated-theme'\nvariant = 'old'").unwrap();
+        let theme = Theme::midnight();
+        let native = ResolvedAppearance {
+            theme_id: "coconut".into(),
+            variant_id: "midnight".into(),
+            accent: theme.colors.accent,
+            font_family: None,
+            corners: CornerStyle::Round,
+            theme,
+        };
+        fs::write(
+            root.join("native.toml"),
+            appearance_snapshot(&native).unwrap(),
+        )
+        .unwrap();
+        let system = SystemAppearance {
+            color_scheme: SystemColorScheme::Light,
+            ..Default::default()
+        };
+        assert_eq!(
+            SystemThemeLoader::new()
+                .load_with_system(&system)
+                .unwrap()
+                .variant_id,
+            "midnight"
+        );
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            SystemThemeLoader::new()
+                .variant("light")
+                .load_with_system(&system)
+                .unwrap()
+                .variant_id,
+            "light"
+        );
+        unsafe {
+            env::set_var("CREAMUI_VARIANT", "dark");
+        }
+        assert_eq!(
+            SystemThemeLoader::new()
+                .load_with_system(&system)
+                .unwrap()
+                .variant_id,
+            "dark"
+        );
+        unsafe {
+            env::remove_var("CREAMUI_VARIANT");
+        }
+        fs::write(root.join("native.toml"), "not a valid snapshot").unwrap();
+        assert_eq!(
+            SystemThemeLoader::new()
+                .load_with_system(&system)
+                .unwrap()
+                .variant_id,
+            "light"
+        );
+        unsafe {
+            for (key, value) in previous {
+                restore(key, value);
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

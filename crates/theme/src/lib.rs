@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
+mod system;
+pub use system::{
+    use_system_appearance, AppearanceSource, SystemAppearance, SystemAppearanceProvider,
+    SystemColorScheme,
+};
 
 /// An 8-bit sRGB color with alpha.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

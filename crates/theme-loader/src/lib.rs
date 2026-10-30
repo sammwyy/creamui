@@ -1,7 +1,11 @@
 mod accessibility;
+mod snapshot;
 pub use accessibility::{
     accessibility_path, read_system_accessibility, write_system_accessibility,
     AccessibilityPreferences,
+};
+pub use snapshot::{
+    appearance_snapshot, intern_font_family, load_appearance_snapshot, parse_appearance_snapshot,
 };
 
 use creamui_theme::{
@@ -88,11 +92,20 @@ impl std::error::Error for ThemeLoadError {
 #[derive(Default)]
 pub struct SystemThemeLoader {
     selection: AppearanceSelection,
+    ignore_environment: bool,
 }
 
 impl SystemThemeLoader {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Load the desktop's saved selection without process-local overrides.
+    /// Desktop integrations must not publish an application's preview theme
+    /// (or inherited CREAM_* variables) as the user's system preference.
+    pub fn without_environment(mut self) -> Self {
+        self.ignore_environment = true;
+        self
     }
 
     pub fn theme(mut self, id: impl Into<String>) -> Self {
@@ -121,6 +134,33 @@ impl SystemThemeLoader {
     }
 
     pub fn load(self) -> Result<ResolvedAppearance, ThemeLoadError> {
+        // A stable session variable selects a desktop-provided native source;
+        // changes are delivered by the normal ThemeListener, not env mutation.
+        let environment_selects_theme =
+            env::var_os("CREAMUI_THEME").is_some() || env::var_os("CREAMUI_VARIANT").is_some();
+        if !self.ignore_environment
+            && self.selection.theme.is_none()
+            && self.selection.variant.is_none()
+            && !environment_selects_theme
+        {
+            if let Some(path) = env::var_os("CREAMUI_APPEARANCE") {
+                let mut appearance = load_appearance_snapshot(Path::new(&path))?;
+                let environment = environment_selection()?;
+                if let Some(accent) = self.selection.accent.or(environment.accent) {
+                    appearance.accent = accent;
+                    appearance.theme = appearance.theme.with_accent(accent);
+                }
+                if let Some(family) = self.selection.font_family.or(environment.font_family) {
+                    appearance.theme.font_family = intern_font_family(&family);
+                    appearance.font_family = Some(family);
+                }
+                if let Some(corners) = self.selection.corners {
+                    appearance.theme = appearance.theme.with_corners(corners);
+                    appearance.corners = corners;
+                }
+                return Ok(appearance);
+            }
+        }
         self.load_from_paths(config_path(), data_dirs())
     }
 
@@ -133,7 +173,11 @@ impl SystemThemeLoader {
             Some(path) if path.is_file() => read_appearance(path)?,
             _ => AppearanceSelection::default(),
         };
-        let environment = environment_selection()?;
+        let environment = if self.ignore_environment {
+            AppearanceSelection::default()
+        } else {
+            environment_selection()?
+        };
         let selection = merge_selection(config, environment, self.selection);
         let theme_id = selection.theme.clone().unwrap_or_else(|| "default".into());
         let theme = find_theme(&theme_id, &data_dirs)?;

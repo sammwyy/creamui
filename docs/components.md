@@ -276,3 +276,32 @@ top, left and top-left placement. Backdrop dismissal is built in; applications
 should route Escape through the same dismissal callback in their window handler.
 The existing `Dialog::new(title, message, dismiss)` and `AlertDialog` APIs use the
 same components for simple messages and confirmations.
+
+## Command palettes
+
+`CommandPalette` supplies a shared compact search header, grouped result rows,
+shortcut badges, automatic result height and a scrollable list. It uses `Dialog`
+for its surface. Applications provide command metadata and callbacks:
+
+```rust
+use creamui_widgets::{CommandPalette, CommandPaletteController, CommandPaletteItem};
+
+let controller = CommandPaletteController::new(); // Keep this in window state.
+let commands = vec![
+    CommandPaletteItem::new("open", "Open file", on_open)
+        .category("File")
+        .shortcut("Ctrl+O"),
+];
+let palette = CommandPalette::new(&controller, commands, on_dismiss).viewport(size);
+```
+
+The controller owns query, selection and scroll state. Matching includes command
+IDs, labels, categories and shortcut text. Arrow keys select results; Enter invokes
+the selected callback; Escape dismisses. Query changes reset selection and scroll.
+Use `.placeholder`, `.hint`, `.width` and `.max_results_height` to configure the
+surface. `.reference(true)` presents a shortcut reference with the same layout.
+
+Applications that intercept native keys before widget dispatch can forward core
+`KeyInput` values to `CommandPaletteController::handle_key`; this path does not
+require a theme context. Call `reset()` when opening the palette and focus the
+window's text input after the palette becomes visible.

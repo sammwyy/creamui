@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout::{column, fixed, padding, row};
+use crate::layout::{column, fixed};
 use creamui_core::layout::{
     AlignItems, Dimension, JustifyContent, LengthPercentageAuto, Position, Style,
 };
@@ -192,109 +192,6 @@ impl Widget for Popover {
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         Some(Rc::new(|| {}))
-    }
-}
-
-/// A modal dialog. The application keeps its visibility in a `Signal` and
-/// conditionally includes this widget in its root tree.
-pub struct Dialog {
-    theme: Theme,
-    title: String,
-    message: String,
-    dismiss: Rc<dyn Fn()>,
-    actions: Vec<(String, ButtonVariant, Rc<dyn Fn()>)>,
-}
-
-impl Dialog {
-    pub fn new(
-        title: impl Into<String>,
-        message: impl Into<String>,
-        on_dismiss: impl Fn() + 'static,
-    ) -> Self {
-        let theme = use_theme();
-        Self {
-            theme,
-            title: title.into(),
-            message: message.into(),
-            dismiss: Rc::new(on_dismiss),
-            actions: Vec::new(),
-        }
-    }
-
-    pub fn action(
-        mut self,
-        label: impl Into<String>,
-        variant: ButtonVariant,
-        on_click: impl Fn() + 'static,
-    ) -> Self {
-        self.actions
-            .push((label.into(), variant, Rc::new(on_click)));
-        self
-    }
-
-    pub fn dismiss_action(mut self, label: impl Into<String>) -> Self {
-        let dismiss = self.dismiss.clone();
-        self.actions
-            .push((label.into(), ButtonVariant::Secondary, dismiss));
-        self
-    }
-
-    fn overlay_style() -> Style {
-        Overlay::fullscreen(|| {}).style
-    }
-}
-
-impl Widget for Dialog {
-    fn is_modal(&self) -> bool {
-        true
-    }
-    fn style(&self) -> creamui_core::Style {
-        Self::overlay_style().into()
-    }
-    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        painter.fill_rect(rect, Color::rgba(0, 0, 0, 112), 0.0);
-    }
-    fn children(&mut self) -> Vec<BoxedWidget> {
-        let theme = self.theme;
-        let title = self.title.clone();
-        let message = self.message.clone();
-        let actions_data = std::mem::take(&mut self.actions);
-        {
-            let card_style = padding(
-                Style {
-                    size: creamui_core::layout::Size {
-                        width: Dimension::Length(380.0),
-                        height: Dimension::Auto,
-                    },
-                    ..column(theme.spacing_large)
-                },
-                theme.spacing_large,
-            );
-            let mut content = RawView::new(column(theme.spacing_small))
-                .child(Box::new(Heading::md(title)))
-                .child(Box::new(
-                    Text::secondary(message).text_align(TextAlign::Start),
-                ));
-            let mut actions = RawView::new(Style {
-                justify_content: Some(JustifyContent::End),
-                ..row(theme.spacing_medium)
-            });
-            for (label, variant, action) in &actions_data {
-                let action = action.clone();
-                actions = actions.child(Box::new(Button::styled(
-                    *variant,
-                    ButtonSize::Md,
-                    label.clone(),
-                    ButtonState::Normal,
-                    move || action(),
-                )));
-            }
-            content = content.child(Box::new(actions));
-            vec![Box::new(Popover::new(card_style).child(Box::new(content))) as BoxedWidget]
-        }
-    }
-    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
-        Some(self.dismiss.clone())
     }
 }
 

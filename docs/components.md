@@ -238,3 +238,41 @@ supplied `AppBuilder::runtime_window` continues to use application-owned state.
 
 Set `CREAMUI_DUMP_JSX=1` while compiling to inspect expanded Rust for `jsx!`,
 `abi_jsx!`, and `#[component]`. Empty and `0` values disable the dump.
+
+## Composable dialogs
+
+`Dialog::custom` accepts arbitrary header, content and footer widgets. The themed
+`DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage` and `ModalActions`
+provide defaults without restricting the content to a fixed confirmation layout.
+`ModalActions` gives each child the same share of the footer width, with a small
+configurable gap. Its children may be any styled widgets, including custom buttons.
+
+```rust
+use creamui_widgets::{
+    Button, ButtonSize, ButtonState, ButtonVariant, Dialog, DialogContent,
+    DialogFooter, DialogHeader, DialogMessage, DialogPlacement, ModalActions,
+};
+
+let dialog = Dialog::custom(on_cancel)
+    .width(420.0)
+    .placement(DialogPlacement::TopLeft)
+    .header(Box::new(DialogHeader::new("Choose a location")))
+    .content(Box::new(DialogContent::new()
+        .child(Box::new(DialogMessage::new("Enter the destination below.")))
+        .child(Box::new(input))))
+    .footer(Box::new(DialogFooter::new().child(Box::new(
+        ModalActions::new()
+            .child(Button::styled(ButtonVariant::Secondary, ButtonSize::Md,
+                "Cancel", ButtonState::Normal, on_cancel_button))
+            .child(Button::styled(ButtonVariant::Primary, ButtonSize::Md,
+                "Continue", ButtonState::Normal, on_continue))
+    ))));
+```
+
+`DialogHeader` supports an icon, a description and a trailing close control.
+`DialogMessage::icon` adds an icon alongside explanatory text. Section styles can
+be overridden with the common `Styled` builders. `DialogPlacement` supports center,
+top, left and top-left placement. Backdrop dismissal is built in; applications
+should route Escape through the same dismissal callback in their window handler.
+The existing `Dialog::new(title, message, dismiss)` and `AlertDialog` APIs use the
+same components for simple messages and confirmations.

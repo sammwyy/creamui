@@ -66,8 +66,9 @@ pub use raw::{
 pub use themed::{
     nested_sidebar, tab_styles, AlertDialog, AppTitlebar, Avatar, Badge, Button, ButtonSize,
     ButtonState, ButtonVariant, CaptionButtonView, CaptionStyle, Card, Checkbox, ColorPicker,
-    ComboBox, DateInput, DateTimePicker, Dialog, FilePicker, FilePrompt, Heading, Link, ListBox,
-    ListView, MenuBar, MenuColors, MenuItem, MenuPopup, Overlay, Popover, Pre, ProgressBar,
+    ComboBox, DateInput, DateTimePicker, Dialog, DialogContent, DialogFooter, DialogHeader,
+    DialogMessage, DialogPlacement, FilePicker, FilePrompt, Heading, Link, ListBox, ListView,
+    MenuBar, MenuColors, MenuItem, MenuPopup, ModalActions, Overlay, Popover, Pre, ProgressBar,
     ProgressRing, Quote, Radio, RadioGroup, ScrollView, SegmentedControl, Select, Sidebar,
     SidebarItem, SidebarNode, SidebarSeparator, Slider, Spinner, Switch, Tab, TabColors, TabSizing,
     Table, Tabs, Text, TextArea, TextInput, TextSize, TimeInput, TreeNode, TreeView,

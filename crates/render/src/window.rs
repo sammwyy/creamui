@@ -1616,6 +1616,12 @@ pub struct WindowHandle {
 }
 
 impl WindowHandle {
+    pub fn set_title(&self, title: &str) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_title(title);
+        }
+    }
+
     /// Reports pointer presence independently of child widget hover regions.
     pub fn on_pointer_presence(&self, handler: impl Fn(bool) + 'static) {
         *self.pointer_presence_handler.borrow_mut() = Some(Rc::new(handler));

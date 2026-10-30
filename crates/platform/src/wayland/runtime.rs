@@ -477,6 +477,7 @@ struct InteractiveRequest {
 
 #[derive(Default)]
 struct WindowStateRequest {
+    title: Option<String>,
     maximized: Option<bool>,
     minimize: bool,
 }
@@ -653,6 +654,9 @@ impl Runtime {
                 log::debug!("creamui-platform: ignoring state request for non-toplevel {id:?}");
                 continue;
             };
+            if let Some(title) = request.title {
+                window.set_title(title);
+            }
             if let Some(maximized) = request.maximized {
                 log::debug!("creamui-platform: setting {id:?} maximized={maximized}");
                 if maximized {
@@ -1877,6 +1881,14 @@ impl HasDisplayHandle for Window {
 }
 
 impl PlatformWindow for Window {
+    fn set_title(&self, title: &str) {
+        self.window_state_requests
+            .lock()
+            .expect("window state request lock poisoned")
+            .entry(self.id)
+            .or_default()
+            .title = Some(title.into());
+    }
     fn window_decorations(&self) -> WindowDecorations {
         self.decorations
             .lock()

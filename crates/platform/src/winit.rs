@@ -163,6 +163,9 @@ impl Window {
 }
 
 impl PlatformWindow for Window {
+    fn set_title(&self, title: &str) {
+        self.inner.set_title(title);
+    }
     fn window_decorations(&self) -> crate::WindowDecorations {
         let titlebar = self.titlebar.lock().expect("titlebar lock poisoned");
         let hovered = match titlebar.as_ref() {

@@ -7,6 +7,7 @@ pub struct RawButton {
     pub children: Vec<BoxedWidget>,
     pub on_click: Rc<dyn Fn()>,
     pub on_key_press: Option<Rc<dyn Fn(KeyInput)>>,
+    pub on_context_menu: Option<Rc<dyn Fn(Point)>>,
     pub on_click_at: Option<Rc<dyn Fn(Point)>>,
     pub on_drag: Option<Rc<dyn Fn(Point, Rect)>>,
     pub on_drag_start: Option<Rc<dyn Fn(Point, Rect)>>,
@@ -25,6 +26,7 @@ impl RawButton {
             children: Vec::new(),
             on_click: Rc::new(on_click),
             on_key_press: None,
+            on_context_menu: None,
             on_click_at: None,
             on_drag: None,
             on_drag_start: None,
@@ -46,6 +48,11 @@ impl RawButton {
 
     pub fn on_key_press(mut self, handler: impl Fn(KeyInput) + 'static) -> Self {
         self.on_key_press = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn with_context_menu(mut self, handler: impl Fn(Point) + 'static) -> Self {
+        self.on_context_menu = Some(Rc::new(handler));
         self
     }
 
@@ -92,6 +99,14 @@ impl RawButton {
 }
 
 impl Widget for RawButton {
+    fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
+        if self.disabled {
+            None
+        } else {
+            self.on_context_menu.clone()
+        }
+    }
+
     fn style_state(&self) -> creamui_core::StyleState {
         creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
     }

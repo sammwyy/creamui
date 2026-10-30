@@ -281,6 +281,7 @@ struct PaintOutputs {
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
     focusables: Vec<(
@@ -323,6 +324,7 @@ struct RegionMarks {
 #[derive(Clone, Copy)]
 struct PointerBarrier {
     rect: Rect,
+    context_hits: usize,
     hits: usize,
     hits_at: usize,
     focusables: usize,
@@ -337,6 +339,7 @@ impl PaintOutputs {
     fn block_pointer(&mut self, rect: Rect) {
         self.pointer_barriers.push(PointerBarrier {
             rect,
+            context_hits: self.context_hits.len(),
             hits: self.hits.len(),
             hits_at: self.hits_at.len(),
             focusables: self.focusables.len(),
@@ -561,6 +564,7 @@ fn paint_instance(
         out.modal = true;
         out.hits.clear();
         out.hits_at.clear();
+        out.context_hits.clear();
         out.focusables.clear();
         out.draggables.clear();
         out.drag_starts.clear();
@@ -694,6 +698,9 @@ fn paint_instance(
             }
             if let Some(handler) = instance.widget.on_click_at() {
                 out.hits_at.push((visible, handler));
+            }
+            if let Some(handler) = instance.widget.on_context_menu() {
+                out.context_hits.push((visible, handler));
             }
             if let Some(on_drag) = instance.widget.on_drag_with_content(content) {
                 out.draggables
@@ -886,6 +893,7 @@ pub struct Scene {
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
     focusables: Vec<(
@@ -941,6 +949,18 @@ impl Scene {
             None => 0,
         })
     }
+    pub fn context_menu_at(&self, point: Point) -> Option<&Rc<dyn Fn(Point)>> {
+        self.context_hits
+            .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.context_hits),
+            )
+            .rev()
+            .find(|(rect, _)| rect.contains(point))
+            .map(|(_, handler)| handler)
+    }
+
     /// Returns the click handler for the topmost widget containing `point`, if any.
     pub fn hit_test(&self, point: Point) -> Option<&Rc<dyn Fn()>> {
         self.hits
@@ -1390,6 +1410,7 @@ impl Renderer {
             pointer_barriers: out.pointer_barriers,
             hits: out.hits,
             hits_at: out.hits_at,
+            context_hits: out.context_hits,
             focusables: out.focusables,
             draggables: out.draggables,
             drag_starts: out.drag_starts,

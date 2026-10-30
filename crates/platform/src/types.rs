@@ -469,6 +469,7 @@ pub struct PopupOptions {
     pub anchor_height: f32,
     pub input_serial: Option<InputSerial>,
     pub placement: PopupPlacement,
+    pub resize_to_fit: bool,
 }
 
 #[derive(Debug, Clone)]

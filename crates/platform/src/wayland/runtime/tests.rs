@@ -228,3 +228,140 @@ fn refresh_interval_uses_the_current_positive_mode() {
     assert_eq!(current_refresh_interval(&[mode(0, true)]), None);
     assert_eq!(current_refresh_interval(&[mode(60_000, false)]), None);
 }
+
+#[test]
+fn nested_popups_preserve_anchors_grabs_and_destroy_before_sibling_replacement() {
+    struct PopupApp {
+        windows: Vec<Arc<dyn PlatformWindow>>,
+        phase: usize,
+        deadline: Instant,
+        closed: bool,
+    }
+    impl ApplicationHandler<Event> for PopupApp {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
+            self.windows.push(
+                event_loop
+                    .create_window(WindowAttributes::default())
+                    .unwrap(),
+            );
+        }
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop<'_>,
+            id: WindowId,
+            event: WindowEvent,
+        ) {
+            if !matches!(event, WindowEvent::Resized(_)) {
+                return;
+            }
+            match self.phase {
+                0 => {
+                    assert_eq!(id, self.windows[0].id());
+                    assert!(self.windows[0].supports_native_popups());
+                    self.windows.push(
+                        event_loop
+                            .create_popup(
+                                WindowAttributes {
+                                    size: LogicalSize::new(248.0, 900.0),
+                                    decorations: false,
+                                    ..Default::default()
+                                },
+                                PopupOptions {
+                                    parent: id,
+                                    anchor_x: 635.0,
+                                    anchor_y: 395.0,
+                                    anchor_width: 1.0,
+                                    anchor_height: 1.0,
+                                    input_serial: Some(crate::InputSerial(42)),
+                                    placement: crate::PopupPlacement::RightTop,
+                                    resize_to_fit: true,
+                                },
+                            )
+                            .unwrap(),
+                    );
+                }
+                1 | 2 => {
+                    let root = self.windows[1].clone();
+                    assert_eq!(
+                        root.inner_size(),
+                        PhysicalSize {
+                            width: 248,
+                            height: 180
+                        }
+                    );
+                    if self.phase == 2 {
+                        self.windows[2].close();
+                    }
+                    self.windows.push(
+                        event_loop
+                            .create_popup(
+                                WindowAttributes {
+                                    size: LogicalSize::new(248.0, 100.0),
+                                    decorations: false,
+                                    ..Default::default()
+                                },
+                                PopupOptions {
+                                    parent: root.id(),
+                                    anchor_x: 5.0,
+                                    anchor_y: 5.0,
+                                    anchor_width: 238.0,
+                                    anchor_height: 32.0,
+                                    input_serial: Some(crate::InputSerial(42)),
+                                    placement: crate::PopupPlacement::RightTop,
+                                    resize_to_fit: true,
+                                },
+                            )
+                            .unwrap(),
+                    );
+                }
+                3 => {
+                    self.windows[3].close();
+                    self.windows[1].close();
+                    self.windows[0].close();
+                }
+                _ => return,
+            }
+            self.phase += 1;
+        }
+        fn user_event(&mut self, event_loop: &ActiveEventLoop<'_>, event: Event) {
+            if matches!(event, Event::Closed) {
+                self.closed = true;
+                event_loop.exit();
+            }
+        }
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
+            if Instant::now() >= self.deadline {
+                event_loop.exit();
+            }
+        }
+    }
+    let event_loop = EventLoop::<Event>::with_user_event().build().unwrap();
+    let (server, connection) = compositor::Compositor::start(event_loop.create_proxy());
+    let mut app = PopupApp {
+        windows: Vec::new(),
+        phase: 0,
+        deadline: Instant::now() + Duration::from_secs(5),
+        closed: false,
+    };
+    event_loop
+        .run_app_on_connection(&mut app, connection)
+        .unwrap();
+    assert!(app.closed);
+    assert_eq!(app.phase, 4);
+    let popups = server.popups();
+    assert_eq!(popups.len(), 3);
+    assert_eq!(popups[0].positioner.anchor, (635, 395, 1, 1));
+    assert_eq!(popups[1].parent, popups[0].surface);
+    assert_eq!(popups[2].parent, popups[0].surface);
+    assert_ne!(popups[0].parent, popups[0].surface);
+    assert!(popups.iter().all(|popup| popup.serial == Some(42)));
+    let resize =
+        wayland_protocols::xdg::shell::client::xdg_positioner::ConstraintAdjustment::ResizeY.bits();
+    assert!(popups
+        .iter()
+        .all(|popup| popup.positioner.adjustments & resize != 0));
+    assert_eq!(
+        server.popup_closes(),
+        vec![popups[1].popup, popups[2].popup, popups[0].popup]
+    );
+}

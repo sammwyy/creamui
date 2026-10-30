@@ -57,7 +57,8 @@ pub use controller::{
     SelectController, SidebarNavController, TabController, TextController, TreeController,
 };
 pub use raw::{
-    DateTime, RawButton, RawCheckbox, RawColorPicker, RawDateTimePicker, RawFilePicker, RawLink,
+    ContextMenuController, ContextMenuItem, ContextMenuPane, ContextMenuStyle, DateTime, RawButton,
+    RawCheckbox, RawColorPicker, RawContextMenu, RawDateTimePicker, RawFilePicker, RawLink,
     RawListView, RawMarquee, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar, RawSlider,
     RawSpinner, RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput,
     RawTranslate, RawView, RawVirtualList, RawVirtualTable, TabIndicatorSide, TableColumn,
@@ -66,7 +67,7 @@ pub use raw::{
 pub use themed::{
     nested_sidebar, tab_styles, AlertDialog, AppTitlebar, Avatar, Badge, Button, ButtonSize,
     ButtonState, ButtonVariant, CaptionButtonView, CaptionStyle, Card, Checkbox, ColorPicker,
-    ComboBox, CommandPalette, CommandPaletteController, CommandPaletteItem, DateInput,
+    ComboBox, CommandPalette, CommandPaletteController, CommandPaletteItem, ContextMenu, DateInput,
     DateTimePicker, Dialog, DialogContent, DialogFooter, DialogHeader, DialogMessage,
     DialogPlacement, FilePicker, FilePrompt, Heading, Link, ListBox, ListView, MenuBar, MenuColors,
     MenuItem, MenuPopup, ModalActions, Overlay, Popover, Pre, ProgressBar, ProgressRing, Quote,

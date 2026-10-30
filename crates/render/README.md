@@ -148,3 +148,13 @@ One activity window is supported. Additional window and native popup requests
 log a warning and do not invoke their ready callbacks; use hosted overlays for
 secondary views. A closed window can be replaced when the application uses
 `AppBuilder::keep_running()`.
+
+## Context menu hosting
+
+The optional `context-menu` feature exports `ContextMenuHost`. It uses the native
+Wayland backend's `xdg_popup` support, input grabs, nested popup parenting and
+compositor placement. Windows, Winit, missing input serials and failed popup
+requests use the themed in-window overlay instead. Capture `PopupOptions::at_cursor`
+at the pointer press, append `host.overlay(viewport)` to parent content, and route
+parent focus loss through `host.parent_focus_lost()`. See the
+[component guide](../../docs/components.md#context-menus) for the integration.

@@ -7,6 +7,10 @@
 //! damaged regions with `tiny-skia` and presents just those pixels.
 
 mod backend;
+#[cfg(feature = "context-menu")]
+mod context_menu;
+#[cfg(feature = "context-menu")]
+pub use context_menu::ContextMenuHost;
 #[cfg(not(target_arch = "wasm32"))]
 mod cpu;
 mod devtools;

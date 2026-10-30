@@ -206,6 +206,7 @@ pub struct LayoutState {
 #[derive(Default, Clone)]
 pub struct EventState {
     pub on_click: Option<Rc<dyn Fn()>>,
+    pub on_context_menu: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_click_at: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_hover: Option<Rc<dyn Fn(bool)>>,
     pub on_key: Option<Rc<dyn Fn(crate::KeyInput)>>,
@@ -220,7 +221,8 @@ pub struct EventState {
 
 impl EventState {
     pub fn is_interactive(&self) -> bool {
-        self.on_click.is_some()
+        self.on_context_menu.is_some()
+            || self.on_click.is_some()
             || self.on_click_at.is_some()
             || self.on_hover.is_some()
             || self.on_drag.is_some()

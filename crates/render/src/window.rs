@@ -313,7 +313,7 @@ fn resize_cursor(direction: ResizeDirection) -> CursorIcon {
 /// Translates a platform logical key into CreamUI's backend-agnostic [`Key`].
 /// Returns `None` for keys with no CreamUI meaning (modifiers, function
 /// keys, etc.) — those are silently ignored rather than delivered.
-fn translate_key(key: &PlatformKey) -> Option<Key> {
+pub(crate) fn translate_key(key: &PlatformKey) -> Option<Key> {
     match key {
         PlatformKey::Character(s) => s.chars().next().map(Key::Char),
         PlatformKey::Space => Some(Key::Char(' ')),
@@ -441,10 +441,13 @@ impl WindowOptions {
 /// The Wayland backend uses the input serial to create an `xdg_popup`.
 #[derive(Clone)]
 pub struct PopupOptions {
-    parent: WindowHandle,
-    anchor: Rect,
-    input_serial: Option<InputSerial>,
+    pub(crate) parent: WindowHandle,
+    pub(crate) anchor: Rect,
+    pub(crate) input_serial: Option<InputSerial>,
     placement: PopupPlacement,
+    resize_to_fit: bool,
+    on_error: Option<Rc<dyn Fn(String)>>,
+    is_current: Option<Rc<dyn Fn() -> bool>>,
 }
 
 impl PopupOptions {
@@ -455,7 +458,48 @@ impl PopupOptions {
             anchor,
             input_serial,
             placement: PopupPlacement::Below,
+            resize_to_fit: false,
+            on_error: None,
+            is_current: None,
         }
+    }
+
+    pub fn at_cursor(parent: WindowHandle, point: Point) -> Self {
+        let size = parent.logical_size();
+        let anchor = Rect {
+            x: if size.width > 0.0 {
+                point.x.clamp(0.0, (size.width - 1.0).max(0.0))
+            } else {
+                point.x.max(0.0)
+            },
+            y: if size.height > 0.0 {
+                point.y.clamp(0.0, (size.height - 1.0).max(0.0))
+            } else {
+                point.y.max(0.0)
+            },
+            width: 1.0,
+            height: 1.0,
+        };
+        Self::new(parent, anchor).placed(PopupPlacement::RightTop)
+    }
+
+    pub fn resize_to_fit(mut self, enabled: bool) -> Self {
+        self.resize_to_fit = enabled;
+        self
+    }
+
+    pub fn on_error(mut self, handler: impl Fn(String) + 'static) -> Self {
+        self.on_error = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn while_current(mut self, current: impl Fn() -> bool + 'static) -> Self {
+        self.is_current = Some(Rc::new(current));
+        self
+    }
+
+    pub fn supports_native_popup(&self) -> bool {
+        self.input_serial.is_some() && self.parent.supports_native_popups()
     }
 
     pub fn with_input_serial(mut self, input_serial: InputSerial) -> Self {
@@ -1586,6 +1630,7 @@ type KeyboardHandler =
     Rc<RefCell<Option<Rc<dyn Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool>>>>;
 type PointerPresenceHandler = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
 type PointerMoveHandler = Rc<RefCell<Option<Rc<dyn Fn(Point)>>>>;
+type PointerButtonHandler = Rc<RefCell<Option<Rc<dyn Fn(MouseButton, bool, Point) -> bool>>>>;
 type FileDropHandler = Rc<RefCell<Option<Rc<dyn Fn(Vec<std::path::PathBuf>)>>>>;
 
 /// A handle to a live window, for desktop-shell operations (resize, move,
@@ -1609,6 +1654,7 @@ pub struct WindowHandle {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     app: AppHandle,
@@ -1621,6 +1667,38 @@ impl WindowHandle {
     pub fn on_close_requested(&self, handler: impl Fn() -> bool + 'static) {
         *self.close_handler.borrow_mut() = Some(Rc::new(handler));
     }
+    pub fn supports_native_popups(&self) -> bool {
+        self.window
+            .borrow()
+            .as_ref()
+            .is_some_and(|window| window.supports_native_popups())
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.close_requested.get() || self.window.borrow().is_none()
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.window
+            .borrow()
+            .as_ref()
+            .is_some_and(|window| window.is_ready())
+    }
+
+    pub fn logical_size(&self) -> Size {
+        self.window
+            .borrow()
+            .as_ref()
+            .map_or(Size::default(), |window| {
+                let size = window.inner_size();
+                let scale = window.scale_factor();
+                Size {
+                    width: (size.width as f64 / scale) as f32,
+                    height: (size.height as f64 / scale) as f32,
+                }
+            })
+    }
+
     pub fn set_title(&self, title: &str) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_title(title);
@@ -1637,6 +1715,16 @@ impl WindowHandle {
     /// media-player overlays.
     pub fn on_pointer_moved(&self, handler: impl Fn(Point) + 'static) {
         *self.pointer_move_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
+    /// Reports pointer button transitions ahead of widget dispatch, with the
+    /// button, whether it was pressed, and the logical pointer position.
+    /// Returning `true` consumes the event so click, drag, focus, and window
+    /// handling never see it; returning `false` keeps normal dispatch. This
+    /// runs before widget context-menu dispatch. The widget layer
+    /// itself handles left-button clicks and drags.
+    pub fn on_pointer_button(&self, handler: impl Fn(MouseButton, bool, Point) -> bool + 'static) {
+        *self.pointer_button_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
     /// Reports files dropped onto the window (`text/uri-list` drops).
@@ -1927,6 +2015,7 @@ struct WindowSpec {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
 }
@@ -2132,6 +2221,7 @@ impl Default for AppBuilder {
 /// Per-window state for a window whose platform window and presenter exist.
 /// Lives in [`AppHandler`], keyed by [`WindowId`], until the window closes.
 struct WindowState {
+    popup_parent: Option<WindowId>,
     pipeline: Rc<Pipeline>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
@@ -2139,6 +2229,7 @@ struct WindowState {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
     close_behavior: CloseBehavior,
@@ -2804,6 +2895,58 @@ impl WindowState {
     }
 
     fn handle_window_event(&mut self, event: WindowEvent) {
+        if let WindowEvent::MouseInput {
+            pressed: true,
+            serial,
+            ..
+        } = event
+        {
+            self.last_input_serial.set(serial);
+        }
+        if let WindowEvent::MouseInput {
+            pressed, button, ..
+        } = event
+        {
+            let handler = self.pointer_button_handler.borrow().clone();
+            if handler.is_some_and(|handler| handler(button, pressed, self.pointer_pos)) {
+                self.pipeline.invalidate_paint();
+                return;
+            }
+        }
+        if matches!(
+            event,
+            WindowEvent::MouseInput {
+                pressed: true,
+                button: MouseButton::Right,
+                ..
+            }
+        ) {
+            let pointer = self.pointer_pos;
+            let handler = if let Some(runtime) = self.runtime() {
+                runtime.with(|runtime| {
+                    let mut target = runtime.hit_test(pointer);
+                    let mut handler = None;
+                    while let Some(id) = target {
+                        let Some(node) = runtime.get(id) else {
+                            break;
+                        };
+                        if node.events.on_context_menu.is_some() {
+                            handler = node.events.on_context_menu.clone();
+                            break;
+                        }
+                        target = node.parent;
+                    }
+                    handler
+                })
+            } else {
+                self.scene(|scene| scene.context_menu_at(pointer).cloned())
+            };
+            if let Some(handler) = handler {
+                handler(pointer);
+                self.pipeline.invalidate_paint();
+                return;
+            }
+        }
         match event {
             WindowEvent::DecorationsChanged(decorations) => {
                 log::debug!("creamui-render: negotiated decorations: {:?}", decorations);
@@ -3463,6 +3606,14 @@ impl AppHandler {
             log::warn!("creamui-render: Android window request rejected; one activity window is supported, use hosted overlays for dialogs and popups");
             return;
         }
+        if spec
+            .popup
+            .as_ref()
+            .and_then(|popup| popup.is_current.as_ref())
+            .is_some_and(|current| !current())
+        {
+            return;
+        }
         let t0 = Instant::now();
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
@@ -3477,17 +3628,19 @@ impl AppHandler {
             role: spec.options.role,
         };
 
-        let window = match spec.popup.as_ref() {
-            Some(popup) => {
-                let parent = popup
-                    .parent
-                    .window
-                    .borrow()
-                    .as_ref()
-                    .map(|window| window.id())
-                    .expect("creamui-render: the popup parent window no longer exists");
-                event_loop
-                    .create_popup(
+        let popup_parent = spec.popup.as_ref().and_then(|popup| {
+            popup
+                .parent
+                .window
+                .borrow()
+                .as_ref()
+                .map(|window| window.id())
+        });
+        let result = match spec.popup.as_ref() {
+            Some(popup) => popup_parent
+                .ok_or_else(|| "popup parent no longer exists".to_owned())
+                .and_then(|parent| {
+                    event_loop.create_popup(
                         attrs,
                         PlatformPopupOptions {
                             parent,
@@ -3497,13 +3650,26 @@ impl AppHandler {
                             anchor_height: popup.anchor.height,
                             input_serial: popup.input_serial,
                             placement: popup.placement,
+                            resize_to_fit: popup.resize_to_fit,
                         },
                     )
-                    .expect("failed to create popup")
+                }),
+            None => event_loop.create_window(attrs),
+        };
+        let window = match result {
+            Ok(window) => window,
+            Err(error) if spec.popup.is_some() => {
+                log::warn!("creamui-render: could not create popup: {error}");
+                if let Some(handler) = spec
+                    .popup
+                    .as_ref()
+                    .and_then(|popup| popup.on_error.as_ref())
+                {
+                    handler(error);
+                }
+                return;
             }
-            None => event_loop
-                .create_window(attrs)
-                .expect("failed to create window"),
+            Err(error) => panic!("failed to create window: {error}"),
         };
         if let Some(region) = spec.options.blur.clone() {
             window.set_blur_region(Some(region));
@@ -3570,6 +3736,7 @@ impl AppHandler {
             keyboard_handler: spec.keyboard_handler.clone(),
             pointer_presence_handler: spec.pointer_presence_handler.clone(),
             pointer_move_handler: spec.pointer_move_handler.clone(),
+            pointer_button_handler: spec.pointer_button_handler.clone(),
             file_drop_handler: spec.file_drop_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
             app: self.app.clone(),
@@ -3586,6 +3753,7 @@ impl AppHandler {
                     | WindowDecorationMode::Hybrid
             );
         let mut state = WindowState {
+            popup_parent,
             pipeline,
             close_requested: spec.close_requested,
             focus_lost_handler: spec.focus_lost_handler,
@@ -3593,6 +3761,7 @@ impl AppHandler {
             keyboard_handler: spec.keyboard_handler,
             pointer_presence_handler: spec.pointer_presence_handler,
             pointer_move_handler: spec.pointer_move_handler,
+            pointer_button_handler: spec.pointer_button_handler,
             file_drop_handler: spec.file_drop_handler,
             last_input_serial: spec.last_input_serial,
             close_behavior: spec.options.close_behavior,
@@ -3844,6 +4013,7 @@ impl AppHandler {
     }
 
     fn drain_app_commands(&mut self, event_loop: &ActiveEventLoop<'_>) {
+        self.close_requested_windows(event_loop);
         let (windows, exit_requested) = {
             let mut commands = self.commands.borrow_mut();
             (
@@ -3884,15 +4054,34 @@ impl AppHandler {
         {
             return;
         }
+        self.close_window_tree(window_id);
+        if self.windows.is_empty() && self.exit_when_last_window_closes {
+            event_loop.exit();
+        }
+    }
+
+    fn close_window_tree(&mut self, window_id: WindowId) {
+        let children: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(|(id, state)| (state.popup_parent == Some(window_id)).then_some(*id))
+            .collect();
+        for child in children {
+            let handler = self
+                .windows
+                .get(&child)
+                .and_then(|state| state.close_handler.borrow().clone());
+            if let Some(handler) = handler {
+                handler();
+            }
+            self.close_window_tree(child);
+        }
         log::debug!("creamui-render: close requested for window {window_id:?}");
         if let Some(mut state) = self.windows.remove(&window_id) {
             state.presenter = None;
             if let Some(window) = state.pipeline.window.borrow_mut().take() {
                 window.close();
             }
-        }
-        if self.windows.is_empty() && self.exit_when_last_window_closes {
-            event_loop.exit();
         }
     }
 }
@@ -4257,6 +4446,7 @@ fn build_window_spec(
         keyboard_handler: Rc::new(RefCell::new(None)),
         pointer_presence_handler: Rc::new(RefCell::new(None)),
         pointer_move_handler: Rc::new(RefCell::new(None)),
+        pointer_button_handler: Rc::new(RefCell::new(None)),
         file_drop_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
     }
@@ -4272,6 +4462,7 @@ mod tests {
 
     #[derive(Default)]
     struct InteractiveTestWindow {
+        native_popups: std::sync::atomic::AtomicBool,
         minimum: std::sync::Mutex<Vec<Option<LogicalSize>>>,
         requests: std::sync::Mutex<Vec<(InputSerial, Option<ResizeDirection>)>>,
         decorations: std::sync::Mutex<WindowDecorations>,
@@ -4295,6 +4486,10 @@ mod tests {
         }
     }
     impl PlatformWindow for InteractiveTestWindow {
+        fn supports_native_popups(&self) -> bool {
+            self.native_popups
+                .load(std::sync::atomic::Ordering::Relaxed)
+        }
         fn id(&self) -> WindowId {
             unreachable!("headless test window has no platform ID")
         }
@@ -4399,6 +4594,7 @@ mod tests {
             );
             let now = Instant::now();
             let mut state = WindowState {
+                popup_parent: None,
                 pipeline: spec.pipeline,
                 close_requested: spec.close_requested,
                 focus_lost_handler: spec.focus_lost_handler,
@@ -4406,6 +4602,7 @@ mod tests {
                 keyboard_handler: spec.keyboard_handler,
                 pointer_presence_handler: spec.pointer_presence_handler,
                 pointer_move_handler: spec.pointer_move_handler,
+                pointer_button_handler: spec.pointer_button_handler,
                 file_drop_handler: spec.file_drop_handler,
                 last_input_serial: spec.last_input_serial,
                 close_behavior: CloseBehavior::Close,
@@ -4444,6 +4641,35 @@ mod tests {
             WindowEventHarness { state }
         }
 
+        #[cfg(all(feature = "context-menu", target_os = "linux"))]
+        fn menu_handle(&self, app: AppHandle, native: bool) -> WindowHandle {
+            let platform = InteractiveTestWindow::default();
+            platform
+                .native_popups
+                .store(native, std::sync::atomic::Ordering::Relaxed);
+            *self.state.pipeline.window.borrow_mut() = Some(Arc::new(platform));
+            let pipeline = &self.state.pipeline;
+            WindowHandle {
+                window: pipeline.window.clone(),
+                theme: pipeline.theme.clone(),
+                chrome: pipeline.chrome.clone(),
+                decorations: pipeline.decorations.clone(),
+                on_chrome_changed: Rc::new(|| {}),
+                close_requested: self.state.close_requested.clone(),
+                focus_lost_handler: self.state.focus_lost_handler.clone(),
+                close_handler: self.state.close_handler.clone(),
+                keyboard_handler: self.state.keyboard_handler.clone(),
+                pointer_presence_handler: self.state.pointer_presence_handler.clone(),
+                pointer_move_handler: self.state.pointer_move_handler.clone(),
+                pointer_button_handler: self.state.pointer_button_handler.clone(),
+                file_drop_handler: self.state.file_drop_handler.clone(),
+                last_input_serial: self.state.last_input_serial.clone(),
+                app,
+                runtime: None,
+                pipeline: Rc::downgrade(pipeline),
+            }
+        }
+
         fn send(&mut self, event: WindowEvent) {
             self.state.handle_window_event(event);
         }
@@ -4451,6 +4677,222 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn secondary_click_dispatches_context_without_primary_activation() {
+        let primary = Rc::new(Cell::new(0));
+        let secondary = Rc::new(Cell::new(0));
+        let click = primary.clone();
+        let context = secondary.clone();
+        let mut harness = WindowEventHarness::new(move |_| {
+            Box::new(
+                creamui_widgets::RawButton::new(
+                    creamui_core::layout::Style {
+                        size: creamui_widgets::layout::fixed(200.0, 100.0),
+                        ..Default::default()
+                    },
+                    {
+                        let click = click.clone();
+                        move || click.set(click.get() + 1)
+                    },
+                )
+                .with_context_menu({
+                    let context = context.clone();
+                    move |point| {
+                        assert_eq!(point, Point { x: 10.0, y: 15.0 });
+                        context.set(context.get() + 1);
+                    }
+                }),
+            )
+        });
+        harness.state.pointer_pos = Point { x: 10.0, y: 15.0 };
+        for pressed in [true, false] {
+            harness.send(WindowEvent::MouseInput {
+                pressed,
+                button: MouseButton::Right,
+                serial: None,
+            });
+        }
+        assert_eq!(secondary.get(), 1);
+        assert_eq!(primary.get(), 0);
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Right,
+            serial: Some(InputSerial(73)),
+        });
+        harness.send(WindowEvent::MouseInput {
+            pressed: false,
+            button: MouseButton::Right,
+            serial: Some(InputSerial(74)),
+        });
+        assert_eq!(harness.state.last_input_serial.get(), Some(InputSerial(73)));
+        *harness.state.pointer_button_handler.borrow_mut() = Some(Rc::new(|_, _, _| true));
+        harness.send(WindowEvent::MouseInput {
+            pressed: true,
+            button: MouseButton::Right,
+            serial: None,
+        });
+        assert_eq!(secondary.get(), 2);
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    fn menu_app() -> AppHandle {
+        AppHandle {
+            commands: Rc::new(RefCell::new(AppCommands {
+                system_theme: None,
+                windows: Vec::new(),
+                exit_requested: false,
+                proxy: test_proxy(),
+                next_job_id: 0,
+                background_jobs: HashMap::new(),
+            })),
+        }
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn native_context_menu_preserves_press_serial_and_uses_nested_popup_parents() {
+        use creamui_widgets::{ContextMenu, ContextMenuItem};
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let parent_handle = parent.menu_handle(app.clone(), true);
+        parent_handle.last_input_serial.set(Some(InputSerial(42)));
+        let request = PopupOptions::at_cursor(parent_handle.clone(), Point { x: 95.0, y: 80.0 });
+        parent_handle.last_input_serial.set(Some(InputSerial(43)));
+        let host = crate::ContextMenuHost::new();
+        host.open(
+            request,
+            vec![ContextMenuItem::submenu(
+                "new",
+                "New",
+                vec![ContextMenuItem::new("file", "File", || {})],
+            )],
+        );
+        assert!(host.uses_native_popup());
+        host.parent_focus_lost();
+        assert!(host.is_open());
+        let pending = app.commands.borrow_mut().windows.pop().unwrap();
+        assert!(!pending.options.decorations && pending.options.transparent);
+        assert!(pending.options.width > parent_handle.logical_size().width as u32);
+        let popup = pending.popup.as_ref().unwrap();
+        assert_eq!(popup.input_serial, Some(InputSerial(42)));
+        assert_eq!(popup.anchor.x, 95.0);
+        assert_eq!(popup.anchor.y, 80.0);
+        assert!(popup.resize_to_fit);
+        let menu = host.controller();
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(ThemeProvider::new(Theme::light()));
+            let mut recorder = SceneRecorder::new();
+            recorder.begin(248, 42, 1.0, Color::rgba(0, 0, 0, 0), Theme::light().colors);
+            creamui_core::Renderer::new().render(
+                Box::new(ContextMenu::pane(
+                    &menu,
+                    vec![],
+                    Size {
+                        width: 248.0,
+                        height: 42.0,
+                    },
+                )),
+                Size {
+                    width: 248.0,
+                    height: 42.0,
+                },
+                &mut recorder,
+            );
+        });
+        let root = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let root_handle = root.menu_handle(app.clone(), true);
+        (pending.on_window_ready)(root_handle.clone());
+        menu.handle_key(&Key::Down);
+        menu.handle_key(&Key::Right);
+        let child = app
+            .commands
+            .borrow_mut()
+            .windows
+            .pop()
+            .expect("submenu popup");
+        let popup = child.popup.as_ref().unwrap();
+        assert!(Rc::ptr_eq(&popup.parent.window, &root_handle.window));
+        assert_eq!(popup.input_serial, Some(InputSerial(42)));
+        let submenu = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let submenu_handle = submenu.menu_handle(app.clone(), true);
+        (child.on_window_ready)(submenu_handle.clone());
+        let close_child = submenu_handle.close_handler.borrow().clone().unwrap();
+        assert!(close_child());
+        assert_eq!(menu.visible_panes().len(), 1);
+        assert!(menu.is_open());
+        assert!(submenu_handle.close_requested.get());
+        let close_root = root_handle.close_handler.borrow().clone().unwrap();
+        assert!(close_root());
+        assert!(!host.is_open());
+        assert!(root_handle.close_requested.get());
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn closing_a_parent_cancels_queued_native_menu_creation() {
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let handle = parent.menu_handle(app.clone(), true);
+        handle.last_input_serial.set(Some(InputSerial(42)));
+        let host = crate::ContextMenuHost::new();
+        host.open(
+            PopupOptions::at_cursor(handle.clone(), Point::default()),
+            vec![creamui_widgets::ContextMenuItem::new("open", "Open", || {})],
+        );
+        let pending = app.commands.borrow_mut().windows.pop().unwrap();
+        handle.close();
+        assert!(!(pending.popup.unwrap().is_current.unwrap())());
+        assert!(!host.is_open());
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn context_menu_falls_back_and_discards_cancelled_popup_requests() {
+        use creamui_widgets::ContextMenuItem;
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let handle = parent.menu_handle(app.clone(), false);
+        handle.last_input_serial.set(Some(InputSerial(7)));
+        let host = crate::ContextMenuHost::new();
+        let items = || vec![ContextMenuItem::new("open", "Open", || {})];
+        host.open(
+            PopupOptions::at_cursor(handle.clone(), Point::default()),
+            items(),
+        );
+        assert!(!host.uses_native_popup());
+        assert!(app.commands.borrow().windows.is_empty());
+        let handle = parent.menu_handle(app.clone(), true);
+        host.open(
+            PopupOptions::at_cursor(handle.clone(), Point::default()),
+            items(),
+        );
+        let cancelled = app.commands.borrow_mut().windows.pop().unwrap();
+        host.close();
+        assert!(!(cancelled
+            .popup
+            .as_ref()
+            .unwrap()
+            .is_current
+            .as_ref()
+            .unwrap())());
+        host.open(PopupOptions::at_cursor(handle, Point::default()), items());
+        let pending = app.commands.borrow_mut().windows.pop().unwrap();
+        (cancelled.popup.unwrap().on_error.unwrap())("stale request".into());
+        assert!(host.uses_native_popup());
+        (pending.popup.unwrap().on_error.unwrap())("unsupported popup".into());
+        assert!(host.is_open());
+        assert!(!host.uses_native_popup());
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(ThemeProvider::new(Theme::light()));
+            assert!(host
+                .overlay(Size {
+                    width: 100.0,
+                    height: 100.0
+                })
+                .is_some());
+        });
     }
 
     #[test]

@@ -83,6 +83,9 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
         true
     }
     fn is_ready(&self) -> bool;
+    fn supports_native_popups(&self) -> bool {
+        false
+    }
     /// Effective decoration negotiation. Undecorated backends return `None`.
     fn window_decorations(&self) -> WindowDecorations {
         WindowDecorations::default()

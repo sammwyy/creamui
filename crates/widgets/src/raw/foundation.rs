@@ -22,6 +22,7 @@ impl TextSelection {
 pub struct RawView {
     pub style: creamui_core::Style,
     pub children: Vec<BoxedWidget>,
+    pub on_context_menu: Option<Rc<dyn Fn(Point)>>,
 }
 
 impl RawView {
@@ -30,7 +31,13 @@ impl RawView {
         RawView {
             style,
             children: Vec::new(),
+            on_context_menu: None,
         }
+    }
+
+    pub fn with_context_menu(mut self, handler: impl Fn(Point) + 'static) -> Self {
+        self.on_context_menu = Some(Rc::new(handler));
+        self
     }
 
     pub fn child(mut self, widget: BoxedWidget) -> Self {
@@ -45,6 +52,10 @@ impl RawView {
 }
 
 impl Widget for RawView {
+    fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
+        self.on_context_menu.clone()
+    }
+
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }

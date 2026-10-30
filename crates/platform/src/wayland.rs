@@ -33,6 +33,7 @@ pub struct PopupPositioner {
     pub anchor_height: f32,
     pub size: LogicalSize,
     pub placement: PopupPlacement,
+    pub resize_to_fit: bool,
 }
 
 impl PopupPositioner {
@@ -44,6 +45,7 @@ impl PopupPositioner {
             anchor_height: options.anchor_height,
             size,
             placement: options.placement,
+            resize_to_fit: options.resize_to_fit,
         }
     }
 
@@ -89,12 +91,15 @@ impl PopupPositioner {
                 positioner.set_gravity(xdg_positioner::Gravity::TopLeft);
             }
         }
-        positioner.set_constraint_adjustment(
-            xdg_positioner::ConstraintAdjustment::SlideX
-                | xdg_positioner::ConstraintAdjustment::SlideY
-                | xdg_positioner::ConstraintAdjustment::FlipX
-                | xdg_positioner::ConstraintAdjustment::FlipY,
-        );
+        let mut adjustments = xdg_positioner::ConstraintAdjustment::SlideX
+            | xdg_positioner::ConstraintAdjustment::SlideY
+            | xdg_positioner::ConstraintAdjustment::FlipX
+            | xdg_positioner::ConstraintAdjustment::FlipY;
+        if self.resize_to_fit {
+            adjustments |= xdg_positioner::ConstraintAdjustment::ResizeX
+                | xdg_positioner::ConstraintAdjustment::ResizeY;
+        }
+        positioner.set_constraint_adjustment(adjustments);
         positioner.set_reactive();
     }
 }

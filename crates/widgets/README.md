@@ -36,3 +36,13 @@ Browser text inputs and text areas support asynchronous clipboard shortcuts.
 rebuilds through their `TextController`, discarding a pending result when
 editing state changes. Clipboard access requires HTTPS or localhost and the
 browser's permission or activation policy.
+
+`ContextMenu` hosts nested `ContextMenuItem` entries through a persistent
+`ContextMenuController`. It handles hover, keyboard navigation, dismissal,
+scrolling and viewport-aware submenu placement. Use `RawContextMenu` with explicit
+tokens for custom styling, and `RawView::with_context_menu` or
+`RawButton::with_context_menu` to receive secondary clicks.
+
+For separate compositor popup windows, use `creamui-render::ContextMenuHost`
+with the `context-menu` feature. It hosts each `ContextMenu::pane` in a native
+Wayland popup and falls back to `ContextMenu` inside the parent on other backends.

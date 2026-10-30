@@ -305,3 +305,55 @@ Applications that intercept native keys before widget dispatch can forward core
 `KeyInput` values to `CommandPaletteController::handle_key`; this path does not
 require a theme context. Call `reset()` when opening the palette and focus the
 window's text input after the palette becomes visible.
+
+## Context menus
+
+Enable `creamui-render`'s `context-menu` feature and keep a `ContextMenuHost` per
+window for native popup hosting with an automatic overlay fallback:
+
+```rust
+use creamui_render::{ContextMenuHost, PopupOptions};
+use creamui_widgets::ContextMenuItem;
+
+let menu = ContextMenuHost::new();
+let request = PopupOptions::at_cursor(window.clone(), point);
+menu.open(request, vec![ContextMenuItem::new("open", "Open", open)]);
+```
+
+Capture `PopupOptions` in the initiating event before starting asynchronous work;
+it snapshots the input serial. Append `menu.overlay(viewport)` after the parent
+window's content when it returns `Some`. Call `parent_focus_lost()` when the parent
+loses focus, and `close()` when navigating or switching tabs. Forward parent
+native keys through `handle_key`; popup windows route their own keys.
+
+The native Wayland backend advertises popup support. With a valid input serial,
+the host opens an `xdg_popup` at the cursor and a child popup for each submenu.
+The compositor constrains placement and size and owns the grab. XDG toplevel,
+popup and layer-shell parents are supported, using the same protocols on
+Hyprland, KWin and Blair. Backends without native popup support, including Windows
+and Winit, use the themed in-window menu. Popup creation failures also fall back.
+Submenu replacement and closure destroy descendants before their parents. Focus
+transfer into a popup leaves the native menu open; compositor dismissal closes it.
+
+`ContextMenuItem::new(id, label, callback)` creates entries. Build nested menus
+with `submenu(id, label, children)` and groups with `separator()`. Entries support
+`enabled(false)` and `shortcut(label)`. Callbacks run after the menu closes.
+
+For manual presentation, keep a `ContextMenuController` in window state, call
+`open(point, items)` and append `ContextMenu::new(&controller, viewport)` while
+`is_open()`. It provides themed surfaces, hover and keyboard selection, scrolling,
+edge clamping and submenus that flip horizontally at the viewport edge.
+`RawContextMenu` accepts explicit `ContextMenuStyle` tokens. `ContextMenu::pane`
+and `RawContextMenu::pane` paint one branch into its own popup viewport;
+`visible_panes` reports submenu paths and their parent row geometry.
+
+`RawView::with_context_menu` and `RawButton::with_context_menu` receive secondary
+clicks in window coordinates. The renderer respects clipping and modal/pointer
+barriers, selecting the topmost handler. Keyed widgets forward this hook. Native
+`WindowHandle::on_pointer_button` handlers retain first refusal of the event.
+Retained runtime nodes expose `EventState::on_context_menu` with ancestor routing.
+
+The controller accepts Up/Down, Home/End, Right/Left, Enter/Space and Escape/Tab
+without requiring a themed render context. Clicking outside a hosted menu or
+right-clicking either presentation dismisses it. Scrolling a parent pane closes
+its open submenus so they cannot remain detached from their trigger row.

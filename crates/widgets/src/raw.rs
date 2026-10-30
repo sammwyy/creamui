@@ -79,6 +79,7 @@ fn draw_text_decorations(
 }
 
 mod button;
+mod context_menu;
 mod controls;
 mod dataview;
 mod foundation;
@@ -92,6 +93,7 @@ mod typography;
 mod virtualize;
 
 pub use button::*;
+pub use context_menu::*;
 pub use controls::*;
 pub use dataview::*;
 pub use foundation::*;

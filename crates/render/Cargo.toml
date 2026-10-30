@@ -13,6 +13,7 @@ categories = ["gui"]
 
 [features]
 default = ["platform-winit"]
+context-menu = ["dep:creamui-widgets"]
 platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop"]
 platform-android = ["creamui-platform/android"]
 platform-wayland = ["creamui-platform/wayland"]
@@ -34,6 +35,7 @@ logger = ["dep:env_logger"]
 router = ["dep:creamui-router"]
 
 [dependencies]
+creamui-widgets = { workspace = true, optional = true }
 creamui-core = { workspace = true }
 creamui-theme = { workspace = true }
 creamui-theme-loader = { workspace = true, optional = true }

@@ -190,14 +190,15 @@ impl<T: 'static> EventLoop<T> {
         };
         handler.resumed(&active);
 
+        let mut user_events = Vec::new();
+        let mut window_events = Vec::new();
         while !self.state.exit.load(Ordering::Acquire) {
             handler.about_to_wait(&active);
-            for event in self
-                .events
-                .lock()
-                .expect("user event queue lock poisoned")
-                .drain(..)
-            {
+            std::mem::swap(
+                &mut user_events,
+                &mut self.events.lock().expect("user event queue lock poisoned"),
+            );
+            for event in user_events.drain(..) {
                 handler.user_event(&active, event);
             }
             runtime.borrow_mut().close_requested();
@@ -213,7 +214,8 @@ impl<T: 'static> EventLoop<T> {
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
-            for (window_id, event) in runtime.borrow_mut().events.drain(..) {
+            std::mem::swap(&mut window_events, &mut runtime.borrow_mut().events);
+            for (window_id, event) in window_events.drain(..) {
                 handler.window_event(&active, window_id, event);
             }
         }
@@ -326,6 +328,7 @@ impl ActiveEventLoop<'_> {
     ) -> Result<Arc<dyn PlatformWindow>, String> {
         let id = WindowId::next();
         let mut runtime = self.runtime.borrow_mut();
+        runtime.close_requested();
         let parent = runtime
             .windows
             .get(&popup_options.parent)
@@ -1886,6 +1889,9 @@ impl HasDisplayHandle for Window {
 }
 
 impl PlatformWindow for Window {
+    fn supports_native_popups(&self) -> bool {
+        true
+    }
     fn set_title(&self, title: &str) {
         self.window_state_requests
             .lock()

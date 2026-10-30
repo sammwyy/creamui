@@ -39,6 +39,7 @@ fn centered_box_style(padding: f32) -> Style {
 mod avatar;
 mod button;
 mod command_palette;
+mod context_menu;
 mod controls;
 mod dataview;
 mod dialog;
@@ -57,6 +58,7 @@ mod typography;
 pub use avatar::*;
 pub use button::*;
 pub use command_palette::*;
+pub use context_menu::*;
 pub use controls::*;
 pub use dataview::*;
 pub use dialog::*;

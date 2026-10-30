@@ -1605,6 +1605,7 @@ pub struct WindowHandle {
     on_chrome_changed: Rc<dyn Fn()>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    close_handler: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
@@ -1616,6 +1617,10 @@ pub struct WindowHandle {
 }
 
 impl WindowHandle {
+    /// Returns false from the handler to defer a native or programmatic close.
+    pub fn on_close_requested(&self, handler: impl Fn() -> bool + 'static) {
+        *self.close_handler.borrow_mut() = Some(Rc::new(handler));
+    }
     pub fn set_title(&self, title: &str) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.set_title(title);
@@ -1910,6 +1915,7 @@ struct WindowSpec {
     _runtime_subscription: Option<Rc<dyn Fn()>>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    close_handler: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
@@ -2121,6 +2127,7 @@ struct WindowState {
     pipeline: Rc<Pipeline>,
     close_requested: Rc<Cell<bool>>,
     focus_lost_handler: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+    close_handler: Rc<RefCell<Option<Rc<dyn Fn() -> bool>>>>,
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
@@ -2196,6 +2203,15 @@ impl Drop for WindowState {
 }
 
 impl WindowState {
+    fn allow_close(&self) -> bool {
+        let handler = self.close_handler.borrow().clone();
+        if handler.is_some_and(|handler| !handler()) {
+            self.close_requested.set(false);
+            return false;
+        }
+        true
+    }
+
     fn runtime(&self) -> Option<SharedRuntime> {
         match &self.pipeline.source {
             UiSource::Runtime(source) => Some(source.runtime.clone()),
@@ -3542,6 +3558,7 @@ impl AppHandler {
             on_chrome_changed,
             close_requested: spec.close_requested.clone(),
             focus_lost_handler: spec.focus_lost_handler.clone(),
+            close_handler: spec.close_handler.clone(),
             keyboard_handler: spec.keyboard_handler.clone(),
             pointer_presence_handler: spec.pointer_presence_handler.clone(),
             pointer_move_handler: spec.pointer_move_handler.clone(),
@@ -3564,6 +3581,7 @@ impl AppHandler {
             pipeline,
             close_requested: spec.close_requested,
             focus_lost_handler: spec.focus_lost_handler,
+            close_handler: spec.close_handler,
             keyboard_handler: spec.keyboard_handler,
             pointer_presence_handler: spec.pointer_presence_handler,
             pointer_move_handler: spec.pointer_move_handler,
@@ -3851,6 +3869,13 @@ impl AppHandler {
     }
 
     fn close_window(&mut self, event_loop: &ActiveEventLoop<'_>, window_id: WindowId) {
+        if self
+            .windows
+            .get(&window_id)
+            .is_some_and(|state| !state.allow_close())
+        {
+            return;
+        }
         log::debug!("creamui-render: close requested for window {window_id:?}");
         if let Some(mut state) = self.windows.remove(&window_id) {
             state.presenter = None;
@@ -4220,6 +4245,7 @@ fn build_window_spec(
         _runtime_subscription: runtime_subscription,
         close_requested,
         focus_lost_handler: Rc::new(RefCell::new(None)),
+        close_handler: Rc::new(RefCell::new(None)),
         keyboard_handler: Rc::new(RefCell::new(None)),
         pointer_presence_handler: Rc::new(RefCell::new(None)),
         pointer_move_handler: Rc::new(RefCell::new(None)),
@@ -4364,6 +4390,7 @@ mod tests {
                 pipeline: spec.pipeline,
                 close_requested: spec.close_requested,
                 focus_lost_handler: spec.focus_lost_handler,
+                close_handler: spec.close_handler,
                 keyboard_handler: spec.keyboard_handler,
                 pointer_presence_handler: spec.pointer_presence_handler,
                 pointer_move_handler: spec.pointer_move_handler,
@@ -4412,6 +4439,27 @@ mod tests {
         fn key(&mut self, input: KeyInput) {
             self.state.handle_key_input(input);
         }
+    }
+
+    #[test]
+    fn close_interceptor_defers_requests_until_the_document_is_ready() {
+        let harness = WindowEventHarness::new(|_| Box::new(creamui_widgets::Text::new("Editor")));
+        let ready = Rc::new(Cell::new(false));
+        let calls = Rc::new(Cell::new(0));
+        let guard_ready = ready.clone();
+        let guard_calls = calls.clone();
+        *harness.state.close_handler.borrow_mut() = Some(Rc::new(move || {
+            guard_calls.set(guard_calls.get() + 1);
+            guard_ready.get()
+        }));
+        harness.state.close_requested.set(true);
+        assert!(!harness.state.allow_close());
+        assert!(!harness.state.close_requested.get());
+        ready.set(true);
+        harness.state.close_requested.set(true);
+        assert!(harness.state.allow_close());
+        assert!(harness.state.close_requested.get());
+        assert_eq!(calls.get(), 2);
     }
 
     #[test]

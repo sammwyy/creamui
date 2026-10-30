@@ -773,7 +773,11 @@ impl GpuShared {
         let level = downscale_level(
             image.width(),
             image.height(),
-            [prim.bounds.width(), prim.bounds.height()],
+            if prim.effects.quarter_turns.is_multiple_of(2) {
+                [prim.bounds.width(), prim.bounds.height()]
+            } else {
+                [prim.bounds.height(), prim.bounds.width()]
+            },
             self.device.limits().max_texture_dimension_2d,
         );
         let holders = match self.images.get_mut(&image.id()) {
@@ -1209,10 +1213,25 @@ impl GpuRenderer {
                     shared.prepare_image(prim, frame);
                     self.frame_images.push(prim.image.id());
                     let b = prim.bounds;
+                    let transformed = prim.effects.has_color_transform();
+                    let matrix_index = if transformed {
+                        let index = self.gradient_texels.len() as f32;
+                        self.gradient_texels.extend(prim.effects.color_matrix);
+                        self.gradient_instances.push(self.instances.len());
+                        index
+                    } else {
+                        0.0
+                    };
                     self.instances.push(Instance {
                         bounds: [b.x0, b.y0, b.x1, b.y1],
                         color: prim.tint.map_or([0; 4], rgba),
-                        shape: [prim.opacity, 0.0, 0.0],
+                        data: [
+                            prim.effects.quarter_turns as f32,
+                            u8::from(transformed) as f32,
+                            0.0,
+                            0.0,
+                        ],
+                        shape: [prim.opacity, matrix_index, 0.0],
                         tag: KIND_IMAGE | clip,
                         ..Zeroable::zeroed()
                     });
@@ -2059,6 +2078,79 @@ mod tests {
         assert_eq!(&gpu_pixels[..4], &[20, 20, 24, 255]);
         let center = (16 * 96 + 24) * 4;
         assert_eq!(&gpu_pixels[center..center + 4], &[200, 40, 40, 255]);
+    }
+
+    #[test]
+    fn image_color_matrices_and_quarter_turns_match_cpu_without_reuploading() {
+        let Some(mut gpu) = headless() else { return };
+        let image = RgbaImage::new(
+            2,
+            2,
+            vec![
+                128, 0, 0, 128, 0, 255, 0, 255, 0, 0, 255, 255, 100, 50, 25, 128,
+            ],
+        )
+        .unwrap();
+        let matrices = [
+            creamui_core::ImageEffects::default().color_matrix,
+            [
+                [-1.0, 0.0, 0.0, 1.0],
+                [0.0, -1.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0, 1.0],
+            ],
+            [[0.2126, 0.7152, 0.0722, 0.0]; 3],
+            [
+                [1.2, 0.0, 0.0, -0.1],
+                [0.0, 0.8, 0.0, 0.1],
+                [0.0, 0.0, 1.3, 0.0],
+            ],
+        ];
+        let mut cached = None;
+        for matrix in matrices {
+            for quarter_turns in 0..4 {
+                let mut recorder = SceneRecorder::new();
+                recorder.begin(48, 40, 1.0, Color::rgb(20, 30, 40), ColorScheme::default());
+                recorder.push_clip_rounded(rect(5.0, 4.0, 38.0, 32.0), 4.0);
+                recorder.draw_image_effects(
+                    rect(-8.0, -4.0, 64.0, 48.0),
+                    &image,
+                    None,
+                    0.75,
+                    creamui_core::ImageEffects {
+                        quarter_turns,
+                        color_matrix: matrix,
+                    },
+                );
+                recorder.pop_clip();
+                let list = recorder.finish();
+                let output = gpu.render_to_pixels(&list);
+                let mut cpu = Rasterizer::new(48, 40);
+                cpu.render(&list, &Damage::Full);
+                let mut worst = 0;
+                for y in 8..32 {
+                    for x in 8..40 {
+                        let offset = (y * 48 + x) * 4;
+                        for channel in 0..4 {
+                            worst = worst.max(
+                                output[offset + channel]
+                                    .abs_diff(cpu.pixmap().data()[offset + channel]),
+                            );
+                        }
+                    }
+                }
+                assert!(
+                    worst <= 5,
+                    "turns={quarter_turns}, matrix={matrix:?}, difference={worst}"
+                );
+                let shared = gpu.renderer().shared.borrow();
+                assert_eq!(shared.images.len(), 1);
+                let binding = &shared.images[&image.id()].bind_group as *const _ as usize;
+                if let Some(previous) = cached {
+                    assert_eq!(binding, previous);
+                }
+                cached = Some(binding);
+            }
+        }
     }
 
     #[test]

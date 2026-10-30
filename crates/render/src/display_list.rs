@@ -279,6 +279,7 @@ pub struct ImagePrimitive {
     pub image: RgbaImage,
     pub tint: Option<Color>,
     pub opacity: f32,
+    pub effects: creamui_core::ImageEffects,
 }
 
 impl PartialEq for ImagePrimitive {
@@ -287,6 +288,7 @@ impl PartialEq for ImagePrimitive {
             && self.image.id() == other.image.id()
             && self.tint == other.tint
             && self.opacity == other.opacity
+            && self.effects == other.effects
     }
 }
 

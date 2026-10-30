@@ -59,6 +59,8 @@ pub struct ImagePrimitive {
     pub rect: crate::Rect,
     pub content: ImageContent,
     pub tint: Option<creamui_theme::Color>,
+    pub effects: crate::ImageEffects,
+    pub opacity: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -232,11 +234,12 @@ pub(super) fn paint_fragment(
                 }
                 PaintPrimitive::Image(image) => {
                     if let ImageContent::Decoded(decoded) = &image.content {
-                        painter.draw_image_opacity(
+                        painter.draw_image_effects(
                             translated(image.rect, x, y),
                             decoded,
                             image.tint,
-                            opacity,
+                            opacity * image.opacity,
+                            image.effects,
                         );
                     }
                 }
@@ -371,6 +374,8 @@ pub(super) fn generate_fragment_at(
                 rect: image_destination(rect, &image.content, image.fit),
                 content: image.content.clone(),
                 tint: None,
+                effects: crate::ImageEffects::default(),
+                opacity: 1.0,
             })));
             if clipped {
                 ops.push(PaintOp::PopClip);
@@ -751,6 +756,35 @@ impl crate::Painter for RecordingPainter {
                 rect,
                 content: ImageContent::Decoded(image.clone()),
                 tint,
+                effects: crate::ImageEffects::default(),
+                opacity: 1.0,
+            })));
+    }
+
+    fn draw_image_opacity(
+        &mut self,
+        rect: crate::Rect,
+        image: &crate::RgbaImage,
+        tint: Option<creamui_theme::Color>,
+        opacity: f32,
+    ) {
+        self.draw_image_effects(rect, image, tint, opacity, crate::ImageEffects::default());
+    }
+    fn draw_image_effects(
+        &mut self,
+        rect: crate::Rect,
+        image: &crate::RgbaImage,
+        tint: Option<creamui_theme::Color>,
+        opacity: f32,
+        effects: crate::ImageEffects,
+    ) {
+        self.ops
+            .push(PaintOp::Primitive(PaintPrimitive::Image(ImagePrimitive {
+                rect,
+                content: ImageContent::Decoded(image.clone()),
+                tint,
+                effects: effects.normalized(),
+                opacity: opacity.clamp(0.0, 1.0),
             })));
     }
 

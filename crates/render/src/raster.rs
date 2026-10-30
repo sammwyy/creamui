@@ -316,20 +316,111 @@ fn draw_image(
         return;
     };
     let b = image.bounds;
-    let transform = transform.pre_concat(Transform::from_row(
-        b.width() / width as f32,
-        0.0,
-        0.0,
-        b.height() / height as f32,
-        b.x0,
-        b.y0,
-    ));
+    let mapping = match image.effects.quarter_turns {
+        1 => Transform::from_row(
+            0.0,
+            b.height() / width as f32,
+            -b.width() / height as f32,
+            0.0,
+            b.x1,
+            b.y0,
+        ),
+        2 => Transform::from_row(
+            -b.width() / width as f32,
+            0.0,
+            0.0,
+            -b.height() / height as f32,
+            b.x1,
+            b.y1,
+        ),
+        3 => Transform::from_row(
+            0.0,
+            -b.height() / width as f32,
+            b.width() / height as f32,
+            0.0,
+            b.x0,
+            b.y1,
+        ),
+        _ => Transform::from_row(
+            b.width() / width as f32,
+            0.0,
+            0.0,
+            b.height() / height as f32,
+            b.x0,
+            b.y0,
+        ),
+    };
+    let transform = transform.pre_concat(mapping);
     let paint = PixmapPaint {
         quality: FilterQuality::Bilinear,
         opacity: image.opacity,
         ..Default::default()
     };
-    target.draw_pixmap(0, 0, source, &paint, transform, mask);
+    if image.effects.has_color_transform() {
+        let mut corners = [
+            Point::from_xy(0.0, 0.0),
+            Point::from_xy(width as f32, 0.0),
+            Point::from_xy(width as f32, height as f32),
+            Point::from_xy(0.0, height as f32),
+        ];
+        transform.map_points(&mut corners);
+        let x0 = (corners
+            .iter()
+            .map(|point| point.x)
+            .fold(f32::INFINITY, f32::min)
+            .floor()
+            - 1.0)
+            .max(0.0) as u32;
+        let y0 = (corners
+            .iter()
+            .map(|point| point.y)
+            .fold(f32::INFINITY, f32::min)
+            .floor()
+            - 1.0)
+            .max(0.0) as u32;
+        let x1 = (corners
+            .iter()
+            .map(|point| point.x)
+            .fold(f32::NEG_INFINITY, f32::max)
+            .ceil()
+            + 1.0)
+            .clamp(0.0, target.width() as f32) as u32;
+        let y1 = (corners
+            .iter()
+            .map(|point| point.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+            .ceil()
+            + 1.0)
+            .clamp(0.0, target.height() as f32) as u32;
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let mut filtered = Pixmap::new(x1 - x0, y1 - y0).expect("nonempty visible image");
+        filtered.draw_pixmap(
+            0,
+            0,
+            source,
+            &PixmapPaint {
+                quality: FilterQuality::Bilinear,
+                ..Default::default()
+            },
+            transform.post_translate(-(x0 as f32), -(y0 as f32)),
+            None,
+        );
+        for pixel in filtered.data_mut().chunks_exact_mut(4) {
+            image.effects.transform_pixel(pixel);
+        }
+        target.draw_pixmap(
+            x0 as i32,
+            y0 as i32,
+            filtered.as_ref(),
+            &paint,
+            Transform::identity(),
+            mask,
+        );
+    } else {
+        target.draw_pixmap(0, 0, source, &paint, transform, mask);
+    }
 }
 
 fn tinted(image: &ImagePrimitive, tint: Color) -> Pixmap {

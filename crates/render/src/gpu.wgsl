@@ -12,6 +12,7 @@ struct Globals {
 const KIND_QUAD: f32 = 0.0;
 const KIND_LINE: f32 = 1.0;
 const KIND_GLYPH: f32 = 2.0;
+const KIND_IMAGE: f32 = 3.0;
 const KIND_GRADIENT_QUAD: f32 = 4.0;
 const KIND_RADIAL_GRADIENT_QUAD: f32 = 5.0;
 const KIND_REPEATING_RADIAL_GRADIENT_QUAD: f32 = 6.0;
@@ -73,6 +74,16 @@ fn vs(@builtin(vertex_index) index: u32, instance: Instance) -> Varyings {
         1.0,
     );
     out.uv = corner;
+    if kind == KIND_IMAGE {
+        let turns = u32(instance.data.x);
+        if turns == 1u {
+            out.uv = vec2<f32>(corner.y, 1.0 - corner.x);
+        } else if turns == 2u {
+            out.uv = vec2<f32>(1.0) - corner;
+        } else if turns == 3u {
+            out.uv = vec2<f32>(1.0 - corner.y, corner.x);
+        }
+    }
     out.bounds = b;
     out.color = premultiply(instance.color);
     out.border_color = premultiply(instance.border_color);
@@ -215,6 +226,15 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
             color = in.color * sampled.a;
         } else {
             color = sampled;
+        }
+        if in.data.y > 0.0 {
+            let source = vec4<f32>(color.rgb, color.a);
+            let matrix = u32(in.params.z);
+            color = vec4<f32>(clamp(vec3<f32>(
+                dot(textureLoad(clips, clip_coord(matrix), 0), source),
+                dot(textureLoad(clips, clip_coord(matrix + 1u), 0), source),
+                dot(textureLoad(clips, clip_coord(matrix + 2u), 0), source)
+            ), vec3<f32>(0.0), vec3<f32>(color.a)), color.a);
         }
         color *= in.params.y;
     }

@@ -754,6 +754,23 @@ impl Painter for SceneRecorder {
         tint: Option<Color>,
         opacity: f32,
     ) {
+        self.draw_image_effects(
+            rect,
+            image,
+            tint,
+            opacity,
+            creamui_core::ImageEffects::default(),
+        );
+    }
+
+    fn draw_image_effects(
+        &mut self,
+        rect: Rect,
+        image: &RgbaImage,
+        tint: Option<Color>,
+        opacity: f32,
+        effects: creamui_core::ImageEffects,
+    ) {
         let bounds = self.bounds(rect);
         let opacity = opacity.clamp(0.0, 1.0);
         if bounds.is_empty() || opacity == 0.0 || tint.is_some_and(|tint| tint.a == 0) {
@@ -764,6 +781,7 @@ impl Painter for SceneRecorder {
             image: image.clone(),
             tint,
             opacity,
+            effects: effects.normalized(),
         }));
     }
 

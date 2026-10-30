@@ -9,6 +9,7 @@ mod animation;
 mod damage;
 mod geometry;
 mod image;
+mod image_effects;
 pub mod metrics;
 pub mod runtime;
 mod scene;
@@ -21,6 +22,7 @@ pub use animation::{Easing, Transition, TransitionState};
 pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT_MAX_RECTS};
 pub use geometry::{Point, Rect, Size};
 pub use image::RgbaImage;
+pub use image_effects::ImageEffects;
 pub use scene::{render_frame, FocusId, Renderer, Scene};
 pub use style::{
     Background, Border, BoxShadow, ColorToken, ColorValue, EdgeValues, InteractionState,

@@ -362,6 +362,27 @@ pub trait Painter {
     ) {
     }
 
+    fn draw_image_effects(
+        &mut self,
+        rect: Rect,
+        image: &crate::RgbaImage,
+        tint: Option<creamui_theme::Color>,
+        opacity: f32,
+        effects: crate::ImageEffects,
+    ) {
+        let tinted = tint.map(|tint| {
+            image.clone().map_pixels(|pixel| {
+                let alpha = (pixel[3] as u16 * tint.a as u16 + 127) / 255;
+                pixel[0] = ((tint.r as u16 * alpha + 127) / 255) as u8;
+                pixel[1] = ((tint.g as u16 * alpha + 127) / 255) as u8;
+                pixel[2] = ((tint.b as u16 * alpha + 127) / 255) as u8;
+                pixel[3] = alpha as u8;
+            })
+        });
+        let transformed = effects.apply(tinted.as_ref().unwrap_or(image));
+        self.draw_image_opacity(rect, &transformed, None, opacity);
+    }
+
     fn draw_image_opacity(
         &mut self,
         rect: Rect,

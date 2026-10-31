@@ -334,6 +334,8 @@ Hyprland, KWin and Blair. Backends without native popup support, including Windo
 and Winit, use the themed in-window menu. Popup creation failures also fall back.
 Submenu replacement and closure destroy descendants before their parents. Focus
 transfer into a popup leaves the native menu open; compositor dismissal closes it.
+Losing keyboard focus from the deepest popup also dismisses the menu. Focus
+transfer into a child popup preserves its ancestors.
 
 `ContextMenuItem::new(id, label, callback)` creates entries. Build nested menus
 with `submenu(id, label, children)` and groups with `separator()`. Entries support

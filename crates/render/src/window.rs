@@ -4818,13 +4818,14 @@ mod tests {
         let submenu = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let submenu_handle = submenu.menu_handle(app.clone(), true);
         (child.on_window_ready)(submenu_handle.clone());
+        root_handle.focus_lost_handler.borrow().as_ref().unwrap()();
+        assert!(host.is_open(), "focus can move into the submenu");
         let close_child = submenu_handle.close_handler.borrow().clone().unwrap();
         assert!(close_child());
         assert_eq!(menu.visible_panes().len(), 1);
         assert!(menu.is_open());
         assert!(submenu_handle.close_requested.get());
-        let close_root = root_handle.close_handler.borrow().clone().unwrap();
-        assert!(close_root());
+        root_handle.focus_lost_handler.borrow().as_ref().unwrap()();
         assert!(!host.is_open());
         assert!(root_handle.close_requested.get());
     }
@@ -7037,6 +7038,33 @@ mod tests {
         );
         harness.state.pointer_pos = Point { x: 50.0, y: 50.0 };
         assert_eq!(harness.state.resize_direction(), None);
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn native_context_menu_loses_focus_and_can_be_opened_again() {
+        use creamui_widgets::ContextMenuItem;
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let parent_handle = parent.menu_handle(app.clone(), true);
+        parent_handle.last_input_serial.set(Some(InputSerial(42)));
+        let host = crate::ContextMenuHost::new();
+        for event in [WindowEvent::Focused(false), WindowEvent::PopupDone] {
+            host.open(
+                PopupOptions::at_cursor(parent_handle.clone(), Point { x: 10.0, y: 10.0 }),
+                vec![ContextMenuItem::new("open", "Open", || {})],
+            );
+            let pending = app.commands.borrow_mut().windows.pop().unwrap();
+            assert!(pending.options.focus_first);
+            let mut popup = WindowEventHarness::new(|_| Box::new(BlankWidget));
+            let popup_handle = popup.menu_handle(app.clone(), true);
+            (pending.on_window_ready)(popup_handle.clone());
+            popup.send(WindowEvent::Focused(true));
+            assert!(host.is_open());
+            popup.send(event);
+            assert!(!host.is_open());
+            assert!(popup_handle.close_requested.get());
+        }
     }
 
     #[test]

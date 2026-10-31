@@ -295,6 +295,21 @@ impl HostState {
                     }
                     true
                 });
+                let blurred = Rc::downgrade(&host);
+                window.on_focus_lost(move || {
+                    let Some(host) = blurred
+                        .upgrade()
+                        .filter(|host| host.current(session, token))
+                    else {
+                        return;
+                    };
+                    let leaf = host.session.borrow().as_ref().is_some_and(|session| {
+                        session.panes.last().is_some_and(|pane| pane.token == token)
+                    });
+                    if leaf {
+                        host.controller.close();
+                    }
+                });
                 let closed = Rc::downgrade(&host);
                 window.on_close_requested(move || {
                     if let Some(host) = closed.upgrade().filter(|host| host.current(session, token))

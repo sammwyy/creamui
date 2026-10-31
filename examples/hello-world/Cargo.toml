@@ -4,11 +4,18 @@ publish = false
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["gpu", "platform-winit"]
+gpu = ["creamui-render/gpu"]
+platform-winit = ["creamui-render/platform-winit"]
+platform-wayland = ["creamui-render/platform-wayland"]
+platform-x11 = ["creamui-render/platform-x11"]
+
 [dependencies]
 creamui-core = { workspace = true }
 creamui-jsx = { workspace = true }
 creamui-macros = { workspace = true }
 creamui-reactive = { workspace = true }
-creamui-render = { workspace = true }
+creamui-render = { path = "../../crates/render", default-features = false }
 creamui-theme = { workspace = true }
 creamui-widgets = { workspace = true }

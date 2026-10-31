@@ -12,7 +12,8 @@ keywords = ["gui", "ui", "desktop", "native"]
 categories = ["gui"]
 
 [features]
-default = ["platform-winit"]
+default = ["gpu", "platform-winit"]
+gpu = ["creamui-render/gpu"]
 image = ["dep:creamui-image"]
 image-jpeg = ["image", "creamui-image/jpeg"]
 image-webp = ["image", "creamui-image/webp"]
@@ -36,7 +37,7 @@ system-theme = ["creamui-render/system-theme", "dep:creamui-theme-loader", "dep:
 # Host/session appearance notifications on Linux and Windows.
 theme-watch = ["dep:creamui-theme-watch"]
 logger = ["creamui-render/logger"]
-full = ["image-jpeg", "image-webp", "jsx", "router", "dynamic", "ffi", "devtools", "tray", "logger", "theme-watch", "system-theme"]
+full = ["gpu", "image-jpeg", "image-webp", "jsx", "router", "dynamic", "ffi", "devtools", "tray", "logger", "theme-watch", "system-theme"]
 
 [dependencies]
 creamui-core = { workspace = true }

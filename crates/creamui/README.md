@@ -11,6 +11,7 @@ creamui = { version = "0.1", features = ["jsx", "image"] }
 
 | Feature | Enables |
 |---|---|
+| `gpu` (default) | `wgpu` renderer with CPU fallback |
 | `image` | `creamui-image` with PNG decoding |
 | `image-jpeg` / `image-webp` | JPEG or WebP decoding, respectively |
 | `jsx` | JSX macros and runtime support |
@@ -24,6 +25,12 @@ creamui = { version = "0.1", features = ["jsx", "image"] }
 | `full` | Every optional integration |
 
 Use modules such as `creamui::widgets`, `creamui::theme`, and `creamui::render`, or import common items directly from `creamui`.
+
+For CPU rendering without compiling GPU support, use
+`creamui = { version = "0.2", default-features = false, features = ["platform-winit"] }`.
+This defaults to `RenderBackend::Cpu`; `platform-wayland` and `platform-x11`
+can be selected instead. Custom builds that disable defaults must explicitly
+enable `gpu` when they need GPU rendering.
 
 For local development, enable the optional devtools integration and install it
 before opening any windows. F3 then shows or hides the per-window performance

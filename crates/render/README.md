@@ -9,6 +9,29 @@ Native window hosting and frame presentation for CreamUI.
 
 Force a backend with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`. `CUI_DUMP_FRAME=path.png` writes every presented frame to disk.
 
+For an application that only uses the CPU renderer, disable default features
+and select a platform explicitly:
+
+```toml
+creamui-render = { version = "0.2", default-features = false, features = ["platform-winit"] }
+```
+
+The `gpu` feature is enabled by default. Disabling it excludes `wgpu` and its
+GPU dependencies from the build and makes `RenderBackend::Cpu` the default.
+An explicit GPU request also uses CPU in this configuration. With default
+features disabled, add `gpu` to retain GPU support on a custom platform build.
+The `GpuRenderer` and `HeadlessGpu` APIs require `gpu`. Browser rendering
+continues to use the canvas independently of this feature.
+
+Compare the minimal example and its CPU-only build with:
+
+```sh
+cargo build -p hello-world --release
+python3 crates/bench/scripts/idle_memory.py target/release/hello-world
+cargo build -p hello-world --release --no-default-features --features platform-winit
+python3 crates/bench/scripts/idle_memory.py target/release/hello-world
+```
+
 GPU damage regions are cleared before their primitives are replayed, preserving
 correct translucent blending. Partial frames cull instance ranges outside the
 damage. Every acquired surface buffer receives the complete retained texture,

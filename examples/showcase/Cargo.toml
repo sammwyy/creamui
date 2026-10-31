@@ -5,7 +5,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["platform-winit"]
+default = ["gpu", "platform-winit"]
+gpu = ["creamui-render/gpu"]
 platform-winit = ["creamui-render/platform-winit"]
 platform-android = ["creamui-render/platform-android"]
 

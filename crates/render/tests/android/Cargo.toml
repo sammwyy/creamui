@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 cpu = []
 
 [dependencies]
-creamui-render = { path = "../..", default-features = false, features = ["platform-android"] }
+creamui-render = { path = "../..", default-features = false, features = ["gpu", "platform-android"] }
 creamui-core = { path = "../../../core" }
 creamui-reactive = { path = "../../../reactive" }
 creamui-theme = { path = "../../../theme" }

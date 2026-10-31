@@ -15,7 +15,7 @@ use crate::backend::RenderBackend;
 use crate::cpu::SoftwareSurface;
 use crate::devtools::{devtools_for_new_window, DevtoolsCommand, FrameReport, WindowDevtools};
 use crate::display_list::{self, DisplayList};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use crate::gpu::GpuSurface;
 use crate::raster::Rasterizer;
 use crate::recorder::SceneRecorder;
@@ -360,8 +360,8 @@ pub struct WindowOptions {
     pub role: WindowRole,
     /// How a close request from the window manager is handled.
     pub close_behavior: CloseBehavior,
-    /// Which backend renders the window: GPU (`wgpu`, the default, falling
-    /// back to CPU when no adapter is usable) or CPU-only. Can be
+    /// Which backend renders the window: GPU (`wgpu`, the default with the
+    /// `gpu` feature, falling back to CPU when no adapter is usable) or CPU-only. Can be
     /// force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`
     /// regardless of what's set here — see [`RenderBackend::resolve`].
     pub backend: RenderBackend,
@@ -705,7 +705,7 @@ fn init_logging() {
 /// Which backend turns a window's display lists into pixels, picked once
 /// per window per [`WindowOptions::backend`].
 enum Presenter {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     Gpu(GpuSurface),
     #[cfg(not(target_arch = "wasm32"))]
     Software(SoftwareSurface),
@@ -719,9 +719,10 @@ impl Presenter {
         window: &Arc<dyn PlatformWindow>,
         backend: RenderBackend,
         transparent: bool,
-        gpu_instance: Option<&wgpu::Instance>,
-        gpu_context: &mut Option<crate::gpu::GpuContext>,
+        #[cfg(feature = "gpu")] gpu_instance: Option<&wgpu::Instance>,
+        #[cfg(feature = "gpu")] gpu_context: &mut Option<crate::gpu::GpuContext>,
     ) -> Result<Self, String> {
+        #[cfg(feature = "gpu")]
         if let (RenderBackend::Gpu, Some(instance)) = (backend, gpu_instance) {
             match GpuSurface::new(window.clone(), instance, transparent, gpu_context) {
                 Ok(surface) => return Ok(Presenter::Gpu(surface)),
@@ -730,6 +731,8 @@ impl Presenter {
                 ),
             }
         }
+        #[cfg(not(feature = "gpu"))]
+        let _ = (backend, transparent);
         SoftwareSurface::new(window.clone()).map(Presenter::Software)
     }
 
@@ -740,7 +743,7 @@ impl Presenter {
 
     fn name(&self) -> &'static str {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Presenter::Gpu(_) => "gpu",
             #[cfg(not(target_arch = "wasm32"))]
             Presenter::Software(_) => "cpu",
@@ -751,7 +754,7 @@ impl Presenter {
 
     fn adapter(&self) -> Option<Rc<str>> {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Presenter::Gpu(surface) => Some(surface.adapter_name().into()),
             _ => None,
         }
@@ -760,7 +763,7 @@ impl Presenter {
     /// Whether presenting blocks until the display can take a new frame.
     fn paces_presents(&self) -> bool {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Presenter::Gpu(_) => true,
             _ => false,
         }
@@ -768,7 +771,7 @@ impl Presenter {
 
     fn needs_raster(&self) -> bool {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Presenter::Gpu(_) => false,
             _ => true,
         }
@@ -1261,7 +1264,7 @@ impl Pipeline {
             }
             frame.report.backend = presenter.name();
             let presented = match presenter {
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
                 Presenter::Gpu(surface) => surface.present(&list, &damage),
                 #[cfg(not(target_arch = "wasm32"))]
                 Presenter::Software(surface) => {
@@ -3546,15 +3549,15 @@ struct AppHandler {
     proxy: EventLoopProxy<AppEvent>,
     /// Instance, adapter and device being prepared off the UI thread,
     /// taken by the first GPU window.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_prepare: Option<std::thread::JoinHandle<crate::gpu::PreparedGpu>>,
     /// One `wgpu::Instance` shared by every GPU window; `None` until the
     /// first one is created.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_instance: Option<Rc<wgpu::Instance>>,
     /// Adapter/device/queue negotiated by the first GPU window and reused
     /// by every later one; `None` until that first window is created.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_context: Option<crate::gpu::GpuContext>,
 }
 
@@ -3567,6 +3570,7 @@ impl AppHandler {
     ) -> Presenter {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            #[cfg(feature = "gpu")]
             if backend == RenderBackend::Gpu && self.gpu_instance.is_none() {
                 let prepared = match self.gpu_prepare.take() {
                     Some(handle) => handle.join().expect("GPU preparation thread panicked"),
@@ -3582,7 +3586,9 @@ impl AppHandler {
                 window,
                 backend,
                 transparent,
+                #[cfg(feature = "gpu")]
                 self.gpu_instance.as_deref(),
+                #[cfg(feature = "gpu")]
                 &mut self.gpu_context,
             )
             .unwrap_or_else(|err| {
@@ -4167,7 +4173,7 @@ fn run_windows(
         // backend choice to make.
         spec.options.backend = RenderBackend::Gpu;
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     let any_gpu = specs
         .iter()
         .any(|s| matches!(s.options.backend, RenderBackend::Gpu));
@@ -4177,7 +4183,7 @@ fn run_windows(
     // driver setup) — start them now so they overlap with the event loop
     // and the first window's creation instead of sitting on the first
     // frame's critical path. Skipped entirely if no window needs the GPU.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     let gpu_prepare = any_gpu.then(|| std::thread::spawn(crate::gpu::prepare));
 
     let dump_frame_path = std::env::var("CUI_DUMP_FRAME").ok();
@@ -4247,11 +4253,11 @@ fn run_windows(
         trays: Vec::new(),
         #[cfg(all(feature = "tray", target_os = "linux"))]
         proxy: event_loop.create_proxy(),
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
         gpu_prepare,
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
         gpu_instance: None,
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
         gpu_context: None,
     };
     #[cfg(not(target_arch = "wasm32"))]

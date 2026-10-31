@@ -12,7 +12,8 @@ keywords = ["gui", "ui", "rendering", "wgpu"]
 categories = ["gui"]
 
 [features]
-default = ["platform-winit"]
+default = ["gpu", "platform-winit"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 context-menu = ["dep:creamui-widgets"]
 platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop"]
 platform-android = ["creamui-platform/android"]
@@ -49,14 +50,14 @@ creamui-platform = { version = "0.2.0", path = "../platform", default-features =
 tiny-skia = { workspace = true }
 swash = "0.2"
 rustc-hash = "2"
-bytemuck = { version = "1", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, optional = true }
 tracing = { version = "0.1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = { workspace = true }
-pollster = { workspace = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
 raw-window-handle = { workspace = true }
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]

@@ -4,6 +4,13 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Make GPU support optional through the default-enabled `gpu` feature on
+  `creamui` and `creamui-render`. CPU-only builds can disable default features
+  and select a platform to exclude `wgpu` and its GPU dependencies. Devtools
+  no longer enables GPU support implicitly. The `hello-world` example exposes
+  the same feature selection, and `crates/bench/scripts/idle_memory.py` measures
+  Linux idle RSS, PSS, anonymous memory and process CPU usage.
+
 - Native Wayland titlebar controls send minimize, maximize and restore requests
   through xdg-shell. Repeated state requests coalesce per window, and actions
   queued after closing a window are discarded. Protocol and renderer tests

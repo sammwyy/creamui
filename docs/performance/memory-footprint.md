@@ -137,3 +137,77 @@ Glyph advances are no longer rounded up to whole pixels and kerning is
 applied, so text is slightly narrower and more evenly spaced than with
 `fontdue`. Bold text always uses the system's bold face; before, it fell
 back to the regular one whenever the regular weight had been loaded first.
+
+## CPU-only builds and UPX (2026-10-30)
+
+Measured the workspace's `hello-world` example (two labels and a button),
+480×320 physical pixels, on Fedora 42, kernel 6.19.14, Rust 1.97.1 and
+Wayland. Both builds use the CPU renderer through the default winit host.
+The baseline is commit `006dd85`; the comparison disables the new `gpu`
+feature, leaving `platform-winit` enabled. Release settings are unchanged.
+
+Each row is the median of three sequential runs: wait three seconds after
+launch, sample process CPU counters for three seconds without input, then
+read `/proc/PID/smaps_rollup`. UPX 5.1.1 used its default compression settings
+on separate copies of the release executables. Memory columns are KiB;
+file sizes are bytes.
+
+| Build | File size | RSS | PSS | Anonymous |
+|---|---:|---:|---:|---:|
+| Baseline, runtime CPU selection | 9,729,256 | 11,036 | 7,515 | 1,904 |
+| Baseline + UPX | 4,020,448 | 11,916 | 8,498 | 3,704 |
+| CPU-only compilation | 5,321,872 | 10,024 | 6,555 | 1,812 |
+| CPU-only compilation + UPX | 2,194,628 | 10,440 | 7,039 | 2,772 |
+
+Excluding GPU support reduces the executable by 45.3% and RSS by 9.2%
+(about 1 MiB) without changing the window's pixels. `wgpu`, `wgpu-core`,
+`wgpu-hal`, `naga` and `ash` are absent from the CPU-only dependency tree.
+The runtime CPU selection already skipped GPU initialization; most of the
+improvement comes from the smaller executable rather than freed GPU state.
+
+There were no additional process CPU ticks or main-thread voluntary context
+switches in any of the twelve idle sampling windows. This is a finite idle
+sample, not a long-running leak test. The original and CPU-only builds,
+including the latter's default backend with no environment override,
+produced byte-identical PNG frame captures.
+
+UPX reduced disk size but increased RSS and private dirty memory in these
+runs. Disk compression is not a RAM optimization. UPX's
+[Linux executable documentation](https://github.com/upx/upx/blob/devel/doc/upx.pod#notes-for-linuxelf386)
+describes decompression into RAM and the lifetime of the decompressed pages.
+RSS includes executable code, mapped fonts, shared libraries and SHM pixels;
+it is not a measure of the widget heap. PSS apportions shared pages and varies
+with what other processes are running. A 30 MiB minimum was not reproduced
+with this example and window configuration.
+
+To repeat the comparison, preserve the first executable before rebuilding:
+
+```sh
+cargo build -p hello-world --release
+cp target/release/hello-world target/hello-default
+cargo build -p hello-world --release --no-default-features --features platform-winit
+cp target/release/hello-world target/hello-cpu
+upx -o target/hello-default-upx target/hello-default
+upx -o target/hello-cpu-upx target/hello-cpu
+python3 crates/bench/scripts/idle_memory.py target/hello-default
+python3 crates/bench/scripts/idle_memory.py target/hello-default-upx
+python3 crates/bench/scripts/idle_memory.py target/hello-cpu
+python3 crates/bench/scripts/idle_memory.py target/hello-cpu-upx
+```
+
+The profiler requires Linux `/proc` and a display session. It terminates each
+application after sampling. Do not interact with the window during a run.
+The script forces `CUI_OVERRIDE_RENDER_BACKEND=cpu` unless `--backend gpu` is
+specified. `--seconds` and `--settle` adjust the sample and settling durations.
+Cargo features are additive: a different dependency enabling `gpu` includes
+GPU support again, even if the application's direct dependency disables it.
+
+A separate single run with CPU-only `platform-wayland` produced 9,080 KiB
+RSS and a 3,988,224-byte executable. It also registered about 124 voluntary
+context switches per second and 0.33% process CPU: the native event loop
+polls for user events every 8 ms. This differs from winit's blocking idle
+behavior and remains tracked in `TODO.md`. The CPU raster scratch vector
+and Wayland SHM mappings also retain their high-water capacities after a
+large window shrinks; reclaiming them would target post-resize idle memory,
+not this initial-window baseline. A full 480×320 RGBA buffer is 600 KiB;
+doubling the display scale quadruples each buffer's pixel storage.

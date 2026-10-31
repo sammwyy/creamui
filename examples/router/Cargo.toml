@@ -9,7 +9,8 @@ name = "creamui_router_example"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = ["platform-winit"]
+default = ["gpu", "platform-winit"]
+gpu = ["creamui/gpu"]
 platform-winit = ["creamui/platform-winit"]
 platform-android = ["creamui/platform-android"]
 

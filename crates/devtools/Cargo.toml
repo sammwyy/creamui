@@ -19,7 +19,7 @@ perf-metrics = ["creamui-core/perf-metrics", "creamui-render/perf-metrics"]
 
 [dependencies]
 creamui-core = { workspace = true }
-creamui-render = { workspace = true }
+creamui-render = { version = "0.2.0", path = "../render", default-features = false, features = ["platform-winit"] }
 creamui-theme = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

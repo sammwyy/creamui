@@ -2,8 +2,8 @@
 //!
 //! Widgets paint into a [`SceneRecorder`], which records a backend-neutral
 //! [`DisplayList`]. Consecutive lists are diffed into [`Damage`]; the GPU
-//! backend ([`GpuRenderer`]) draws the list with one instanced SDF
-//! pipeline, while the software backend ([`Rasterizer`]) replays only the
+//! backend (`GpuRenderer`, with the `gpu` feature) draws the list with one
+//! instanced SDF pipeline, while the software backend ([`Rasterizer`]) replays only the
 //! damaged regions with `tiny-skia` and presents just those pixels.
 
 mod backend;
@@ -15,7 +15,7 @@ pub use context_menu::ContextMenuHost;
 mod cpu;
 mod devtools;
 mod display_list;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 mod gpu;
 mod raster;
 mod recorder;
@@ -35,7 +35,7 @@ pub use creamui_platform::{
 };
 pub use devtools::{install_devtools, Devtools, DevtoolsCommand, FrameReport, WindowDevtools};
 pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, ScrollBlit};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;
 pub use recorder::SceneRecorder;

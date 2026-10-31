@@ -21,7 +21,7 @@ to `index.html` for `/users/42`, `/files/...` and other internal paths. The
 WASM entry point reuses the repository's bundled showcase font.
 
 For Android, build the library with `--no-default-features --features
-platform-android` using cargo-apk and the Android toolchain. The same example
+gpu,platform-android` using cargo-apk and the Android toolchain. The same example
 uses one NativeActivity and in-memory routing with system Back and persisted
 history. See `crates/router/README.md` for deep-link host integration.
 
@@ -29,7 +29,7 @@ To reproduce the device checks (Python 3 and ADB):
 
 ```sh
 cargo apk build --manifest-path examples/router/Cargo.toml --lib \
-  --target aarch64-linux-android --no-default-features --features platform-android
+  --target aarch64-linux-android --no-default-features --features gpu,platform-android
 adb -s DEVICE install --no-incremental -r target/debug/apk/creamui_router_example.apk
 python3 examples/router/check-android.py --device DEVICE
 ```

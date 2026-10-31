@@ -275,6 +275,10 @@ struct MeasuredRow {
 }
 
 impl Widget for MeasuredRow {
+    fn is_portal(&self) -> bool {
+        false
+    }
+
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
     }
@@ -338,6 +342,47 @@ mod tests {
 
         assert_eq!(*built.borrow(), expected);
         assert!(expected.len() < item_count);
+    }
+
+    #[test]
+    fn overscan_rows_stay_clipped_to_the_list_viewport() {
+        use creamui_core::{Point, Renderer, Size};
+        let list = RawVirtualList::new(
+            creamui_core::Style::new().width(200.0).height(60.0),
+            VirtualListState::new(100, 20.0),
+            ScrollController::new(0.0),
+            60.0,
+            |_| {
+                Box::new(RawButton::new(
+                    creamui_core::Style::new().width(200.0).height(20.0),
+                    || {},
+                ))
+            },
+        );
+        let mut painter = VirtualListPainter;
+        let scene = Renderer::new().render(
+            Box::new(
+                RawView::new(
+                    creamui_core::Style::new()
+                        .flex_direction(creamui_core::layout::FlexDirection::Column),
+                )
+                .child(Box::new(list)),
+            ),
+            Size {
+                width: 200.0,
+                height: 200.0,
+            },
+            &mut painter,
+        );
+        assert!(scene.hit_test(Point { x: 10.0, y: 10.0 }).is_some());
+        assert!(scene.hit_test(Point { x: 10.0, y: 80.0 }).is_none());
+    }
+
+    struct VirtualListPainter;
+    impl Painter for VirtualListPainter {
+        fn fill_rect(&mut self, _: Rect, _: Color, _: f32) {}
+        fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
+        fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: creamui_core::TextAlign) {}
     }
 
     #[test]

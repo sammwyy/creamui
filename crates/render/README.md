@@ -181,3 +181,17 @@ requests use the themed in-window overlay instead. Capture `PopupOptions::at_cur
 at the pointer press, append `host.overlay(viewport)` to parent content, and route
 parent focus loss through `host.parent_focus_lost()`. See the
 [component guide](../../docs/components.md#context-menus) for the integration.
+
+
+Native file drops dispatch to the topmost visible `Widget::file_drop_target`
+(or retained `EventState::file_drop_target`) before window-wide handlers.
+`FileDropTarget` filters paths before its callback. Clips and modal barriers use
+the same hit testing as pointer interaction. Use `on_files_dropped_at` for a
+window-level fallback that needs the original drop position.
+
+`WindowHandle::start_drag_with_data` accepts MIME/payload pairs and an optional
+bitmap icon. The native Wayland backend offers Copy and transfers pipe data on
+workers so a source and destination in the same process remain responsive.
+`is_dragging` is reactive and clears on compositor completion or cancellation.
+Backends without native payload support return an error. Dismissed popup drag
+origins stay alive until the transfer ends.

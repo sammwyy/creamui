@@ -544,6 +544,11 @@ pub enum WindowEvent {
     },
     DragLeft,
     DragDropped,
+    DragSourceFinished,
+    FilesDroppedAt {
+        paths: Vec<std::path::PathBuf>,
+        position: PhysicalPosition,
+    },
     /// One or more files were dropped on the window (Wayland
     /// `text/uri-list` / winit `DroppedFile`).
     FilesDropped {

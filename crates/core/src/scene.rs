@@ -282,6 +282,7 @@ struct PaintOutputs {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    file_drops: Vec<(Rect, crate::FileDropTarget)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
     focusables: Vec<(
@@ -325,6 +326,7 @@ struct RegionMarks {
 struct PointerBarrier {
     rect: Rect,
     context_hits: usize,
+    file_drops: usize,
     hits: usize,
     hits_at: usize,
     focusables: usize,
@@ -340,6 +342,7 @@ impl PaintOutputs {
         self.pointer_barriers.push(PointerBarrier {
             rect,
             context_hits: self.context_hits.len(),
+            file_drops: self.file_drops.len(),
             hits: self.hits.len(),
             hits_at: self.hits_at.len(),
             focusables: self.focusables.len(),
@@ -565,6 +568,7 @@ fn paint_instance(
         out.hits.clear();
         out.hits_at.clear();
         out.context_hits.clear();
+        out.file_drops.clear();
         out.focusables.clear();
         out.draggables.clear();
         out.drag_starts.clear();
@@ -698,6 +702,9 @@ fn paint_instance(
             }
             if let Some(handler) = instance.widget.on_click_at() {
                 out.hits_at.push((visible, handler));
+            }
+            if let Some(target) = instance.widget.file_drop_target() {
+                out.file_drops.push((visible, target));
             }
             if let Some(handler) = instance.widget.on_context_menu() {
                 out.context_hits.push((visible, handler));
@@ -894,6 +901,7 @@ pub struct Scene {
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    file_drops: Vec<(Rect, crate::FileDropTarget)>,
     /// Every focusable widget in tab order, with its visible rect if any
     /// part of it is on screen, so indices stay stable while scrolling.
     focusables: Vec<(
@@ -949,6 +957,18 @@ impl Scene {
             None => 0,
         })
     }
+    pub fn file_drop_target_at(&self, point: Point) -> Option<&crate::FileDropTarget> {
+        self.file_drops
+            .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.file_drops),
+            )
+            .rev()
+            .find(|(rect, _)| rect.contains(point))
+            .map(|(_, target)| target)
+    }
+
     pub fn context_menu_at(&self, point: Point) -> Option<&Rc<dyn Fn(Point)>> {
         self.context_hits
             .iter()
@@ -1411,6 +1431,7 @@ impl Renderer {
             hits: out.hits,
             hits_at: out.hits_at,
             context_hits: out.context_hits,
+            file_drops: out.file_drops,
             focusables: out.focusables,
             draggables: out.draggables,
             drag_starts: out.drag_starts,

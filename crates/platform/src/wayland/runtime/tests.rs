@@ -370,3 +370,114 @@ fn nested_popups_preserve_anchors_grabs_and_destroy_before_sibling_replacement()
         vec![popups[1].popup, popups[2].popup, popups[0].popup]
     );
 }
+
+#[test]
+fn file_drag_transfers_payload_without_blocking_the_source_event_loop() {
+    struct DragApp {
+        source: Option<Arc<dyn PlatformWindow>>,
+        target: Option<Arc<dyn PlatformWindow>>,
+        started: bool,
+        received: bool,
+        finished: bool,
+        deadline: Instant,
+    }
+    impl ApplicationHandler<Event> for DragApp {
+        fn user_event(&mut self, _: &ActiveEventLoop<'_>, _: Event) {}
+        fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
+            self.source = Some(
+                event_loop
+                    .create_window(WindowAttributes::default())
+                    .unwrap(),
+            );
+            self.target = Some(
+                event_loop
+                    .create_window(WindowAttributes::default())
+                    .unwrap(),
+            );
+        }
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop<'_>,
+            id: WindowId,
+            event: WindowEvent,
+        ) {
+            if matches!(event, WindowEvent::Resized(_))
+                && id == self.target.as_ref().unwrap().id()
+                && !self.started
+            {
+                self.started = true;
+                self.source
+                    .as_ref()
+                    .unwrap()
+                    .start_drag_with_data(
+                        crate::InputSerial(42),
+                        &[(
+                            "text/uri-list".into(),
+                            b"file:///tmp/Example%20app.desktop\r\nfile:///tmp/Second.desktop\r\n"
+                                .to_vec(),
+                        )],
+                        None,
+                    )
+                    .unwrap();
+            }
+            match event {
+                WindowEvent::FilesDroppedAt { paths, position } => {
+                    assert_eq!(id, self.target.as_ref().unwrap().id());
+                    assert_eq!(
+                        paths,
+                        vec![
+                            std::path::PathBuf::from("/tmp/Example app.desktop"),
+                            std::path::PathBuf::from("/tmp/Second.desktop")
+                        ]
+                    );
+                    assert_eq!((position.x, position.y), (48.0, 60.0));
+                    self.received = true;
+                }
+                WindowEvent::DragSourceFinished => {
+                    assert_eq!(id, self.source.as_ref().unwrap().id());
+                    self.finished = true;
+                }
+                _ => {}
+            }
+            if self.received && self.finished {
+                event_loop.exit();
+            }
+        }
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop<'_>) {
+            if Instant::now() >= self.deadline {
+                event_loop.exit();
+            }
+        }
+    }
+    let event_loop = EventLoop::<Event>::with_user_event().build().unwrap();
+    let (server, connection) = compositor::Compositor::start(event_loop.create_proxy());
+    let mut app = DragApp {
+        source: None,
+        target: None,
+        started: false,
+        received: false,
+        finished: false,
+        deadline: Instant::now() + Duration::from_secs(5),
+    };
+    event_loop
+        .run_app_on_connection(&mut app, connection)
+        .unwrap();
+    assert!(
+        app.received && app.finished,
+        "drag transfer must complete while the UI event loop remains responsive"
+    );
+    assert_eq!(
+        server
+            .actions()
+            .iter()
+            .filter(|action| **action == "drag-copy")
+            .count(),
+        1
+    );
+    assert!(server.actions().contains(&"drag-finished"));
+}
+
+#[test]
+fn uri_list_accepts_only_local_absolute_paths_and_decodes_names() {
+    assert_eq!(parse_uri_list("# comment\r\nfile:///tmp/Hello%20world.desktop\r\nfile://localhost/tmp/local.desktop\nfile://remote/tmp/remote.desktop\nhttps://example.com/app.desktop\n"), vec![std::path::PathBuf::from("/tmp/Hello world.desktop"), std::path::PathBuf::from("/tmp/local.desktop")]);
+}

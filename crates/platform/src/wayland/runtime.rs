@@ -211,6 +211,29 @@ impl<T: 'static> EventLoop<T> {
             runtime
                 .borrow_mut()
                 .apply_integration_requests(&queue_handle);
+            {
+                let mut runtime = runtime.borrow_mut();
+                let completed = std::mem::take(
+                    &mut *runtime
+                        .dropped_files
+                        .lock()
+                        .expect("drop queue lock poisoned"),
+                );
+                runtime.events.extend(
+                    completed
+                        .into_iter()
+                        .filter(|result| !result.paths.is_empty())
+                        .map(|result| {
+                            (
+                                result.window_id,
+                                WindowEvent::FilesDroppedAt {
+                                    paths: result.paths,
+                                    position: result.position,
+                                },
+                            )
+                        }),
+                );
+            }
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
@@ -458,6 +481,10 @@ struct Runtime {
     /// Dropping a [`DragSource`] cancels it, so this stays alive until the
     /// compositor reports the drag cancelled or finished.
     active_drag: Option<DragSource>,
+    drag_origin: Option<WindowId>,
+    drag_position: PhysicalPosition,
+    drag_payload: HashMap<String, Vec<u8>>,
+    dropped_files: Arc<Mutex<Vec<FileDropResult>>>,
     /// Window currently under the drag pointer, if any.
     drag_target: Option<WindowId>,
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
@@ -465,11 +492,18 @@ struct Runtime {
     icon_pool: SlotPool,
 }
 
+struct FileDropResult {
+    window_id: WindowId,
+    paths: Vec<std::path::PathBuf>,
+    position: PhysicalPosition,
+}
+
 /// Queued by [`Window::start_drag`], drained by [`Runtime::apply_drag_requests`].
 struct DragRequest {
     window_id: WindowId,
     serial: u32,
     mime_types: Vec<String>,
+    data: Vec<(String, Vec<u8>)>,
     icon: Option<DragIcon>,
 }
 
@@ -591,11 +625,30 @@ impl Runtime {
             data_device_manager,
             data_device,
             active_drag: None,
+            drag_origin: None,
+            drag_position: PhysicalPosition { x: 0.0, y: 0.0 },
+            drag_payload: HashMap::new(),
+            dropped_files: Arc::new(Mutex::new(Vec::new())),
             drag_target: None,
             drag_requests: Arc::new(Mutex::new(Vec::new())),
             interactive_requests: Arc::new(Mutex::new(Vec::new())),
             icon_pool,
         }))
+    }
+
+    fn finish_drag(&mut self, source: &wl_data_source::WlDataSource) {
+        if !self
+            .active_drag
+            .as_ref()
+            .is_some_and(|active| active.inner() == source)
+        {
+            return;
+        }
+        self.active_drag = None;
+        self.drag_payload.clear();
+        if let Some(origin) = self.drag_origin.take() {
+            self.events.push((origin, WindowEvent::DragSourceFinished));
+        }
     }
 
     fn id_for_surface(&self, surface: &wl_surface::WlSurface) -> Option<WindowId> {
@@ -761,7 +814,15 @@ impl Runtime {
                 .lock()
                 .expect("drag request lock poisoned"),
         );
+        if requests.is_empty() {
+            return;
+        }
         if self.data_device_manager.is_none() || self.data_device.is_none() {
+            for request in requests {
+                self.events
+                    .push((request.window_id, WindowEvent::DragSourceFinished));
+            }
+            eprintln!("wayland: native drag requires a data device");
             return;
         }
         for request in requests {
@@ -786,7 +847,9 @@ impl Runtime {
                 DndAction::Copy,
             );
             source.start_drag(device, &origin, icon.as_ref(), request.serial);
+            self.drag_payload = request.data.into_iter().collect();
             self.active_drag = Some(source);
+            self.drag_origin = Some(request.window_id);
         }
     }
 
@@ -1551,6 +1614,7 @@ impl DataDeviceHandler for DispatchState {
             return;
         };
         runtime.drag_target = Some(id);
+        runtime.drag_position = PhysicalPosition { x, y };
         runtime.events.push((
             id,
             WindowEvent::DragEntered {
@@ -1577,9 +1641,12 @@ impl DataDeviceHandler for DispatchState {
             .data::<DataDeviceData>()
             .and_then(|data| data.drag_offer())
         {
-            offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+            if offer.with_mime_types(|types| types.iter().any(|mime| mime == "text/uri-list")) {
+                offer.accept_mime_type(offer.serial, Some("text/uri-list".into()));
+            }
         }
         let mut runtime = self.runtime.borrow_mut();
+        runtime.drag_position = PhysicalPosition { x, y };
         if let Some(id) = runtime.drag_target {
             runtime.events.push((
                 id,
@@ -1608,20 +1675,40 @@ impl DataDeviceHandler for DispatchState {
             .data::<DataDeviceData>()
             .and_then(|data| data.drag_offer())
         {
-            if let Ok(mut pipe) = offer.receive("text/uri-list".to_string()) {
-                let mut payload = String::new();
-                let _ = std::io::Read::read_to_string(&mut pipe, &mut payload);
-                let paths = crate::wayland::runtime::parse_uri_list(&payload);
-                let mut runtime = self.runtime.borrow_mut();
-                if !paths.is_empty() {
-                    if let Some(id) = runtime.drag_target {
-                        runtime
-                            .events
-                            .push((id, WindowEvent::FilesDropped { paths }));
-                    }
+            let runtime = self.runtime.borrow();
+            let target = runtime.drag_target;
+            let position = runtime.drag_position;
+            let completed = runtime.dropped_files.clone();
+            drop(runtime);
+            match (target, offer.receive("text/uri-list".to_string())) {
+                (Some(id), Ok(mut pipe)) => {
+                    std::thread::spawn(move || {
+                        let mut payload = String::new();
+                        match std::io::Read::read_to_string(&mut pipe, &mut payload) {
+                            Ok(_) => {
+                                let paths = parse_uri_list(&payload);
+                                completed.lock().expect("drop queue lock poisoned").push(
+                                    FileDropResult {
+                                        window_id: id,
+                                        paths,
+                                        position,
+                                    },
+                                );
+                                offer.finish();
+                            }
+                            Err(error) => {
+                                eprintln!("wayland: failed to read dropped files: {error}")
+                            }
+                        }
+                        offer.destroy();
+                    });
                 }
+                (_, Err(error)) => {
+                    eprintln!("wayland: failed to receive dropped files: {error}");
+                    offer.destroy();
+                }
+                _ => offer.destroy(),
             }
-            offer.destroy();
         }
         let mut runtime = self.runtime.borrow_mut();
         if let Some(id) = runtime.drag_target.take() {
@@ -1662,18 +1749,35 @@ impl DataSourceHandler for DispatchState {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_source::WlDataSource,
-        _: String,
-        _: WritePipe,
+        source: &wl_data_source::WlDataSource,
+        mime: String,
+        mut pipe: WritePipe,
     ) {
+        let runtime = self.runtime.borrow();
+        if !runtime
+            .active_drag
+            .as_ref()
+            .is_some_and(|active| active.inner() == source)
+        {
+            return;
+        }
+        let payload = runtime.drag_payload.get(&mime).cloned();
+        drop(runtime);
+        if let Some(payload) = payload {
+            std::thread::spawn(move || {
+                if let Err(error) = std::io::Write::write_all(&mut pipe, &payload) {
+                    eprintln!("wayland: failed to send drag payload: {error}");
+                }
+            });
+        }
     }
     fn cancelled(
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_source::WlDataSource,
+        source: &wl_data_source::WlDataSource,
     ) {
-        self.runtime.borrow_mut().active_drag = None;
+        self.runtime.borrow_mut().finish_drag(source);
     }
     fn dnd_dropped(
         &mut self,
@@ -1686,9 +1790,9 @@ impl DataSourceHandler for DispatchState {
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
-        _: &wl_data_source::WlDataSource,
+        source: &wl_data_source::WlDataSource,
     ) {
-        self.runtime.borrow_mut().active_drag = None;
+        self.runtime.borrow_mut().finish_drag(source);
     }
     fn action(
         &mut self,
@@ -2136,6 +2240,25 @@ impl PlatformWindow for Window {
                 window_id: self.id,
                 serial: serial.0,
                 mime_types: mime_types.to_vec(),
+                data: Vec::new(),
+                icon,
+            });
+        Ok(())
+    }
+    fn start_drag_with_data(
+        &self,
+        serial: crate::InputSerial,
+        data: &[(String, Vec<u8>)],
+        icon: Option<DragIcon>,
+    ) -> Result<(), String> {
+        self.drag_requests
+            .lock()
+            .map_err(|_| "drag request lock poisoned".to_owned())?
+            .push(DragRequest {
+                window_id: self.id,
+                serial: serial.0,
+                mime_types: data.iter().map(|(mime, _)| mime.clone()).collect(),
+                data: data.to_vec(),
                 icon,
             });
         Ok(())
@@ -2329,9 +2452,13 @@ pub(crate) fn parse_uri_list(payload: &str) -> Vec<std::path::PathBuf> {
         .filter_map(|rest| {
             // `file://host/path` — only accept empty or localhost hosts.
             let path = if rest.starts_with('/') {
-                rest
+                rest.to_owned()
             } else {
-                rest.split_once('/').map(|(_, p)| p)?
+                let (host, path) = rest.split_once('/')?;
+                if host != "localhost" {
+                    return None;
+                }
+                format!("/{path}")
             };
             let decoded = percent_decode(path.as_bytes());
             if decoded.is_empty() {

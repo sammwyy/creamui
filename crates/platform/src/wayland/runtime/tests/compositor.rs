@@ -1,6 +1,6 @@
 use super::{Event, EventLoopProxy};
 use std::{
-    os::unix::net::UnixStream,
+    os::{fd::AsFd, unix::net::UnixStream},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -13,7 +13,10 @@ use wayland_protocols::xdg::shell::server::{
     xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland_server::{
-    protocol::{wl_compositor, wl_region, wl_seat, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{
+        wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source,
+        wl_region, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    },
     Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, New, Resource,
 };
 
@@ -61,8 +64,12 @@ impl Compositor {
                 handle.create_global::<State, wl_shm::WlShm, _>(1, ());
                 handle.create_global::<State, xdg_wm_base::XdgWmBase, _>(6, ());
                 handle.create_global::<State, wl_seat::WlSeat, _>(7, ());
+                handle
+                    .create_global::<State, wl_data_device_manager::WlDataDeviceManager, _>(3, ());
                 handle.insert_client(server, Arc::new(())).unwrap();
                 let mut state = State {
+                    device: None,
+                    source: None,
                     windows: Vec::new(),
                     minimums,
                     actions,
@@ -124,6 +131,8 @@ struct Window {
 }
 
 struct State {
+    device: Option<wl_data_device::WlDataDevice>,
+    source: Option<wl_data_source::WlDataSource>,
     windows: Vec<Window>,
     actions: Arc<Mutex<Vec<&'static str>>>,
     minimums: Arc<Mutex<Vec<(i32, i32)>>>,
@@ -177,6 +186,7 @@ macro_rules! global {
     };
 }
 
+global!(wl_data_device_manager::WlDataDeviceManager);
 global!(wl_compositor::WlCompositor);
 global!(wl_shm::WlShm);
 global!(xdg_wm_base::XdgWmBase);
@@ -496,6 +506,114 @@ impl Dispatch<xdg_popup::XdgPopup, ()> for State {
                     .lock()
                     .unwrap()
                     .push(popup.id().protocol_id());
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for State {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &wl_data_device_manager::WlDataDeviceManager,
+        request: wl_data_device_manager::Request,
+        _: &(),
+        _: &DisplayHandle,
+        data: &mut DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_data_device_manager::Request::CreateDataSource { id } => {
+                data.init(id, ());
+            }
+            wl_data_device_manager::Request::GetDataDevice { id, .. } => {
+                state.device = Some(data.init(id, ()));
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_source::WlDataSource, ()> for State {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &wl_data_source::WlDataSource,
+        request: wl_data_source::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_data_source::Request::Offer { mime_type } => {
+                assert_eq!(mime_type, "text/uri-list");
+            }
+            wl_data_source::Request::SetActions { dnd_actions } => {
+                assert_eq!(
+                    dnd_actions,
+                    wayland_server::WEnum::Value(wl_data_device_manager::DndAction::Copy)
+                );
+                state.actions.lock().unwrap().push("drag-copy");
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        device: &wl_data_device::WlDataDevice,
+        request: wl_data_device::Request,
+        _: &(),
+        handle: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        if let wl_data_device::Request::StartDrag {
+            source: Some(source),
+            serial,
+            ..
+        } = request
+        {
+            assert_eq!(serial, 42);
+            state.source = Some(source);
+            let offer = client
+                .create_resource::<wl_data_offer::WlDataOffer, (), Self>(handle, 3, ())
+                .unwrap();
+            device.data_offer(&offer);
+            offer.offer("text/uri-list".into());
+            offer.source_actions(wl_data_device_manager::DndAction::Copy);
+            device.enter(
+                43,
+                &state.windows.last().unwrap().surface,
+                24.0,
+                36.0,
+                Some(&offer),
+            );
+            device.motion(1, 48.0, 60.0);
+            device.drop();
+        }
+    }
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for State {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &wl_data_offer::WlDataOffer,
+        request: wl_data_offer::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        match request {
+            wl_data_offer::Request::Receive { mime_type, fd } => {
+                state.source.as_ref().unwrap().send(mime_type, fd.as_fd());
+            }
+            wl_data_offer::Request::Finish => {
+                state.actions.lock().unwrap().push("drag-finished");
+                state.source.take().unwrap().dnd_finished();
             }
             _ => {}
         }

@@ -551,6 +551,26 @@ pub trait Painter {
     }
 }
 
+#[derive(Clone)]
+pub struct FileDropTarget {
+    pub accepts: Rc<dyn Fn(&std::path::Path) -> bool>,
+    pub on_drop: Rc<dyn Fn(Vec<std::path::PathBuf>)>,
+}
+
+impl FileDropTarget {
+    pub fn dispatch(&self, paths: Vec<std::path::PathBuf>) -> bool {
+        let accepted: Vec<_> = paths
+            .into_iter()
+            .filter(|path| (self.accepts)(path))
+            .collect();
+        if accepted.is_empty() {
+            return false;
+        }
+        (self.on_drop)(accepted);
+        true
+    }
+}
+
 /// A node in a CreamUI widget tree.
 ///
 /// Widgets are cheap, immutable descriptions rebuilt on every reactive
@@ -646,6 +666,10 @@ pub trait Widget {
 
     /// Receives a secondary click in window-local coordinates.
     fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
+        None
+    }
+
+    fn file_drop_target(&self) -> Option<FileDropTarget> {
         None
     }
 
@@ -996,6 +1020,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
         self.widget.on_context_menu()
+    }
+    fn file_drop_target(&self) -> Option<FileDropTarget> {
+        self.widget.file_drop_target()
     }
     fn measure(&self) -> Option<MeasureFn> {
         self.widget.measure()

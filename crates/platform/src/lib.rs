@@ -145,6 +145,15 @@ pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
         let _ = (serial, mime_types, icon);
         Err("drag-and-drop is not supported on this backend".to_owned())
     }
+    fn start_drag_with_data(
+        &self,
+        serial: InputSerial,
+        data: &[(String, Vec<u8>)],
+        icon: Option<DragIcon>,
+    ) -> Result<(), String> {
+        let _ = (serial, data, icon);
+        Err("drag payloads are not supported on this backend".to_owned())
+    }
     #[cfg(target_arch = "wasm32")]
     fn canvas(&self) -> Option<web_sys::HtmlCanvasElement>;
 }

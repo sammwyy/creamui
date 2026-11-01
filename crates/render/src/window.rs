@@ -1634,7 +1634,7 @@ type KeyboardHandler =
 type PointerPresenceHandler = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
 type PointerMoveHandler = Rc<RefCell<Option<Rc<dyn Fn(Point)>>>>;
 type PointerButtonHandler = Rc<RefCell<Option<Rc<dyn Fn(MouseButton, bool, Point) -> bool>>>>;
-type FileDropHandler = Rc<RefCell<Option<Rc<dyn Fn(Vec<std::path::PathBuf>)>>>>;
+type FileDropHandler = Rc<RefCell<Option<Rc<dyn Fn(Vec<std::path::PathBuf>, Point)>>>>;
 
 /// A handle to a live window, for desktop-shell operations (resize, move,
 /// always-on-top) issued from outside the render loop — e.g. a click
@@ -1660,6 +1660,7 @@ pub struct WindowHandle {
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
+    native_drag_active: Signal<bool>,
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
@@ -1732,8 +1733,13 @@ impl WindowHandle {
 
     /// Reports files dropped onto the window (`text/uri-list` drops).
     pub fn on_files_dropped(&self, handler: impl Fn(Vec<std::path::PathBuf>) + 'static) {
+        *self.file_drop_handler.borrow_mut() = Some(Rc::new(move |paths, _| handler(paths)));
+    }
+    /// Reports dropped files and their window-local drop position.
+    pub fn on_files_dropped_at(&self, handler: impl Fn(Vec<std::path::PathBuf>, Point) + 'static) {
         *self.file_drop_handler.borrow_mut() = Some(Rc::new(handler));
     }
+
     /// Final decoration ownership; initially `Pending` on negotiating backends.
     /// A read inside a reactive effect subscribes it to compositor changes.
     pub fn decorations(&self) -> WindowDecorations {
@@ -1839,7 +1845,31 @@ impl WindowHandle {
         let window = window
             .as_ref()
             .ok_or_else(|| "window not yet created".to_owned())?;
-        window.start_drag(serial, mime_types, icon)
+        window.start_drag(serial, mime_types, icon)?;
+        self.native_drag_active.set(true);
+        Ok(())
+    }
+
+    pub fn is_dragging(&self) -> bool {
+        self.native_drag_active.get()
+    }
+
+    pub fn start_drag_with_data(
+        &self,
+        data: &[(String, Vec<u8>)],
+        icon: Option<DragIcon>,
+    ) -> Result<(), String> {
+        let serial = self
+            .last_input_serial
+            .get()
+            .ok_or_else(|| "no pointer press to start a drag from".to_owned())?;
+        let window = self.window.borrow();
+        let window = window
+            .as_ref()
+            .ok_or_else(|| "window not yet created".to_owned())?;
+        window.start_drag_with_data(serial, data, icon)?;
+        self.native_drag_active.set(true);
+        Ok(())
     }
 
     /// Registers a callback invoked when the native window loses focus.
@@ -2021,6 +2051,7 @@ struct WindowSpec {
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
+    native_drag_active: Signal<bool>,
 }
 
 /// Builds and runs one or more CreamUI windows sharing a single process and
@@ -2235,6 +2266,8 @@ struct WindowState {
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
+    native_drag_active: Signal<bool>,
+    popup_done_during_drag: bool,
     close_behavior: CloseBehavior,
     frameless_resizable: bool,
     resizable: bool,
@@ -2470,6 +2503,29 @@ impl WindowState {
             (_, _, true, _) => Some(ResizeDirection::North),
             (_, _, _, true) => Some(ResizeDirection::South),
             _ => None,
+        }
+    }
+
+    fn dispatch_file_drop(&self, paths: Vec<std::path::PathBuf>, point: Point) {
+        let target = if let Some(runtime) = self.runtime() {
+            runtime.with(|runtime| {
+                let mut cursor = runtime.hit_test(point);
+                while let Some(id) = cursor {
+                    let node = runtime.get(id)?;
+                    if let Some(target) = &node.events.file_drop_target {
+                        return Some(target.clone());
+                    }
+                    cursor = node.parent;
+                }
+                None
+            })
+        } else {
+            self.scene(|scene| scene.file_drop_target_at(point).cloned())
+        };
+        if let Some(target) = target {
+            target.dispatch(paths);
+        } else if let Some(callback) = self.file_drop_handler.borrow().clone() {
+            callback(paths, point);
         }
     }
 
@@ -3036,23 +3092,56 @@ impl WindowState {
             // A real Wayland drag-and-drop suppresses normal pointer motion
             // for the duration of the grab; these drive the same callbacks.
             WindowEvent::DragEntered { position } | WindowEvent::DragMoved { position } => {
+                if let Some(callback) = self.pointer_presence_handler.borrow().clone() {
+                    callback(true);
+                }
                 let scale = self.pipeline.scale_factor.peek();
                 self.pointer_pos = Point {
                     x: (position.x / scale) as f32,
                     y: (position.y / scale) as f32,
                 };
+                if let Some(callback) = self.pointer_move_handler.borrow().clone() {
+                    callback(self.pointer_pos);
+                }
+                self.set_pointer(Some(self.pointer_pos));
                 if self.dragging.is_some() {
                     self.refresh_pending_drag();
                 }
+                self.pipeline.invalidate_paint();
             }
-            WindowEvent::FilesDropped { paths } => {
-                let callback = self.file_drop_handler.borrow().clone();
-                if let Some(callback) = callback {
-                    callback(paths);
+            WindowEvent::DragSourceFinished => {
+                self.native_drag_active.set(false);
+                if self.popup_done_during_drag {
+                    self.close_requested.set(true);
+                }
+                self.dragging = None;
+                self.pending_drag = None;
+                self.drag_click = None;
+                if let Some(handler) = self.drag_end.take() {
+                    handler();
                 }
                 self.pipeline.invalidate_paint();
             }
+            WindowEvent::FilesDroppedAt { paths, position } => {
+                let scale = self.pipeline.scale_factor.peek();
+                let point = Point {
+                    x: (position.x / scale) as f32,
+                    y: (position.y / scale) as f32,
+                };
+                self.dispatch_file_drop(paths, point);
+                self.pipeline.invalidate_paint();
+            }
+            WindowEvent::FilesDropped { paths } => {
+                self.dispatch_file_drop(paths, self.pointer_pos);
+                self.pipeline.invalidate_paint();
+            }
             WindowEvent::DragLeft | WindowEvent::DragDropped => {
+                if matches!(event, WindowEvent::DragLeft) {
+                    if let Some(callback) = self.pointer_presence_handler.borrow().clone() {
+                        callback(false);
+                    }
+                    self.set_pointer(None);
+                }
                 self.dragging = None;
                 self.pending_drag = None;
                 if let Some(handler) = self.drag_end.take() {
@@ -3226,7 +3315,11 @@ impl WindowState {
                 }
             }
             WindowEvent::PopupDone => {
-                self.close_requested.set(true);
+                if self.native_drag_active.peek() {
+                    self.popup_done_during_drag = true;
+                } else {
+                    self.close_requested.set(true);
+                }
                 if let Some(handler) = self.focus_lost_handler.borrow().as_ref().cloned() {
                     handler();
                 }
@@ -3745,6 +3838,7 @@ impl AppHandler {
             pointer_button_handler: spec.pointer_button_handler.clone(),
             file_drop_handler: spec.file_drop_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
+            native_drag_active: spec.native_drag_active.clone(),
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
@@ -3770,6 +3864,8 @@ impl AppHandler {
             pointer_button_handler: spec.pointer_button_handler,
             file_drop_handler: spec.file_drop_handler,
             last_input_serial: spec.last_input_serial,
+            native_drag_active: spec.native_drag_active,
+            popup_done_during_drag: false,
             close_behavior: spec.options.close_behavior,
             frameless_resizable,
             resizable: spec.options.resizable,
@@ -4455,6 +4551,7 @@ fn build_window_spec(
         pointer_button_handler: Rc::new(RefCell::new(None)),
         file_drop_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
+        native_drag_active: Signal::new(false),
     }
 }
 
@@ -4611,6 +4708,8 @@ mod tests {
                 pointer_button_handler: spec.pointer_button_handler,
                 file_drop_handler: spec.file_drop_handler,
                 last_input_serial: spec.last_input_serial,
+                native_drag_active: spec.native_drag_active,
+                popup_done_during_drag: false,
                 close_behavior: CloseBehavior::Close,
                 frameless_resizable: false,
                 resizable: true,
@@ -4670,6 +4769,7 @@ mod tests {
                 pointer_button_handler: self.state.pointer_button_handler.clone(),
                 file_drop_handler: self.state.file_drop_handler.clone(),
                 last_input_serial: self.state.last_input_serial.clone(),
+                native_drag_active: self.state.native_drag_active.clone(),
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
@@ -6775,6 +6875,100 @@ mod tests {
             1,
             "a drop must end the drag like releasing the mouse does"
         );
+    }
+
+    #[test]
+    fn delayed_file_drops_keep_the_drop_position_after_pointer_motion() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(creamui_widgets::layout::Flex::row().size(100.0, 100.0))
+        });
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let result = received.clone();
+        *harness.state.file_drop_handler.borrow_mut() = Some(Rc::new(move |paths, point| {
+            result.borrow_mut().push((paths, point))
+        }));
+        harness.send(WindowEvent::CursorMoved {
+            position: crate::platform::PhysicalPosition { x: 90.0, y: 90.0 },
+        });
+        harness.send(WindowEvent::FilesDroppedAt {
+            paths: vec!["/tmp/app.desktop".into()],
+            position: crate::platform::PhysicalPosition { x: 20.0, y: 30.0 },
+        });
+        let received = received.borrow();
+        assert_eq!(
+            received[0].0,
+            vec![std::path::PathBuf::from("/tmp/app.desktop")]
+        );
+        assert_eq!(received[0].1, Point { x: 20.0, y: 30.0 });
+    }
+
+    #[test]
+    fn native_file_drops_route_to_widgets_before_window_fallbacks() {
+        struct Target(Rc<Cell<u32>>);
+        impl creamui_core::Widget for Target {
+            fn style(&self) -> creamui_core::Style {
+                creamui_core::Style::new().width(40.0).height(40.0)
+            }
+            fn paint(&self, _: &mut dyn creamui_core::Painter, _: Rect) {}
+            fn file_drop_target(&self) -> Option<creamui_core::FileDropTarget> {
+                let calls = self.0.clone();
+                Some(creamui_core::FileDropTarget {
+                    accepts: Rc::new(|path| path.extension().is_some_and(|ext| ext == "desktop")),
+                    on_drop: Rc::new(move |_| calls.set(calls.get() + 1)),
+                })
+            }
+        }
+        let calls = Rc::new(Cell::new(0));
+        let target = calls.clone();
+        let mut harness = WindowEventHarness::new(move |_| Box::new(Target(target.clone())));
+        let fallback = Rc::new(Cell::new(0));
+        let result = fallback.clone();
+        *harness.state.file_drop_handler.borrow_mut() =
+            Some(Rc::new(move |_, _| result.set(result.get() + 1)));
+        for (path, x) in [
+            ("/tmp/app.desktop", 20.0),
+            ("/tmp/file.txt", 20.0),
+            ("/tmp/app.desktop", 80.0),
+        ] {
+            harness.send(WindowEvent::FilesDroppedAt {
+                paths: vec![path.into()],
+                position: crate::platform::PhysicalPosition { x, y: 20.0 },
+            });
+        }
+        assert_eq!(calls.get(), 1);
+        assert_eq!(fallback.get(), 1);
+    }
+
+    #[test]
+    fn popup_dismissal_keeps_the_drag_origin_until_the_transfer_finishes() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(creamui_widgets::layout::Flex::row().size(100.0, 100.0))
+        });
+        harness.state.native_drag_active.set(true);
+        harness.send(WindowEvent::PopupDone);
+        assert!(!harness.state.close_requested.get());
+        harness.send(WindowEvent::DragSourceFinished);
+        assert!(harness.state.close_requested.get());
+        assert!(!harness.state.native_drag_active.peek());
+    }
+
+    #[test]
+    fn native_drags_report_pointer_presence_for_auto_hiding_surfaces() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(creamui_widgets::layout::Flex::row().size(100.0, 100.0))
+        });
+        let presence = Rc::new(RefCell::new(Vec::new()));
+        let events = presence.clone();
+        *harness.state.pointer_presence_handler.borrow_mut() =
+            Some(Rc::new(move |inside| events.borrow_mut().push(inside)));
+        harness.send(WindowEvent::DragEntered {
+            position: crate::platform::PhysicalPosition { x: 20.0, y: 30.0 },
+        });
+        harness.send(WindowEvent::DragMoved {
+            position: crate::platform::PhysicalPosition { x: 30.0, y: 30.0 },
+        });
+        harness.send(WindowEvent::DragLeft);
+        assert_eq!(*presence.borrow(), vec![true, true, false]);
     }
 
     struct HoverCountingWidget {

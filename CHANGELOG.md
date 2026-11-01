@@ -4,6 +4,15 @@ All notable changes to CreamUI will be documented in this file.
 
 ## Unreleased
 
+- Add filtered `FileDropTarget` hooks for widgets and retained runtime nodes.
+  Drop dispatch respects visible clips, modal barriers and paint order, with
+  window-wide callbacks as the fallback. `on_files_dropped_at` preserves the
+  native drop position during asynchronous transfer.
+- Native Wayland drags can carry MIME payloads through `start_drag_with_data`.
+  Pipe transfers run outside the UI thread, Copy remains the offered action,
+  and source popups survive dismissal until the compositor finishes the drag.
+  `WindowHandle::is_dragging` exposes that lifecycle to transient hosts.
+
 - Make GPU support optional through the default-enabled `gpu` feature on
   `creamui` and `creamui-render`. CPU-only builds can disable default features
   and select a platform to exclude `wgpu` and its GPU dependencies. Devtools

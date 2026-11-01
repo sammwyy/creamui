@@ -435,6 +435,8 @@ impl ScrollController {
     /// hook every paint. Not meant to be called directly by applications.
     pub fn report_max_offset(&self, max_offset: f32) {
         self.max_offset.set(max_offset.max(0.0));
+        self.offset
+            .set(self.offset.get().min(self.max_offset.get()));
     }
 
     pub fn set(&self, offset: f32) {
@@ -796,5 +798,16 @@ mod tests {
         assert!(tabs.is_selected(1));
         tabs.select(2);
         assert_eq!(tabs.selected(), 2);
+    }
+
+    #[test]
+    fn scroll_offset_follows_shrinking_content_and_preserves_position_on_growth() {
+        let scroll = ScrollController::new(600.0);
+        scroll.report_max_offset(120.0);
+        assert_eq!(scroll.peek(), 120.0);
+        scroll.report_max_offset(900.0);
+        assert_eq!(scroll.peek(), 120.0);
+        scroll.report_max_offset(0.0);
+        assert_eq!(scroll.peek(), 0.0);
     }
 }

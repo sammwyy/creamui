@@ -24,6 +24,7 @@ pub(super) struct Compositor {
     stop: Arc<AtomicBool>,
     actions: Arc<Mutex<Vec<&'static str>>>,
     minimums: Arc<Mutex<Vec<(i32, i32)>>>,
+    app_ids: Arc<Mutex<Vec<String>>>,
     thread: Option<JoinHandle<()>>,
     popups: Arc<Mutex<Vec<PopupRecord>>>,
     popup_closes: Arc<Mutex<Vec<u32>>>,
@@ -49,12 +50,14 @@ impl Compositor {
         let stop = Arc::new(AtomicBool::new(false));
         let actions = Arc::new(Mutex::new(Vec::new()));
         let minimums = Arc::new(Mutex::new(Vec::new()));
+        let app_ids = Arc::new(Mutex::new(Vec::new()));
         let popups = Arc::new(Mutex::new(Vec::new()));
         let popup_closes = Arc::new(Mutex::new(Vec::new()));
         let thread = thread::spawn({
             let stop = stop.clone();
             let actions = actions.clone();
             let minimums = minimums.clone();
+            let app_ids = app_ids.clone();
             let popups = popups.clone();
             let popup_closes = popup_closes.clone();
             move || {
@@ -72,6 +75,7 @@ impl Compositor {
                     source: None,
                     windows: Vec::new(),
                     minimums,
+                    app_ids,
                     actions,
                     proxy,
                     serial: 0,
@@ -90,6 +94,7 @@ impl Compositor {
                 stop,
                 actions,
                 minimums,
+                app_ids,
                 thread: Some(thread),
                 popups,
                 popup_closes,
@@ -103,6 +108,10 @@ impl Compositor {
     }
     pub(super) fn popup_closes(&self) -> Vec<u32> {
         self.popup_closes.lock().unwrap().clone()
+    }
+
+    pub(super) fn app_ids(&self) -> Vec<String> {
+        self.app_ids.lock().unwrap().clone()
     }
 
     pub(super) fn minimums(&self) -> Vec<(i32, i32)> {
@@ -136,6 +145,7 @@ struct State {
     windows: Vec<Window>,
     actions: Arc<Mutex<Vec<&'static str>>>,
     minimums: Arc<Mutex<Vec<(i32, i32)>>>,
+    app_ids: Arc<Mutex<Vec<String>>>,
     proxy: EventLoopProxy<Event>,
     serial: u32,
     popups: Arc<Mutex<Vec<PopupRecord>>>,
@@ -337,6 +347,10 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
         let maximized = match request {
             xdg_toplevel::Request::SetMinSize { width, height } => {
                 state.minimums.lock().unwrap().push((width, height));
+                None
+            }
+            xdg_toplevel::Request::SetAppId { app_id } => {
+                state.app_ids.lock().unwrap().push(app_id);
                 None
             }
             xdg_toplevel::Request::SetMaximized => Some(true),

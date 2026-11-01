@@ -312,6 +312,12 @@ impl ActiveEventLoop<'_> {
             .xdg_shell
             .create_window(surface, decorations, self.queue_handle);
         window.set_title(attributes.title);
+        if let Some(app_id) = std::env::current_exe()
+            .ok()
+            .and_then(|path| application_id(&path))
+        {
+            window.set_app_id(app_id);
+        }
         let (minimum, maximum) = window_size_limits(attributes.size, attributes.resizable);
         window.set_min_size(Some(minimum));
         window.set_max_size(maximum);
@@ -1200,6 +1206,11 @@ impl DispatchState {
             refresh.remove(&output);
         }
     }
+}
+
+fn application_id(executable: &std::path::Path) -> Option<String> {
+    let name = executable.file_name()?.to_string_lossy();
+    Some(name.strip_suffix(" (deleted)").unwrap_or(&name).to_owned())
 }
 
 fn current_refresh_interval(modes: &[Mode]) -> Option<Duration> {

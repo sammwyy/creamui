@@ -111,6 +111,11 @@ fn exercise_titlebar(decorations: bool) {
             .collect::<Vec<_>>(),
         [false, true, false]
     );
+    let executable = std::env::current_exe().unwrap();
+    assert_eq!(
+        server.app_ids(),
+        [executable.file_stem().unwrap().to_string_lossy()]
+    );
     assert_eq!(server.minimums(), [(1, 1), (640, 480), (960, 560), (0, 0)]);
     assert_eq!(
         server.actions(),
@@ -515,4 +520,18 @@ fn retained_window_handles_keep_the_display_alive_after_the_native_loop_exits() 
     let borrowed = Connection::from_backend(backend);
     let _globals = registry_queue_init::<DispatchState>(&borrowed)
         .expect("the retained native window keeps the borrowed display valid");
+}
+
+#[test]
+fn application_ids_preserve_dotted_names_and_ignore_replaced_executable_markers() {
+    for (path, expected) in [
+        ("/usr/bin/cedit", "cedit"),
+        ("/tmp/cedit (deleted)", "cedit"),
+        ("/usr/bin/org.example.Editor", "org.example.Editor"),
+    ] {
+        assert_eq!(
+            application_id(std::path::Path::new(path)).as_deref(),
+            Some(expected)
+        );
+    }
 }

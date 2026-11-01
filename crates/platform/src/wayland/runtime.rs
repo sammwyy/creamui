@@ -375,10 +375,12 @@ impl ActiveEventLoop<'_> {
             attributes.size,
             false,
         ));
+        handle.is_popup.store(true, Ordering::Release);
         runtime.windows.insert(
             id,
             NativeWindow::Popup {
                 popup,
+                geometry,
                 handle: handle.clone(),
             },
         );
@@ -480,6 +482,7 @@ struct InteractiveRequest {
 
 #[derive(Default)]
 struct WindowStateRequest {
+    popup_size: Option<LogicalSize>,
     minimum: Option<Option<(u32, u32)>>,
     title: Option<String>,
     maximized: Option<bool>,
@@ -654,6 +657,31 @@ impl Runtime {
                 .expect("window state request lock poisoned"),
         );
         for (id, request) in requests {
+            if let Some(size) = request.popup_size {
+                if let Some(NativeWindow::Popup {
+                    popup, geometry, ..
+                }) = self.windows.get_mut(&id)
+                {
+                    if popup.xdg_popup().version() >= 3 {
+                        match XdgPositioner::new(&self.xdg_shell) {
+                            Ok(positioner) => {
+                                geometry.size = size;
+                                geometry.apply(&positioner);
+                                popup.reposition(&positioner, 0);
+                                positioner.destroy();
+                            }
+                            Err(error) => log::warn!(
+                                "creamui-platform: could not resize popup {id:?}: {error}"
+                            ),
+                        }
+                    } else {
+                        log::warn!(
+                            "creamui-platform: popup {id:?} requires xdg-shell v3 to resize"
+                        );
+                    }
+                }
+                continue;
+            }
             let Some(NativeWindow::Toplevel { window, .. }) = self.windows.get(&id) else {
                 log::debug!("creamui-platform: ignoring state request for non-toplevel {id:?}");
                 continue;
@@ -960,6 +988,7 @@ enum NativeWindow {
     },
     Popup {
         popup: Popup,
+        geometry: super::PopupPositioner,
         handle: Arc<Window>,
     },
     Layer {
@@ -1785,6 +1814,7 @@ pub struct Window {
     output_refresh: Arc<Mutex<HashMap<wl_output::WlOutput, Duration>>>,
     pointer_passthrough: bool,
     panel_surface: Mutex<Option<(WindowRole, ZwlrLayerSurfaceV1)>>,
+    is_popup: AtomicBool,
     shortcut_requests: Option<ShortcutRequests>,
 }
 
@@ -1830,6 +1860,7 @@ impl Window {
             output_refresh,
             pointer_passthrough,
             panel_surface: Mutex::new(None),
+            is_popup: AtomicBool::new(false),
             shortcut_requests,
         }
     }
@@ -1934,6 +1965,16 @@ impl PlatformWindow for Window {
     }
 
     fn request_inner_size(&self, size: LogicalSize) {
+        if self.is_popup.load(Ordering::Acquire) {
+            self.window_state_requests
+                .lock()
+                .expect("window state request lock poisoned")
+                .entry(self.id)
+                .or_default()
+                .popup_size = Some(size);
+            self.request_redraw();
+            return;
+        }
         if let Some((role, surface)) = self
             .panel_surface
             .lock()

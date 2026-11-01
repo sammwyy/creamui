@@ -455,6 +455,31 @@ impl Dispatch<xdg_popup::XdgPopup, ()> for State {
         _: &mut DataInit<'_, Self>,
     ) {
         match request {
+            xdg_popup::Request::Reposition { positioner, token } => {
+                let geometry = positioner
+                    .data::<Mutex<Positioner>>()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .clone();
+                let window = state
+                    .windows
+                    .iter_mut()
+                    .find(|window| window.popup.as_ref() == Some(popup))
+                    .unwrap();
+                window.popup_size = geometry.size;
+                popup.repositioned(token);
+                popup.configure(0, 0, geometry.size.0, geometry.size.1);
+                window.xdg.configure(10);
+                state
+                    .popups
+                    .lock()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|record| record.popup == popup.id().protocol_id())
+                    .unwrap()
+                    .positioner = geometry;
+            }
             xdg_popup::Request::Grab { serial, .. } => {
                 state
                     .popups

@@ -280,16 +280,20 @@ fn nested_popups_preserve_anchors_grabs_and_destroy_before_sibling_replacement()
                             .unwrap(),
                     );
                 }
-                1 | 2 => {
+                1 => {
+                    assert_eq!(self.windows[1].inner_size().height, 180);
+                    self.windows[1].request_inner_size(LogicalSize::new(248.0, 120.0));
+                }
+                2 | 3 => {
                     let root = self.windows[1].clone();
                     assert_eq!(
                         root.inner_size(),
                         PhysicalSize {
                             width: 248,
-                            height: 180
+                            height: 120
                         }
                     );
-                    if self.phase == 2 {
+                    if self.phase == 3 {
                         self.windows[2].close();
                     }
                     self.windows.push(
@@ -314,7 +318,7 @@ fn nested_popups_preserve_anchors_grabs_and_destroy_before_sibling_replacement()
                             .unwrap(),
                     );
                 }
-                3 => {
+                4 => {
                     self.windows[3].close();
                     self.windows[1].close();
                     self.windows[0].close();
@@ -347,10 +351,11 @@ fn nested_popups_preserve_anchors_grabs_and_destroy_before_sibling_replacement()
         .run_app_on_connection(&mut app, connection)
         .unwrap();
     assert!(app.closed);
-    assert_eq!(app.phase, 4);
+    assert_eq!(app.phase, 5);
     let popups = server.popups();
     assert_eq!(popups.len(), 3);
     assert_eq!(popups[0].positioner.anchor, (635, 395, 1, 1));
+    assert_eq!(popups[0].positioner.size, (248, 120));
     assert_eq!(popups[1].parent, popups[0].surface);
     assert_eq!(popups[2].parent, popups[0].surface);
     assert_ne!(popups[0].parent, popups[0].surface);

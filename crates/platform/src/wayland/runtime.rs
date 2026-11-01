@@ -164,7 +164,7 @@ impl<T: 'static> EventLoop<T> {
         let runtime = Runtime::new(
             compositor,
             xdg_shell,
-            connection.display(),
+            connection.clone(),
             seat,
             cursor_shape_manager,
             layer_shell,
@@ -319,7 +319,7 @@ impl ActiveEventLoop<'_> {
         let handle = Arc::new(Window::new(
             id,
             window.wl_surface().clone(),
-            runtime.display.clone(),
+            runtime.connection.clone(),
             runtime.close_requests.clone(),
             runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
@@ -385,7 +385,7 @@ impl ActiveEventLoop<'_> {
         let handle = Arc::new(Window::new(
             id,
             popup.wl_surface().clone(),
-            runtime.display.clone(),
+            runtime.connection.clone(),
             runtime.close_requests.clone(),
             runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
@@ -450,7 +450,6 @@ type ShortcutRequests = Arc<Mutex<Vec<(WindowId, bool)>>>;
 struct Runtime {
     compositor: CompositorState,
     xdg_shell: XdgShell,
-    display: wl_display::WlDisplay,
     seat: Option<wl_seat::WlSeat>,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -490,6 +489,7 @@ struct Runtime {
     drag_requests: Arc<Mutex<Vec<DragRequest>>>,
     interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
     icon_pool: SlotPool,
+    connection: Connection,
 }
 
 struct FileDropResult {
@@ -583,7 +583,7 @@ impl Runtime {
     fn new(
         compositor: CompositorState,
         xdg_shell: XdgShell,
-        display: wl_display::WlDisplay,
+        connection: Connection,
         seat: Option<wl_seat::WlSeat>,
         cursor_shape_manager: Option<CursorShapeManager>,
         layer_shell: Option<ZwlrLayerShellV1>,
@@ -596,7 +596,7 @@ impl Runtime {
         std::rc::Rc::new(RefCell::new(Self {
             compositor,
             xdg_shell,
-            display,
+            connection,
             seat,
             pointer: None,
             keyboard: None,
@@ -1009,7 +1009,7 @@ fn create_layer_window(
     let handle = Arc::new(Window::new(
         id,
         surface,
-        runtime.display.clone(),
+        runtime.connection.clone(),
         runtime.close_requests.clone(),
         runtime.window_state_requests.clone(),
         runtime.cursor_requests.clone(),
@@ -1920,6 +1920,7 @@ pub struct Window {
     panel_surface: Mutex<Option<(WindowRole, ZwlrLayerSurfaceV1)>>,
     is_popup: AtomicBool,
     shortcut_requests: Option<ShortcutRequests>,
+    _connection: Connection,
 }
 
 impl Window {
@@ -1927,7 +1928,7 @@ impl Window {
     fn new(
         id: WindowId,
         surface: wl_surface::WlSurface,
-        display: wl_display::WlDisplay,
+        connection: Connection,
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         window_state_requests: Arc<Mutex<HashMap<WindowId, WindowStateRequest>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
@@ -1943,7 +1944,8 @@ impl Window {
         Self {
             id,
             surface,
-            display,
+            display: connection.display(),
+            _connection: connection,
             scale_factor: AtomicU32::new(1),
             inner_size: Mutex::new(PhysicalSize {
                 width: size.width.ceil().max(1.0) as u32,

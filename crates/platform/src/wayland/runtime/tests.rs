@@ -481,3 +481,38 @@ fn file_drag_transfers_payload_without_blocking_the_source_event_loop() {
 fn uri_list_accepts_only_local_absolute_paths_and_decodes_names() {
     assert_eq!(parse_uri_list("# comment\r\nfile:///tmp/Hello%20world.desktop\r\nfile://localhost/tmp/local.desktop\nfile://remote/tmp/remote.desktop\nhttps://example.com/app.desktop\n"), vec![std::path::PathBuf::from("/tmp/Hello world.desktop"), std::path::PathBuf::from("/tmp/local.desktop")]);
 }
+
+#[test]
+fn retained_window_handles_keep_the_display_alive_after_the_native_loop_exits() {
+    struct RetainedWindow(Option<Arc<dyn PlatformWindow>>);
+    impl ApplicationHandler<Event> for RetainedWindow {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop<'_>) {
+            self.0 = Some(
+                event_loop
+                    .create_window(WindowAttributes::default())
+                    .unwrap(),
+            );
+            event_loop.exit();
+        }
+        fn window_event(&mut self, _: &ActiveEventLoop<'_>, _: WindowId, _: WindowEvent) {}
+        fn user_event(&mut self, _: &ActiveEventLoop<'_>, _: Event) {}
+        fn about_to_wait(&mut self, _: &ActiveEventLoop<'_>) {}
+    }
+    let event_loop = EventLoop::<Event>::with_user_event().build().unwrap();
+    let (_server, connection) = compositor::Compositor::start(event_loop.create_proxy());
+    let mut app = RetainedWindow(None);
+    event_loop
+        .run_app_on_connection(&mut app, connection)
+        .unwrap();
+    let window = app.0.take().unwrap();
+    let RawDisplayHandle::Wayland(display) = window.display_handle().unwrap().as_raw() else {
+        panic!("expected a Wayland display")
+    };
+    // The retained window owns the display for the entire borrowed connection.
+    let backend = unsafe {
+        wayland_client::backend::Backend::from_foreign_display(display.display.as_ptr().cast())
+    };
+    let borrowed = Connection::from_backend(backend);
+    let _globals = registry_queue_init::<DispatchState>(&borrowed)
+        .expect("the retained native window keeps the borrowed display valid");
+}

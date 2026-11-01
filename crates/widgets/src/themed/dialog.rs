@@ -128,13 +128,21 @@ impl Widget for Dialog {
         } else if !self.actions.is_empty() {
             let mut actions = ModalActions::new();
             for action in std::mem::take(&mut self.actions) {
-                actions = actions.child(Button::styled(
-                    action.variant,
-                    ButtonSize::Md,
-                    action.label,
-                    ButtonState::Normal,
-                    move || (action.on_click)(),
-                ));
+                let dismiss = self.dismiss.clone();
+                actions = actions.child(
+                    Button::styled(
+                        action.variant,
+                        ButtonSize::Md,
+                        action.label,
+                        ButtonState::Normal,
+                        move || (action.on_click)(),
+                    )
+                    .on_key_press(move |input| {
+                        if input.key == creamui_core::Key::Escape {
+                            dismiss();
+                        }
+                    }),
+                );
             }
             sections.push(Box::new(DialogFooter::new().child(Box::new(actions))));
         }
@@ -445,6 +453,38 @@ mod tests {
     #[derive(Default)]
     struct Recorder {
         text: Vec<(String, Rect)>,
+    }
+
+    #[test]
+    fn escape_on_either_dialog_action_dismisses_without_activating_it() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(ThemeProvider::new(Theme::light()));
+            let dismissed = Rc::new(Cell::new(false));
+            let activated = Rc::new(Cell::new(false));
+            let close = dismissed.clone();
+            let action = activated.clone();
+            let dialog = Dialog::new("Confirm", "Continue?", move || close.set(true))
+                .action("Proceed", ButtonVariant::Primary, move || action.set(true))
+                .dismiss_action("Cancel");
+            let mut painter = Recorder::default();
+            let scene = Renderer::new().render(
+                Box::new(dialog),
+                Size {
+                    width: 380.0,
+                    height: 320.0,
+                },
+                &mut painter,
+            );
+            for index in 0..2 {
+                dismissed.set(false);
+                scene.on_key_at(index).unwrap()(KeyInput {
+                    key: Key::Escape,
+                    modifiers: Modifiers::default(),
+                });
+                assert!(dismissed.get());
+                assert!(!activated.get());
+            }
+        });
     }
     impl Painter for Recorder {
         fn fill_rect(&mut self, _: Rect, _: Color, _: f32) {}

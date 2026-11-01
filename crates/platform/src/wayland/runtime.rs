@@ -320,6 +320,7 @@ impl ActiveEventLoop<'_> {
             id,
             window.wl_surface().clone(),
             runtime.connection.clone(),
+            runtime.input_serial.clone(),
             runtime.close_requests.clone(),
             runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
@@ -386,6 +387,7 @@ impl ActiveEventLoop<'_> {
             id,
             popup.wl_surface().clone(),
             runtime.connection.clone(),
+            runtime.input_serial.clone(),
             runtime.close_requests.clone(),
             runtime.window_state_requests.clone(),
             runtime.cursor_requests.clone(),
@@ -490,6 +492,7 @@ struct Runtime {
     interactive_requests: Arc<Mutex<Vec<InteractiveRequest>>>,
     icon_pool: SlotPool,
     connection: Connection,
+    input_serial: Arc<Mutex<Option<crate::InputSerial>>>,
 }
 
 struct FileDropResult {
@@ -597,6 +600,7 @@ impl Runtime {
             compositor,
             xdg_shell,
             connection,
+            input_serial: Arc::new(Mutex::new(None)),
             seat,
             pointer: None,
             keyboard: None,
@@ -1010,6 +1014,7 @@ fn create_layer_window(
         id,
         surface,
         runtime.connection.clone(),
+        runtime.input_serial.clone(),
         runtime.close_requests.clone(),
         runtime.window_state_requests.clone(),
         runtime.cursor_requests.clone(),
@@ -1458,6 +1463,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for DispatchState {
                 state: WEnum::Value(button_state),
                 ..
             } => {
+                if button_state == wl_pointer::ButtonState::Pressed {
+                    *runtime
+                        .input_serial
+                        .lock()
+                        .expect("input serial lock poisoned") = Some(crate::InputSerial(serial));
+                }
                 if let Some(id) = runtime.pointer_target() {
                     runtime.events.push((
                         id,
@@ -1542,10 +1553,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                 }
             }
             wl_keyboard::Event::Key {
+                serial,
                 key,
                 state: WEnum::Value(key_state),
                 ..
             } => {
+                if key_state == wl_keyboard::KeyState::Pressed {
+                    *runtime
+                        .input_serial
+                        .lock()
+                        .expect("input serial lock poisoned") = Some(crate::InputSerial(serial));
+                }
                 if let Some(id) = runtime.keyboard_focus {
                     let key = keyboard_key(key, runtime.xkb_state.as_ref());
                     runtime.events.push((
@@ -1899,6 +1917,7 @@ pub struct Window {
     id: WindowId,
     surface: wl_surface::WlSurface,
     display: wl_display::WlDisplay,
+    input_serial: Arc<Mutex<Option<crate::InputSerial>>>,
     scale_factor: AtomicU32,
     inner_size: Mutex<PhysicalSize>,
     ready: AtomicBool,
@@ -1929,6 +1948,7 @@ impl Window {
         id: WindowId,
         surface: wl_surface::WlSurface,
         connection: Connection,
+        input_serial: Arc<Mutex<Option<crate::InputSerial>>>,
         close_requests: Arc<Mutex<Vec<WindowId>>>,
         window_state_requests: Arc<Mutex<HashMap<WindowId, WindowStateRequest>>>,
         cursor_requests: Arc<Mutex<Vec<(WindowId, CursorIcon)>>>,
@@ -1945,6 +1965,7 @@ impl Window {
             id,
             surface,
             display: connection.display(),
+            input_serial,
             _connection: connection,
             scale_factor: AtomicU32::new(1),
             inner_size: Mutex::new(PhysicalSize {
@@ -2026,6 +2047,13 @@ impl HasDisplayHandle for Window {
 }
 
 impl PlatformWindow for Window {
+    fn input_serial(&self) -> Option<crate::InputSerial> {
+        *self
+            .input_serial
+            .lock()
+            .expect("input serial lock poisoned")
+    }
+
     fn supports_native_popups(&self) -> bool {
         true
     }

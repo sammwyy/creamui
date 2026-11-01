@@ -7,8 +7,12 @@ use creamui_theme::{Color, Theme};
 use creamui_widgets::{ContextMenu, ContextMenuController, ContextMenuItem, ContextMenuPane};
 use std::{
     cell::{Cell, RefCell},
-    rc::Rc,
+    rc::{Rc, Weak},
 };
+
+thread_local! {
+    static ACTIVE_MENU: RefCell<Weak<HostState>> = RefCell::new(Weak::new());
+}
 
 #[derive(Clone)]
 pub struct ContextMenuHost {
@@ -86,6 +90,10 @@ impl ContextMenuHost {
         self.close();
         if items.is_empty() {
             return;
+        }
+        let previous = ACTIVE_MENU.with(|active| active.replace(Rc::downgrade(&self.inner)));
+        if let Some(previous) = previous.upgrade() {
+            previous.controller.close();
         }
         let native = popup.supports_native_popup();
         let anchor = creamui_core::Point {
@@ -307,6 +315,7 @@ impl HostState {
                         session.panes.last().is_some_and(|pane| pane.token == token)
                     });
                     if leaf {
+                        log::debug!("creamui-render: context menu pane {token} lost focus");
                         host.controller.close();
                     }
                 });

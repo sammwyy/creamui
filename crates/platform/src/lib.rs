@@ -45,6 +45,11 @@ pub enum BackendKind {
 }
 
 pub trait PlatformWindow: HasDisplayHandle + HasWindowHandle + Send + Sync {
+    /// The latest pointer or keyboard press received by this native client.
+    fn input_serial(&self) -> Option<InputSerial> {
+        None
+    }
+
     fn id(&self) -> WindowId;
     fn request_redraw(&self);
     /// Called right before a frame is handed to the compositor, so the

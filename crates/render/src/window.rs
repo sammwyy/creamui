@@ -452,7 +452,12 @@ pub struct PopupOptions {
 
 impl PopupOptions {
     pub fn new(parent: WindowHandle, anchor: Rect) -> Self {
-        let input_serial = parent.last_input_serial.get();
+        let input_serial = parent
+            .window
+            .borrow()
+            .as_ref()
+            .and_then(|window| window.input_serial())
+            .or_else(|| parent.last_input_serial.get());
         Self {
             parent,
             anchor,
@@ -3296,6 +3301,14 @@ impl WindowState {
                 self.pipeline.invalidate_paint();
             }
             WindowEvent::Focused(false) => {
+                log::trace!(
+                    "creamui-render: focus lost for {:?}",
+                    self.pipeline
+                        .window
+                        .borrow()
+                        .as_ref()
+                        .map(|window| window.id())
+                );
                 if let Some(runtime) = self.runtime() {
                     runtime.with_mut(|runtime| {
                         runtime.set_pressed(None);
@@ -3315,6 +3328,14 @@ impl WindowState {
                 }
             }
             WindowEvent::PopupDone => {
+                log::trace!(
+                    "creamui-render: compositor dismissed popup {:?}",
+                    self.pipeline
+                        .window
+                        .borrow()
+                        .as_ref()
+                        .map(|window| window.id())
+                );
                 if self.native_drag_active.peek() {
                     self.popup_done_during_drag = true;
                 } else {
@@ -4129,6 +4150,14 @@ impl AppHandler {
         }
 
         for mut pending in windows {
+            if pending
+                .popup
+                .as_ref()
+                .and_then(|popup| popup.is_current.as_ref())
+                .is_some_and(|current| !current())
+            {
+                continue;
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 pending.options.backend = RenderBackend::resolve(pending.options.backend);
@@ -4565,6 +4594,7 @@ mod tests {
 
     #[derive(Default)]
     struct InteractiveTestWindow {
+        latest_input_serial: std::sync::atomic::AtomicU32,
         native_popups: std::sync::atomic::AtomicBool,
         minimum: std::sync::Mutex<Vec<Option<LogicalSize>>>,
         requests: std::sync::Mutex<Vec<(InputSerial, Option<ResizeDirection>)>>,
@@ -4589,6 +4619,12 @@ mod tests {
         }
     }
     impl PlatformWindow for InteractiveTestWindow {
+        fn input_serial(&self) -> Option<InputSerial> {
+            let serial = self
+                .latest_input_serial
+                .load(std::sync::atomic::Ordering::Relaxed);
+            (serial != 0).then_some(InputSerial(serial))
+        }
         fn supports_native_popups(&self) -> bool {
             self.native_popups
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -4934,6 +4970,26 @@ mod tests {
         root_handle.focus_lost_handler.borrow().as_ref().unwrap()();
         assert!(!host.is_open());
         assert!(root_handle.close_requested.get());
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn replacement_popups_capture_the_current_client_input_instead_of_the_root_press() {
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let handle = parent.menu_handle(app, true);
+        handle.last_input_serial.set(Some(InputSerial(42)));
+        let platform = Arc::new(InteractiveTestWindow::default());
+        platform
+            .latest_input_serial
+            .store(77, std::sync::atomic::Ordering::Relaxed);
+        *handle.window.borrow_mut() = Some(platform.clone());
+        let popup = PopupOptions::at_cursor(handle, Point::default());
+        assert_eq!(popup.input_serial, Some(InputSerial(77)));
+        platform
+            .latest_input_serial
+            .store(78, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(popup.input_serial, Some(InputSerial(77)));
     }
 
     #[cfg(all(feature = "context-menu", target_os = "linux"))]
@@ -7265,6 +7321,38 @@ mod tests {
             assert!(!host.is_open());
             assert!(popup_handle.close_requested.get());
         }
+    }
+
+    #[cfg(all(feature = "context-menu", target_os = "linux"))]
+    #[test]
+    fn context_menus_replace_other_hosts_and_cancel_their_queued_popups() {
+        use creamui_widgets::ContextMenuItem;
+        let app = menu_app();
+        let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let handle = parent.menu_handle(app.clone(), true);
+        handle.last_input_serial.set(Some(InputSerial(42)));
+        let first = crate::ContextMenuHost::new();
+        let second = crate::ContextMenuHost::new();
+        let open = |host: &crate::ContextMenuHost| {
+            host.open(
+                PopupOptions::at_cursor(handle.clone(), Point::default()),
+                vec![ContextMenuItem::new("open", "Open", || {})],
+            )
+        };
+        open(&first);
+        let stale = app.commands.borrow_mut().windows.pop().unwrap();
+        open(&second);
+        assert!(!first.is_open());
+        assert!(second.is_open());
+        assert!(!(stale.popup.unwrap().is_current.unwrap())());
+        let pending = app.commands.borrow_mut().windows.pop().unwrap();
+        let popup = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let popup_handle = popup.menu_handle(app.clone(), true);
+        (pending.on_window_ready)(popup_handle.clone());
+        open(&first);
+        assert!(!second.is_open());
+        assert!(popup_handle.close_requested.get());
+        assert!(first.is_open());
     }
 
     #[test]

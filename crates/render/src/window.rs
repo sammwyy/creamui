@@ -1714,6 +1714,12 @@ impl WindowHandle {
         }
     }
 
+    pub fn request_repaint(&self) {
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.invalidate_paint();
+        }
+    }
+
     /// Reports pointer presence independently of child widget hover regions.
     pub fn on_pointer_presence(&self, handler: impl Fn(bool) + 'static) {
         *self.pointer_presence_handler.borrow_mut() = Some(Rc::new(handler));
@@ -7105,6 +7111,29 @@ mod tests {
             after_enter,
             "moving within the same hover region must not trigger another repaint"
         );
+    }
+
+    #[test]
+    fn explicit_repaint_does_not_invalidate_layout_or_rebuild() {
+        let builds = Rc::new(Cell::new(0));
+        let paints = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let builds = builds.clone();
+            let paints = paints.clone();
+            move |_| {
+                builds.set(builds.get() + 1);
+                Box::new(HoverCountingWidget {
+                    paint_calls: paints.clone(),
+                })
+            }
+        });
+        let baseline_builds = builds.get();
+        let baseline_paints = paints.get();
+        harness.state.pipeline.invalidate_paint();
+        assert!(!harness.state.pipeline.needs_layout.get());
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(builds.get(), baseline_builds);
+        assert_eq!(paints.get(), baseline_paints + 1);
     }
 
     struct SmallHoverWidget {

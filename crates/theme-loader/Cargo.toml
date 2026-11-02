@@ -17,4 +17,4 @@ creamui-appearance = { workspace = true, default-features = false }
 creamui-theme = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"
-delib = { version = "0.1.0", path = "../../../delib" }
+delib = "0.2.0"

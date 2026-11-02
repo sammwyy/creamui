@@ -11,6 +11,7 @@ mod geometry;
 mod image;
 mod image_effects;
 pub mod metrics;
+mod native_image;
 pub mod runtime;
 mod scene;
 mod style;
@@ -23,6 +24,7 @@ pub use damage::{merge_damage, merge_damage_default, DEFAULT_AREA_RATIO, DEFAULT
 pub use geometry::{Point, Rect, Size};
 pub use image::RgbaImage;
 pub use image_effects::ImageEffects;
+pub use native_image::NativeImage;
 pub use scene::{render_frame, FocusId, Renderer, Scene};
 pub use style::{
     Background, Border, BoxShadow, ColorToken, ColorValue, EdgeValues, InteractionState,

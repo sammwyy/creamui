@@ -6,7 +6,7 @@
 //! rasterizer and presenters use to redraw and upload only those regions.
 
 use crate::text::TextLayout;
-use creamui_core::{Rect, ResolvedRadialColorStop, RgbaImage, Size};
+use creamui_core::{NativeImage, Rect, ResolvedRadialColorStop, RgbaImage, Size};
 use creamui_theme::Color;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -292,12 +292,25 @@ impl PartialEq for ImagePrimitive {
     }
 }
 
+#[derive(Clone)]
+pub struct NativeImagePrimitive {
+    pub bounds: Bounds,
+    pub image: NativeImage,
+}
+
+impl PartialEq for NativeImagePrimitive {
+    fn eq(&self, other: &Self) -> bool {
+        self.bounds == other.bounds && self.image.id() == other.image.id()
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub enum Primitive {
     Quad(Quad),
     Line(Line),
     Text(TextRun),
     Image(ImagePrimitive),
+    NativeImage(NativeImagePrimitive),
 }
 
 impl Primitive {
@@ -328,6 +341,10 @@ impl Primitive {
                 bounds: image.bounds.translate(offset),
                 ..image.clone()
             }),
+            Primitive::NativeImage(image) => Primitive::NativeImage(NativeImagePrimitive {
+                bounds: image.bounds.translate(offset),
+                ..image.clone()
+            }),
         }
     }
 
@@ -355,6 +372,7 @@ impl Primitive {
                 }
             }
             Primitive::Image(image) => image.bounds.inflate(1.0),
+            Primitive::NativeImage(image) => image.bounds.inflate(1.0),
         }
     }
 }

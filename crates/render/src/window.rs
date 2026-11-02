@@ -1669,6 +1669,8 @@ pub struct WindowHandle {
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    gpu_device: Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)>,
 }
 
 impl WindowHandle {
@@ -1718,6 +1720,11 @@ impl WindowHandle {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.invalidate_paint();
         }
+    }
+
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    pub fn gpu_device(&self) -> Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)> {
+        self.gpu_device.clone()
     }
 
     /// Reports pointer presence independently of child widget hover regions.
@@ -3850,6 +3857,11 @@ impl AppHandler {
                 pipeline.invalidate_paint();
             })
         };
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+        let gpu_device = match &presenter {
+            Presenter::Gpu(surface) => Some(surface.device_queue()),
+            _ => None,
+        };
         (spec.on_window_ready)(WindowHandle {
             window: pipeline.window.clone(),
             theme: pipeline.theme.clone(),
@@ -3869,6 +3881,8 @@ impl AppHandler {
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            gpu_device,
         });
 
         let now = Instant::now();
@@ -4815,6 +4829,8 @@ mod tests {
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
+                #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+                gpu_device: None,
             }
         }
 

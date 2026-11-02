@@ -20,6 +20,8 @@ mod gpu;
 mod raster;
 mod recorder;
 mod text;
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+mod viewport;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod window;
@@ -39,6 +41,8 @@ pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, Scr
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;
 pub use recorder::SceneRecorder;
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+pub use viewport::{GpuFrame, GpuFrameSlot, GpuViewport};
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 pub use window::run_android;
 pub use window::{

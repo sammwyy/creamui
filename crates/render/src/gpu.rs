@@ -9,6 +9,7 @@ use crate::display_list::{
 };
 use crate::text::{GlyphBitmap, GlyphKey};
 use bytemuck::{Pod, Zeroable};
+use creamui_core::NativeImage;
 use creamui_platform::PlatformWindow;
 use creamui_theme::Color;
 use rustc_hash::FxHashMap;
@@ -834,6 +835,34 @@ impl GpuShared {
         );
     }
 
+    fn prepare_native_image(&mut self, image: &NativeImage, frame: u64) {
+        if let Some(texture) = self.images.get_mut(&image.id()) {
+            texture.used = frame;
+            return;
+        }
+        let view = image
+            .resource::<wgpu::TextureView>()
+            .expect("native image requires a wgpu texture view");
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("creamui-native-image"),
+            layout: &self.image_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            }],
+        });
+        self.images.insert(
+            image.id(),
+            ImageTexture {
+                bind_group,
+                level: 0,
+                used: frame,
+                holders: 0,
+                transient: true,
+            },
+        );
+    }
+
     fn evict_images(&mut self) {
         let horizon = self.frame.saturating_sub(IMAGE_CACHE_FRAMES);
         let transient_horizon = self.frame.saturating_sub(2);
@@ -1081,6 +1110,7 @@ impl GpuRenderer {
         for item in &list.items {
             let image = match &item.primitive {
                 Primitive::Image(image) => Some(image.image.id()),
+                Primitive::NativeImage(image) => Some(image.image.id()),
                 _ => None,
             };
             if image != batch_image && self.instances.len() as u32 > batch_start {
@@ -1232,6 +1262,17 @@ impl GpuRenderer {
                             0.0,
                         ],
                         shape: [prim.opacity, matrix_index, 0.0],
+                        tag: KIND_IMAGE | clip,
+                        ..Zeroable::zeroed()
+                    });
+                }
+                Primitive::NativeImage(prim) => {
+                    shared.prepare_native_image(&prim.image, frame);
+                    self.frame_images.push(prim.image.id());
+                    let b = prim.bounds;
+                    self.instances.push(Instance {
+                        bounds: [b.x0, b.y0, b.x1, b.y1],
+                        shape: [1.0, 0.0, 0.0],
                         tag: KIND_IMAGE | clip,
                         ..Zeroable::zeroed()
                     });
@@ -1790,6 +1831,10 @@ impl GpuSurface {
         &self.adapter_name
     }
 
+    pub(crate) fn device_queue(&self) -> (Rc<wgpu::Device>, Rc<wgpu::Queue>) {
+        (self.renderer.device.clone(), self.renderer.queue.clone())
+    }
+
     /// Draws and presents `list`. Returns `false` when the surface was not
     /// ready and the frame must be retried.
     pub fn present(&mut self, list: &DisplayList, damage: &Damage) -> bool {
@@ -2078,6 +2123,67 @@ mod tests {
         assert_eq!(&gpu_pixels[..4], &[20, 20, 24, 255]);
         let center = (16 * 96 + 24) * 4;
         assert_eq!(&gpu_pixels[center..center + 4], &[200, 40, 40, 255]);
+    }
+
+    #[test]
+    fn native_texture_uses_the_same_gpu_device_and_obeys_clipping() {
+        let Some(mut gpu) = headless() else { return };
+        let device = gpu.renderer().device();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("native-viewport-test"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        gpu.renderer().queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255, 0, 0, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let image = NativeImage::new(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(20, 20, 1.0, Color::rgb(0, 0, 0), ColorScheme::default());
+        recorder.push_clip(rect(4.0, 4.0, 8.0, 8.0));
+        recorder.draw_native_image(rect(0.0, 0.0, 16.0, 16.0), &image);
+        recorder.pop_clip();
+        let list = recorder.finish();
+        let pixels = gpu.render_to_pixels(&list);
+        assert_eq!(
+            &pixels[(8 * 20 + 8) * 4..(8 * 20 + 8) * 4 + 4],
+            &[255, 0, 0, 255]
+        );
+        assert_eq!(
+            &pixels[(2 * 20 + 8) * 4..(2 * 20 + 8) * 4 + 4],
+            &[0, 0, 0, 255]
+        );
+        assert!(gpu
+            .renderer()
+            .shared
+            .borrow()
+            .images
+            .contains_key(&image.id()));
     }
 
     #[test]

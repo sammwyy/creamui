@@ -2,11 +2,13 @@
 //! [`DisplayList`] in physical pixels instead of rasterizing them.
 
 use crate::display_list::{
-    Bounds, Clip, DisplayList, DrawItem, ImagePrimitive, Line, Primitive, Quad, QuadGradient,
-    RoundedClip, ScrollLayer, TextRun,
+    Bounds, Clip, DisplayList, DrawItem, ImagePrimitive, Line, NativeImagePrimitive, Primitive,
+    Quad, QuadGradient, RoundedClip, ScrollLayer, TextRun,
 };
 use crate::text::TextSystem;
-use creamui_core::{Painter, Point, Rect, ResolvedRadialColorStop, RgbaImage, TextAlign};
+use creamui_core::{
+    NativeImage, Painter, Point, Rect, ResolvedRadialColorStop, RgbaImage, TextAlign,
+};
 use creamui_theme::{Color, ColorScheme};
 use std::cell::{Ref, RefCell};
 use std::ops::Range;
@@ -745,6 +747,16 @@ impl Painter for SceneRecorder {
 
     fn draw_image(&mut self, rect: Rect, image: &RgbaImage, tint: Option<Color>) {
         self.draw_image_opacity(rect, image, tint, 1.0);
+    }
+
+    fn draw_native_image(&mut self, rect: Rect, image: &NativeImage) {
+        let bounds = self.bounds(rect);
+        if !bounds.is_empty() {
+            self.push(Primitive::NativeImage(NativeImagePrimitive {
+                bounds,
+                image: image.clone(),
+            }));
+        }
     }
 
     fn draw_image_opacity(

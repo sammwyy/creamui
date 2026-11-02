@@ -284,6 +284,19 @@ fn paint(
         Primitive::Quad(quad) => draw_quad(target, quad, transform, mask),
         Primitive::Line(line) => draw_line(target, line, transform, mask),
         Primitive::Image(image) => draw_image(target, image, transform, mask, images),
+        Primitive::NativeImage(image) => draw_quad(
+            target,
+            &Quad {
+                bounds: image.bounds,
+                background: Color::rgb(32, 32, 32),
+                gradient: None,
+                radius: 0.0,
+                border_width: 0.0,
+                border_color: Color::rgba(0, 0, 0, 0),
+            },
+            transform,
+            mask,
+        ),
         Primitive::Text(_) => unreachable!("text is blitted directly"),
     }
 }

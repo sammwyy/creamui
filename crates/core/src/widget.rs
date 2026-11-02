@@ -362,6 +362,10 @@ pub trait Painter {
     ) {
     }
 
+    fn draw_native_image(&mut self, rect: Rect, _image: &crate::NativeImage) {
+        self.fill_rect(rect, creamui_theme::Color::rgb(32, 32, 32), 0.0);
+    }
+
     fn draw_image_effects(
         &mut self,
         rect: Rect,

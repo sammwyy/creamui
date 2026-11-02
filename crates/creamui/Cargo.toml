@@ -43,8 +43,8 @@ full = ["gpu", "image-jpeg", "image-webp", "jsx", "router", "dynamic", "ffi", "d
 creamui-core = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-router = { workspace = true, optional = true }
-creamui-platform = { version = "0.2.0", path = "../platform", default-features = false }
-creamui-render = { version = "0.2.0", path = "../render", default-features = false }
+creamui-platform = { version = "0.3.0", path = "../platform", default-features = false }
+creamui-render = { version = "0.3.0", path = "../render", default-features = false }
 creamui-devtools = { workspace = true, optional = true }
 creamui-theme = { workspace = true }
 creamui-theme-loader = { workspace = true, optional = true }
@@ -57,4 +57,4 @@ creamui-jsx = { workspace = true, optional = true }
 creamui-macros = { workspace = true, optional = true }
 creamui-abi = { workspace = true, optional = true }
 creamui-dynamic = { workspace = true, optional = true }
-creamui_ffi = { package = "creamui-ffi", version = "0.2.0", path = "../ffi", optional = true }
+creamui_ffi = { package = "creamui-ffi", version = "0.3.0", path = "../ffi", optional = true }

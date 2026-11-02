@@ -46,7 +46,7 @@ creamui-fonts = { workspace = true }
 creamui-reactive = { workspace = true }
 creamui-router = { workspace = true, optional = true }
 creamui-tray = { workspace = true, optional = true }
-creamui-platform = { version = "0.2.0", path = "../platform", default-features = false }
+creamui-platform = { version = "0.3.0", path = "../platform", default-features = false }
 tiny-skia = { workspace = true }
 swash = "0.2"
 rustc-hash = "2"

@@ -2,7 +2,7 @@
 
 All notable changes to CreamUI will be documented in this file.
 
-## Unreleased
+## 0.3.0
 
 - Add filtered `FileDropTarget` hooks for widgets and retained runtime nodes.
   Drop dispatch respects visible clips, modal barriers and paint order, with

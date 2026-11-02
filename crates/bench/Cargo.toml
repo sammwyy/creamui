@@ -12,7 +12,7 @@ bench = false
 [dependencies]
 creamui-abi = { workspace = true }
 creamui-core = { workspace = true, features = ["perf-metrics"] }
-creamui_ffi = { package = "creamui-ffi", version = "0.2.0", path = "../ffi" }
+creamui_ffi = { package = "creamui-ffi", version = "0.3.0", path = "../ffi" }
 creamui-reactive = { workspace = true }
 creamui-widgets = { workspace = true }
 creamui-theme = { workspace = true }

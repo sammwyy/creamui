@@ -9,6 +9,7 @@ use taffy::style::AvailableSpace;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Char(char),
+    Function(u8),
     Backspace,
     Delete,
     Enter,

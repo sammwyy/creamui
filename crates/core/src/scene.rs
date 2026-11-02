@@ -1056,6 +1056,10 @@ impl Scene {
             .is_some_and(|(_, _, _, accepts_text_input, _)| *accepts_text_input)
     }
 
+    pub fn focus_rect_at(&self, index: usize) -> Option<Rect> {
+        self.focusables.get(index)?.1
+    }
+
     /// Callback registered by the focusable at `index`, if any.
     pub fn on_focus_change_at(&self, index: usize) -> Option<Rc<dyn Fn(bool)>> {
         self.focusables

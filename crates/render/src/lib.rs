@@ -19,6 +19,7 @@ mod display_list;
 mod gpu;
 mod raster;
 mod recorder;
+mod shortcuts;
 mod text;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 mod viewport;
@@ -41,6 +42,7 @@ pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, Scr
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;
 pub use recorder::SceneRecorder;
+pub use shortcuts::{Shortcut, ShortcutScope};
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub use viewport::{GpuFrame, GpuFrameSlot, GpuViewport};
 #[cfg(all(feature = "platform-android", target_os = "android"))]

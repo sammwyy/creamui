@@ -20,7 +20,7 @@ pub use creamui_core::{
     InteractionState, LengthValue, LinearGradient, PaintStyle, Painter, RadialColorStop,
     RadialGradient, RadialGradientShape, RadialGradientSize, ResolvedRadialColorStop, Size,
     StateStyle, Style, StyleParseError, StyleProp, StyleState, Styled, Transition, TransitionState,
-    TypographyStyle, Widget,
+    TypographyStyle, WheelInput, Widget,
 };
 #[cfg(feature = "devtools")]
 pub use creamui_devtools as devtools;
@@ -29,11 +29,13 @@ pub use creamui_reactive::{create_effect, Effect, Signal};
 pub use creamui_render::{
     run, use_safe_area, use_screen_class, use_system_bars, use_viewport, AppBuilder, AppHandle,
     BlurRegion, CloseBehavior, CompositorControls, CompositorIntegrationMode,
-    CompositorIntegrationRequest, PanicDetails, RenderBackend, SafeArea, ScreenClass,
-    WindowContent, WindowHandle, WindowOptions,
+    CompositorIntegrationRequest, PanicDetails, RenderBackend, SafeArea, ScreenClass, Shortcut,
+    ShortcutScope, WindowContent, WindowHandle, WindowOptions,
 };
 #[cfg(all(feature = "platform-android", target_os = "android"))]
 pub use creamui_render::{run_android, AndroidApp};
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+pub use creamui_render::{GpuFrame, GpuFrameSlot, GpuViewport};
 #[cfg(all(feature = "tray", target_os = "linux"))]
 pub use creamui_render::{TrayBuilder, TrayIcon};
 #[cfg(feature = "router")]

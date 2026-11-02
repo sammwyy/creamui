@@ -19,6 +19,7 @@ use crate::display_list::{self, DisplayList};
 use crate::gpu::GpuSurface;
 use crate::raster::Rasterizer;
 use crate::recorder::SceneRecorder;
+use crate::shortcuts::{Shortcut, ShortcutScope, Shortcuts};
 #[cfg(target_arch = "wasm32")]
 use crate::web::WebState;
 use creamui_core::runtime::{IntoView, MountedView, Mutation, SharedRuntime, View};
@@ -317,6 +318,18 @@ pub(crate) fn translate_key(key: &PlatformKey) -> Option<Key> {
     match key {
         PlatformKey::Character(s) => s.chars().next().map(Key::Char),
         PlatformKey::Space => Some(Key::Char(' ')),
+        PlatformKey::F1 => Some(Key::Function(1)),
+        PlatformKey::F2 => Some(Key::Function(2)),
+        PlatformKey::F3 => Some(Key::Function(3)),
+        PlatformKey::F4 => Some(Key::Function(4)),
+        PlatformKey::F5 => Some(Key::Function(5)),
+        PlatformKey::F6 => Some(Key::Function(6)),
+        PlatformKey::F7 => Some(Key::Function(7)),
+        PlatformKey::F8 => Some(Key::Function(8)),
+        PlatformKey::F9 => Some(Key::Function(9)),
+        PlatformKey::F10 => Some(Key::Function(10)),
+        PlatformKey::F11 => Some(Key::Function(11)),
+        PlatformKey::F12 => Some(Key::Function(12)),
         PlatformKey::Backspace => Some(Key::Backspace),
         PlatformKey::Delete => Some(Key::Delete),
         PlatformKey::Enter => Some(Key::Enter),
@@ -817,6 +830,7 @@ struct Pipeline {
     content_blur: bool,
     applied_blur: RefCell<Vec<(i32, i32, i32, i32)>>,
     frame: RefCell<FrameState>,
+    shortcuts: RefCell<Shortcuts>,
     /// Full window, including the bands system bars cover.
     surface: Signal<Size>,
     /// Rectangle `build_ui` lays out into. Smaller than [`Self::surface`]
@@ -1720,6 +1734,25 @@ impl WindowHandle {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.invalidate_paint();
         }
+    }
+
+    pub fn register_shortcut(
+        &self,
+        shortcut: Shortcut,
+        scope: ShortcutScope,
+        handler: impl Fn() + 'static,
+    ) -> Option<u64> {
+        Some(self.pipeline.upgrade()?.shortcuts.borrow_mut().insert(
+            shortcut,
+            scope,
+            Rc::new(handler),
+        ))
+    }
+
+    pub fn remove_shortcut(&self, id: u64) -> bool {
+        self.pipeline
+            .upgrade()
+            .is_some_and(|pipeline| pipeline.shortcuts.borrow_mut().remove(id))
     }
 
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
@@ -2901,6 +2934,9 @@ impl WindowState {
 
     fn handle_key_input(&mut self, key: KeyInput) {
         self.set_focus_visible(true);
+        if self.dispatch_shortcut(key) {
+            return;
+        }
         match key.key {
             // Page keys scroll the container beneath the pointer even when
             // it has no focused child. This keeps long views usable from a
@@ -2950,6 +2986,50 @@ impl WindowState {
             self.restart_caret();
             handler(key);
             self.pipeline.invalidate_layout();
+        }
+    }
+
+    fn dispatch_shortcut(&self, key: KeyInput) -> bool {
+        let focused = if let Some(runtime) = self.runtime() {
+            runtime.with(|runtime| {
+                let node = runtime.get(runtime.pointer().focused?)?;
+                let rect = node.layout.rect;
+                let offset = node.layout.effective_transform;
+                Some((
+                    node.events.text_input,
+                    Some(Rect {
+                        x: rect.x + offset.x,
+                        y: rect.y + offset.y,
+                        ..rect
+                    }),
+                ))
+            })
+        } else {
+            self.pipeline.focused.get().map(|index| {
+                self.scene(|scene| {
+                    Some((
+                        scene.focus_accepts_text_input(index),
+                        scene.focus_rect_at(index),
+                    ))
+                })
+                .unwrap_or((false, None))
+            })
+        };
+        let (text_input, rect) = focused.unwrap_or((false, None));
+        let target = rect.map_or(self.pointer_pos, |rect| Point {
+            x: rect.x + rect.width / 2.0,
+            y: rect.y + rect.height / 2.0,
+        });
+        let handler = self
+            .pipeline
+            .shortcuts
+            .borrow()
+            .resolve(key, text_input, target);
+        if let Some(handler) = handler {
+            handler();
+            true
+        } else {
+            false
         }
     }
 
@@ -4556,6 +4636,7 @@ fn build_window_spec(
             inspected_content: None,
             adapter: None,
         }),
+        shortcuts: RefCell::new(Shortcuts::new()),
         surface: Signal::new(Size {
             width: options.width as f32,
             height: options.height as f32,
@@ -7264,6 +7345,75 @@ mod tests {
             delta: MouseScrollDelta::LineDelta(-1.0, 2.0),
         });
         assert_eq!(received.get().unwrap().delta, Point { x: 40.0, y: -80.0 });
+    }
+
+    struct ShortcutTextInput(Rc<Cell<usize>>);
+
+    impl creamui_core::Widget for ShortcutTextInput {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: Rect) {}
+
+        fn focusable(&self) -> bool {
+            true
+        }
+
+        fn accepts_text_input(&self) -> bool {
+            true
+        }
+
+        fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+            let keys = self.0.clone();
+            Some(Rc::new(move |_| keys.set(keys.get() + 1)))
+        }
+    }
+
+    #[test]
+    fn scoped_shortcuts_do_not_steal_keys_from_text_inputs() {
+        let keys = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let keys = keys.clone();
+            move |_| Box::new(ShortcutTextInput(keys.clone()))
+        });
+        harness.state.set_legacy_focus(Some(0));
+        let saved = Rc::new(Cell::new(0));
+        let play = Rc::new(Cell::new(0));
+        let save = Shortcut::new(
+            Key::Char('s'),
+            Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        );
+        harness.state.pipeline.shortcuts.borrow_mut().insert(
+            save,
+            ShortcutScope::Window,
+            Rc::new({
+                let saved = saved.clone();
+                move || saved.set(saved.get() + 1)
+            }),
+        );
+        harness.state.pipeline.shortcuts.borrow_mut().insert(
+            Shortcut::new(Key::Char(' '), Modifiers::default()),
+            ShortcutScope::WithoutTextInput,
+            Rc::new({
+                let play = play.clone();
+                move || play.set(play.get() + 1)
+            }),
+        );
+        harness.key(KeyInput {
+            key: Key::Char('S'),
+            modifiers: save.modifiers,
+        });
+        harness.key(KeyInput {
+            key: Key::Char(' '),
+            modifiers: Modifiers::default(),
+        });
+        assert_eq!(saved.get(), 1);
+        assert_eq!(play.get(), 0);
+        assert_eq!(keys.get(), 1);
     }
 
     struct SmallHoverWidget {

@@ -30,7 +30,7 @@ pub use style::{
     RadialGradientShape, RadialGradientSize, ResolvedRadialColorStop, ResolvedStyle, StateStyle,
     Style, StyleParseError, StyleProp, StyleState, TypographyStyle,
 };
-pub use virtualize::{visible_range, HeightIndex};
+pub use virtualize::{visible_range, HeightIndex, Interval, IntervalIndex};
 pub use widget::{
     keyed, BoxedWidget, CursorIcon, FileDropTarget, Key, KeyInput, MeasureFn, Modifiers, Painter,
     Styled, TextAlign, Widget, WidgetKey, WindowDragHandle,

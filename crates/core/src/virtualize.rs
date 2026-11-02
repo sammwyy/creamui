@@ -1,5 +1,59 @@
 use std::ops::Range;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Interval {
+    pub start: f32,
+    pub end: f32,
+}
+
+#[derive(Clone, Default)]
+pub struct IntervalIndex {
+    entries: Vec<(Interval, usize)>,
+    max_end: Vec<f32>,
+}
+
+impl IntervalIndex {
+    pub fn new(intervals: &[Interval]) -> Self {
+        let mut entries: Vec<_> = intervals
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, interval)| {
+                (interval.start.is_finite()
+                    && interval.end.is_finite()
+                    && interval.start < interval.end)
+                    .then_some((interval, index))
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.start.total_cmp(&b.0.start));
+        let mut largest = f32::NEG_INFINITY;
+        let max_end = entries
+            .iter()
+            .map(|(interval, _)| {
+                largest = largest.max(interval.end);
+                largest
+            })
+            .collect();
+        Self { entries, max_end }
+    }
+
+    pub fn visible(&self, start: f32, end: f32) -> impl Iterator<Item = usize> + '_ {
+        let (first, last) = if start.is_finite() && end.is_finite() && start < end {
+            (
+                self.max_end.partition_point(|&max| max <= start),
+                self.entries
+                    .partition_point(|(interval, _)| interval.start < end),
+            )
+        } else {
+            (0, 0)
+        };
+        self.entries[first..last.max(first)]
+            .iter()
+            .filter(move |(interval, _)| interval.end > start)
+            .map(|(_, index)| *index)
+    }
+}
+
 fn highest_power_of_two_leq(n: usize) -> usize {
     if n == 0 {
         0
@@ -144,6 +198,52 @@ pub fn visible_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_intervals_preserve_source_indices_and_half_open_boundaries() {
+        let index = IntervalIndex::new(&[
+            Interval {
+                start: 30.0,
+                end: 50.0,
+            },
+            Interval {
+                start: 0.0,
+                end: 40.0,
+            },
+            Interval {
+                start: 10.0,
+                end: 20.0,
+            },
+            Interval {
+                start: 50.0,
+                end: 60.0,
+            },
+        ]);
+        assert_eq!(index.visible(20.0, 50.0).collect::<Vec<_>>(), vec![1, 0]);
+        assert_eq!(index.visible(50.0, 60.0).collect::<Vec<_>>(), vec![3]);
+        assert!(index.visible(60.0, 70.0).next().is_none());
+    }
+
+    #[test]
+    fn invalid_intervals_and_empty_queries_do_not_produce_results() {
+        let index = IntervalIndex::new(&[
+            Interval {
+                start: f32::NAN,
+                end: 10.0,
+            },
+            Interval {
+                start: 4.0,
+                end: 4.0,
+            },
+            Interval {
+                start: 5.0,
+                end: 6.0,
+            },
+        ]);
+        assert_eq!(index.visible(5.0, 6.0).collect::<Vec<_>>(), vec![2]);
+        assert!(index.visible(10.0, 1.0).next().is_none());
+        assert!(index.visible(f32::NAN, 10.0).next().is_none());
+    }
 
     #[test]
     fn total_height_sums_every_item() {

@@ -210,6 +210,7 @@ pub struct EventState {
     pub on_context_menu: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_click_at: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_hover: Option<Rc<dyn Fn(bool)>>,
+    pub on_pointer_move: Option<Rc<dyn Fn(crate::Point, crate::Modifiers)>>,
     pub on_key: Option<Rc<dyn Fn(crate::KeyInput)>>,
     pub on_drag: Option<Rc<dyn Fn(crate::Point, crate::Rect)>>,
     pub on_drag_start: Option<Rc<dyn Fn(crate::Point, crate::Rect)>>,
@@ -228,6 +229,7 @@ impl EventState {
             || self.on_click.is_some()
             || self.on_click_at.is_some()
             || self.on_hover.is_some()
+            || self.on_pointer_move.is_some()
             || self.on_drag.is_some()
             || self.on_drag_start.is_some()
             || self.on_scroll.is_some()

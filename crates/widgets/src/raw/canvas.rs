@@ -1,4 +1,4 @@
-use creamui_core::{Painter, Point, Rect, RgbaImage, TextAlign, WheelInput, Widget};
+use creamui_core::{Modifiers, Painter, Point, Rect, RgbaImage, TextAlign, WheelInput, Widget};
 use creamui_theme::Color;
 use std::rc::Rc;
 
@@ -81,6 +81,7 @@ pub struct RawCanvas {
     drag: Option<Rc<dyn Fn(Point, Rect)>>,
     drag_end: Option<Rc<dyn Fn()>>,
     wheel: Option<Rc<dyn Fn(WheelInput)>>,
+    pointer_move: Option<Rc<dyn Fn(Point, Modifiers)>>,
 }
 
 impl RawCanvas {
@@ -97,6 +98,7 @@ impl RawCanvas {
             drag: None,
             drag_end: None,
             wheel: None,
+            pointer_move: None,
         }
     }
 
@@ -127,6 +129,11 @@ impl RawCanvas {
 
     pub fn on_wheel(mut self, handler: impl Fn(WheelInput) + 'static) -> Self {
         self.wheel = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_pointer_move(mut self, handler: impl Fn(Point, Modifiers) + 'static) -> Self {
+        self.pointer_move = Some(Rc::new(handler));
         self
     }
 }
@@ -172,6 +179,10 @@ impl Widget for RawCanvas {
 
     fn on_wheel(&self) -> Option<Rc<dyn Fn(WheelInput)>> {
         self.wheel.clone()
+    }
+
+    fn on_pointer_move(&self) -> Option<Rc<dyn Fn(Point, Modifiers)>> {
+        self.pointer_move.clone()
     }
 }
 

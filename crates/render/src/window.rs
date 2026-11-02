@@ -3164,7 +3164,53 @@ impl WindowState {
                 self.set_pointer(Some(self.pointer_pos));
                 if self.runtime().is_some() {
                     self.runtime_pointer_moved();
+                    if let Some(runtime) = self.runtime() {
+                        let pointer = self.pointer_pos;
+                        let handler = runtime.with(|runtime| {
+                            let mut target = runtime.hit_test(pointer);
+                            while let Some(id) = target {
+                                let node = runtime.get(id)?;
+                                if let Some(handler) = &node.events.on_pointer_move {
+                                    let rect = node.layout.rect;
+                                    let offset = node.layout.effective_transform;
+                                    return Some((
+                                        Point {
+                                            x: pointer.x - rect.x - offset.x,
+                                            y: pointer.y - rect.y - offset.y,
+                                        },
+                                        handler.clone(),
+                                    ));
+                                }
+                                target = node.parent;
+                            }
+                            None
+                        });
+                        if let Some((local, handler)) = handler {
+                            handler(
+                                local,
+                                Modifiers {
+                                    ctrl: self.modifiers.ctrl,
+                                    shift: self.modifiers.shift,
+                                    alt: self.modifiers.alt,
+                                    logo: self.modifiers.logo,
+                                },
+                            );
+                        }
+                    }
                     return;
+                }
+                if let Some((local, handler)) =
+                    self.scene(|scene| scene.pointer_move_at(self.pointer_pos))
+                {
+                    handler(
+                        local,
+                        Modifiers {
+                            ctrl: self.modifiers.ctrl,
+                            shift: self.modifiers.shift,
+                            alt: self.modifiers.alt,
+                            logo: self.modifiers.logo,
+                        },
+                    );
                 }
                 if let Some(drag_click) = self.drag_click.as_mut() {
                     let dx = self.pointer_pos.x - drag_click.origin.x;
@@ -7345,6 +7391,49 @@ mod tests {
             delta: MouseScrollDelta::LineDelta(-1.0, 2.0),
         });
         assert_eq!(received.get().unwrap().delta, Point { x: 40.0, y: -80.0 });
+    }
+
+    struct PointerMoveWidget(Rc<Cell<Option<(Point, Modifiers)>>>);
+
+    impl creamui_core::Widget for PointerMoveWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: Rect) {}
+
+        fn on_pointer_move(&self) -> Option<Rc<dyn Fn(Point, Modifiers)>> {
+            let received = self.0.clone();
+            Some(Rc::new(move |point, modifiers| {
+                received.set(Some((point, modifiers)))
+            }))
+        }
+    }
+
+    #[test]
+    fn pointer_move_reports_local_position_and_modifiers_without_dragging() {
+        let received = Rc::new(Cell::new(None));
+        let mut harness = WindowEventHarness::new({
+            let received = received.clone();
+            move |_| Box::new(PointerMoveWidget(received.clone()))
+        });
+        harness.send(WindowEvent::ModifiersChanged(PlatformModifiers {
+            shift: true,
+            ..Default::default()
+        }));
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 18.0, y: 23.0 },
+        });
+        assert_eq!(
+            received.get(),
+            Some((
+                Point { x: 18.0, y: 23.0 },
+                Modifiers {
+                    shift: true,
+                    ..Default::default()
+                }
+            ))
+        );
     }
 
     struct ShortcutTextInput(Rc<Cell<usize>>);

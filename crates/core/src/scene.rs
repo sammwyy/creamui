@@ -1,5 +1,7 @@
 use crate::geometry::{Point, Rect, Size};
-use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter, WheelInput, WidgetKey};
+use crate::widget::{
+    BoxedWidget, CursorIcon, KeyInput, MeasureFn, Modifiers, Painter, WheelInput, WidgetKey,
+};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -305,6 +307,7 @@ struct PaintOutputs {
     scrollables: Vec<(Rect, ScrollHandler, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
+    pointer_moves: Vec<(Rect, Rect, Rc<dyn Fn(Point, Modifiers)>)>,
 }
 
 /// How many regions of each kind were recorded before a window drag region.
@@ -320,6 +323,7 @@ struct RegionMarks {
     content: usize,
     cursors: usize,
     hovers: usize,
+    pointer_moves: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -335,6 +339,7 @@ struct PointerBarrier {
     scrollables: usize,
     cursors: usize,
     hovers: usize,
+    pointer_moves: usize,
 }
 
 enum ScrollHandler {
@@ -356,6 +361,7 @@ impl PaintOutputs {
             scrollables: self.scrollables.len(),
             cursors: self.cursors.len(),
             hovers: self.hovers.len(),
+            pointer_moves: self.pointer_moves.len(),
         });
     }
 }
@@ -582,6 +588,7 @@ fn paint_instance(
         out.scrollables.clear();
         out.cursors.clear();
         out.hovers.clear();
+        out.pointer_moves.clear();
         out.pointer_barriers.clear();
         focus.counter = 0;
     }
@@ -731,6 +738,7 @@ fn paint_instance(
                     content: out.window_drag_content.len(),
                     cursors: out.cursors.len(),
                     hovers: out.hovers.len(),
+                    pointer_moves: out.pointer_moves.len(),
                 };
                 out.window_drags.push((visible, handler, marks));
             }
@@ -784,6 +792,9 @@ fn paint_instance(
             }
             if let Some(handler) = instance.widget.on_hover() {
                 out.hovers.push((visible, handler));
+            }
+            if let Some(handler) = instance.widget.on_pointer_move() {
+                out.pointer_moves.push((visible, rect, handler));
             }
         }
     }
@@ -937,9 +948,29 @@ pub struct Scene {
     scrollables: Vec<(Rect, ScrollHandler, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
+    pointer_moves: Vec<(Rect, Rect, Rc<dyn Fn(Point, Modifiers)>)>,
 }
 
 impl Scene {
+    pub fn pointer_move_at(&self, point: Point) -> Option<(Point, Rc<dyn Fn(Point, Modifiers)>)> {
+        self.pointer_moves
+            .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.pointer_moves),
+            )
+            .rev()
+            .find(|(visible, _, _)| visible.contains(point))
+            .map(|(_, rect, handler)| {
+                (
+                    Point {
+                        x: point.x - rect.x,
+                        y: point.y - rect.y,
+                    },
+                    handler.clone(),
+                )
+            })
+    }
     fn pointer_barrier(&self, point: Point) -> Option<&PointerBarrier> {
         self.pointer_barriers
             .iter()
@@ -1151,7 +1182,13 @@ impl Scene {
             || above(&self.draggables, marks.draggables, |r| Some(r.0), point)
             || above(&self.drag_starts, marks.drag_starts, |r| Some(r.0), point)
             || above(&self.cursors, marks.cursors, |r| Some(r.0), point)
-            || above(&self.hovers, marks.hovers, |r| Some(r.0), point);
+            || above(&self.hovers, marks.hovers, |r| Some(r.0), point)
+            || above(
+                &self.pointer_moves,
+                marks.pointer_moves,
+                |r| Some(r.0),
+                point,
+            );
         (!covered).then(|| handler.clone())
     }
 
@@ -1471,6 +1508,7 @@ impl Renderer {
             scrollables: out.scrollables,
             cursors: out.cursors,
             hovers: out.hovers,
+            pointer_moves: out.pointer_moves,
         })
     }
 

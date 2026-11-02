@@ -863,6 +863,10 @@ pub trait Widget {
         None
     }
 
+    fn on_pointer_move(&self) -> Option<Rc<dyn Fn(Point, Modifiers)>> {
+        None
+    }
+
     /// Paints an overlay on top of this widget's normal [`Widget::paint`]
     /// output, called only on the frame's currently focused widget (see
     /// [`Widget::focusable`]). Used for a text input's blinking caret.
@@ -1115,6 +1119,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_hover(&self) -> Option<Rc<dyn Fn(bool)>> {
         self.widget.on_hover()
+    }
+    fn on_pointer_move(&self) -> Option<Rc<dyn Fn(Point, Modifiers)>> {
+        self.widget.on_pointer_move()
     }
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, visible: bool) {
         self.widget.paint_focused_overlay(painter, rect, visible)

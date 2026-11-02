@@ -76,6 +76,7 @@ pub struct RawCanvas {
     pub style: creamui_core::Style,
     draw: Rc<dyn Fn(&mut CanvasPaint<'_>)>,
     click: Option<Rc<dyn Fn(Point)>>,
+    double_click: Option<Rc<dyn Fn(Point)>>,
     context_menu: Option<Rc<dyn Fn(Point)>>,
     drag_start: Option<Rc<dyn Fn(Point, Rect)>>,
     drag: Option<Rc<dyn Fn(Point, Rect)>>,
@@ -93,6 +94,7 @@ impl RawCanvas {
             style: style.into(),
             draw: Rc::new(draw),
             click: None,
+            double_click: None,
             context_menu: None,
             drag_start: None,
             drag: None,
@@ -104,6 +106,11 @@ impl RawCanvas {
 
     pub fn on_click(mut self, handler: impl Fn(Point) + 'static) -> Self {
         self.click = Some(Rc::new(handler));
+        self
+    }
+
+    pub fn on_double_click(mut self, handler: impl Fn(Point) + 'static) -> Self {
+        self.double_click = Some(Rc::new(handler));
         self
     }
 
@@ -159,6 +166,10 @@ impl Widget for RawCanvas {
 
     fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
         self.click.clone()
+    }
+
+    fn on_double_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        self.double_click.clone()
     }
 
     fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {

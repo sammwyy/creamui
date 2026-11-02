@@ -675,6 +675,10 @@ pub trait Widget {
         None
     }
 
+    fn on_double_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        None
+    }
+
     /// Receives a secondary click in window-local coordinates.
     fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
         None
@@ -1036,6 +1040,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
         self.widget.on_click_at()
+    }
+    fn on_double_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+        self.widget.on_double_click_at()
     }
     fn on_context_menu(&self) -> Option<Rc<dyn Fn(Point)>> {
         self.widget.on_context_menu()

@@ -2327,6 +2327,7 @@ struct WindowState {
     transparent: bool,
     suspended: bool,
     pointer_pos: Point,
+    last_click: Option<(Instant, Point)>,
     modifiers: PlatformModifiers,
     next_blink: Instant,
     next_animation: Instant,
@@ -3162,6 +3163,18 @@ impl WindowState {
                     move_callback(self.pointer_pos);
                 }
                 self.set_pointer(Some(self.pointer_pos));
+                if self
+                    .pipeline
+                    .frame
+                    .borrow()
+                    .recorder
+                    .press_origin
+                    .is_some_and(|origin| {
+                        (origin.x - self.pointer_pos.x).hypot(origin.y - self.pointer_pos.y) >= 5.0
+                    })
+                {
+                    self.last_click = None;
+                }
                 if self.runtime().is_some() {
                     self.runtime_pointer_moved();
                     if let Some(runtime) = self.runtime() {
@@ -3216,6 +3229,9 @@ impl WindowState {
                     let dx = self.pointer_pos.x - drag_click.origin.x;
                     let dy = self.pointer_pos.y - drag_click.origin.y;
                     drag_click.moved |= dx.hypot(dy) >= 4.0;
+                    if drag_click.moved {
+                        self.last_click = None;
+                    }
                 }
                 let pointer = self.pointer_pos;
                 let hovered_cursor = self
@@ -3340,11 +3356,47 @@ impl WindowState {
                     handler();
                     return;
                 }
+                let pointer = self.pointer_pos;
+                let now = Instant::now();
+                let double_click =
+                    self.last_click
+                        .replace((now, pointer))
+                        .is_some_and(|(previous, origin)| {
+                            now.duration_since(previous) < Duration::from_millis(500)
+                                && (origin.x - pointer.x).hypot(origin.y - pointer.y) < 5.0
+                        });
+                if double_click {
+                    let handler = if let Some(runtime) = self.runtime() {
+                        runtime.with(|runtime| {
+                            let mut target = runtime.hit_test(pointer);
+                            while let Some(id) = target {
+                                let node = runtime.get(id)?;
+                                if let Some(handler) = &node.events.on_double_click_at {
+                                    let rect = node.layout.rect;
+                                    let offset = node.layout.effective_transform;
+                                    return Some((
+                                        Point {
+                                            x: pointer.x - rect.x - offset.x,
+                                            y: pointer.y - rect.y - offset.y,
+                                        },
+                                        handler.clone(),
+                                    ));
+                                }
+                                target = node.parent;
+                            }
+                            None
+                        })
+                    } else {
+                        self.scene(|scene| scene.double_click_at(pointer))
+                    };
+                    if let Some((local, handler)) = handler {
+                        handler(local);
+                    }
+                }
                 if self.runtime().is_some() {
                     self.runtime_pointer_pressed();
                     return;
                 }
-                let pointer = self.pointer_pos;
                 let Some((click, click_at, new_focus, drag_start, drag_anchor)) =
                     self.scene(|scene| {
                         let drag_start = scene.drag_hit_test(pointer).and_then(|index| {
@@ -4077,6 +4129,7 @@ impl AppHandler {
             transparent: spec.options.transparent,
             suspended: false,
             pointer_pos: Point::default(),
+            last_click: None,
             modifiers: PlatformModifiers::default(),
             next_blink: now + CARET_BLINK_INTERVAL,
             next_animation: now,
@@ -4937,6 +4990,7 @@ mod tests {
                 transparent: false,
                 suspended: false,
                 pointer_pos: Point::default(),
+                last_click: None,
                 modifiers: PlatformModifiers::default(),
                 next_blink: now + CARET_BLINK_INTERVAL,
                 next_animation: now,
@@ -7434,6 +7488,51 @@ mod tests {
                 }
             ))
         );
+    }
+
+    struct DoubleClickWidget(Rc<Cell<Option<Point>>>);
+
+    impl creamui_core::Widget for DoubleClickWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: Rect) {}
+
+        fn on_double_click_at(&self) -> Option<Rc<dyn Fn(Point)>> {
+            let received = self.0.clone();
+            Some(Rc::new(move |point| received.set(Some(point))))
+        }
+    }
+
+    #[test]
+    fn double_click_reaches_widget_and_drag_cancels_click_sequence() {
+        let received = Rc::new(Cell::new(None));
+        let mut harness = WindowEventHarness::new({
+            let received = received.clone();
+            move |_| Box::new(DoubleClickWidget(received.clone()))
+        });
+        let click = |harness: &mut WindowEventHarness, pressed| {
+            harness.send(WindowEvent::MouseInput {
+                pressed,
+                button: MouseButton::Left,
+                serial: None,
+            });
+        };
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 12.0, y: 14.0 },
+        });
+        click(&mut harness, true);
+        click(&mut harness, false);
+        click(&mut harness, true);
+        assert_eq!(received.get(), Some(Point { x: 12.0, y: 14.0 }));
+        received.set(None);
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 30.0, y: 14.0 },
+        });
+        click(&mut harness, false);
+        click(&mut harness, true);
+        assert_eq!(received.get(), None);
     }
 
     struct ShortcutTextInput(Rc<Cell<usize>>);

@@ -209,6 +209,7 @@ pub struct EventState {
     pub file_drop_target: Option<crate::FileDropTarget>,
     pub on_context_menu: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_click_at: Option<Rc<dyn Fn(crate::Point)>>,
+    pub on_double_click_at: Option<Rc<dyn Fn(crate::Point)>>,
     pub on_hover: Option<Rc<dyn Fn(bool)>>,
     pub on_pointer_move: Option<Rc<dyn Fn(crate::Point, crate::Modifiers)>>,
     pub on_key: Option<Rc<dyn Fn(crate::KeyInput)>>,
@@ -228,6 +229,7 @@ impl EventState {
             || self.on_context_menu.is_some()
             || self.on_click.is_some()
             || self.on_click_at.is_some()
+            || self.on_double_click_at.is_some()
             || self.on_hover.is_some()
             || self.on_pointer_move.is_some()
             || self.on_drag.is_some()

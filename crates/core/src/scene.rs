@@ -283,6 +283,7 @@ struct PaintOutputs {
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    double_clicks: Vec<(Rect, Rect, Rc<dyn Fn(Point)>)>,
     context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     file_drops: Vec<(Rect, crate::FileDropTarget)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -317,6 +318,7 @@ struct PaintOutputs {
 struct RegionMarks {
     hits: usize,
     hits_at: usize,
+    double_clicks: usize,
     focusables: usize,
     draggables: usize,
     drag_starts: usize,
@@ -333,6 +335,7 @@ struct PointerBarrier {
     file_drops: usize,
     hits: usize,
     hits_at: usize,
+    double_clicks: usize,
     focusables: usize,
     draggables: usize,
     drag_starts: usize,
@@ -355,6 +358,7 @@ impl PaintOutputs {
             file_drops: self.file_drops.len(),
             hits: self.hits.len(),
             hits_at: self.hits_at.len(),
+            double_clicks: self.double_clicks.len(),
             focusables: self.focusables.len(),
             draggables: self.draggables.len(),
             drag_starts: self.drag_starts.len(),
@@ -578,6 +582,7 @@ fn paint_instance(
         out.modal = true;
         out.hits.clear();
         out.hits_at.clear();
+        out.double_clicks.clear();
         out.context_hits.clear();
         out.file_drops.clear();
         out.focusables.clear();
@@ -715,6 +720,9 @@ fn paint_instance(
             if let Some(handler) = instance.widget.on_click_at() {
                 out.hits_at.push((visible, handler));
             }
+            if let Some(handler) = instance.widget.on_double_click_at() {
+                out.double_clicks.push((visible, rect, handler));
+            }
             if let Some(target) = instance.widget.file_drop_target() {
                 out.file_drops.push((visible, target));
             }
@@ -732,6 +740,7 @@ fn paint_instance(
                 let marks = RegionMarks {
                     hits: out.hits.len(),
                     hits_at: out.hits_at.len(),
+                    double_clicks: out.double_clicks.len(),
                     focusables: out.focusables.len(),
                     draggables: out.draggables.len(),
                     drag_starts: out.drag_starts.len(),
@@ -930,6 +939,7 @@ pub struct Scene {
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
+    double_clicks: Vec<(Rect, Rect, Rc<dyn Fn(Point)>)>,
     context_hits: Vec<(Rect, Rc<dyn Fn(Point)>)>,
     file_drops: Vec<(Rect, crate::FileDropTarget)>,
     /// Every focusable widget in tab order, with its visible rect if any
@@ -952,6 +962,25 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn double_click_at(&self, point: Point) -> Option<(Point, Rc<dyn Fn(Point)>)> {
+        self.double_clicks
+            .iter()
+            .skip(
+                self.pointer_barrier(point)
+                    .map_or(0, |barrier| barrier.double_clicks),
+            )
+            .rev()
+            .find(|(visible, _, _)| visible.contains(point))
+            .map(|(_, rect, handler)| {
+                (
+                    Point {
+                        x: point.x - rect.x,
+                        y: point.y - rect.y,
+                    },
+                    handler.clone(),
+                )
+            })
+    }
     pub fn pointer_move_at(&self, point: Point) -> Option<(Point, Rc<dyn Fn(Point, Modifiers)>)> {
         self.pointer_moves
             .iter()
@@ -1178,6 +1207,12 @@ impl Scene {
             point,
         ) || above(&self.hits, marks.hits, |r| Some(r.0), point)
             || above(&self.hits_at, marks.hits_at, |r| Some(r.0), point)
+            || above(
+                &self.double_clicks,
+                marks.double_clicks,
+                |r| Some(r.0),
+                point,
+            )
             || above(&self.focusables, marks.focusables, |r| r.1, point)
             || above(&self.draggables, marks.draggables, |r| Some(r.0), point)
             || above(&self.drag_starts, marks.drag_starts, |r| Some(r.0), point)
@@ -1498,6 +1533,7 @@ impl Renderer {
             pointer_barriers: out.pointer_barriers,
             hits: out.hits,
             hits_at: out.hits_at,
+            double_clicks: out.double_clicks,
             context_hits: out.context_hits,
             file_drops: out.file_drops,
             focusables: out.focusables,

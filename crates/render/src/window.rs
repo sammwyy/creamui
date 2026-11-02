@@ -24,7 +24,7 @@ use crate::web::WebState;
 use creamui_core::runtime::{IntoView, MountedView, Mutation, SharedRuntime, View};
 use creamui_core::{
     BoxedWidget, CursorIcon, Key, KeyInput, Modifiers, Point, Rect, Renderer, Scene, Size,
-    TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,
+    TitlebarMode, TitlebarState, WheelInput, WindowButton, WindowControls, WindowControlsBackend,
     WindowDragHandle,
 };
 #[cfg(all(feature = "platform-android", target_os = "android"))]
@@ -2721,26 +2721,46 @@ impl WindowState {
     }
 
     fn scroll_at(&mut self, pointer: Point, delta_y: f32) {
+        self.wheel_at(
+            pointer,
+            WheelInput {
+                delta: Point { x: 0.0, y: delta_y },
+                modifiers: Modifiers::default(),
+            },
+        );
+    }
+
+    fn wheel_at(&mut self, pointer: Point, input: WheelInput) {
         if let Some(runtime) = self.runtime() {
-            let handler = runtime.with(|runtime| {
+            let handlers = runtime.with(|runtime| {
                 let target = runtime.scroll_target(pointer)?;
-                runtime.get(target)?.events.on_scroll.clone()
+                let events = &runtime.get(target)?.events;
+                Some((events.on_wheel.clone(), events.on_scroll.clone()))
             });
-            if let Some(handler) = handler {
-                handler(delta_y);
+            if let Some((wheel, vertical)) = handlers {
+                if let Some(handler) = wheel {
+                    handler(input);
+                } else if let Some(handler) = vertical {
+                    handler(input.delta.y);
+                }
             }
             return;
         }
         let handler = self.scene(|scene| {
             let index = scene.scroll_hit_test(pointer)?;
             Some((
-                scene.on_scroll_at(index)?.clone(),
+                scene.on_wheel_at(index).cloned(),
+                scene.on_scroll_at(index).cloned(),
                 scene.scroll_is_local_at(index),
                 scene.scroll_requires_layout_at(index),
             ))
         });
-        if let Some((handler, local, layout)) = handler {
-            handler(delta_y);
+        if let Some((wheel, vertical, local, layout)) = handler {
+            if let Some(handler) = wheel {
+                handler(input);
+            } else if let Some(handler) = vertical {
+                handler(input.delta.y);
+            }
             if layout {
                 self.pipeline.invalidate_layout();
             } else if local {
@@ -3360,12 +3380,28 @@ impl WindowState {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let scale = self.pipeline.scale_factor.peek();
-                // Positive `delta_y` reveals content further down.
-                let delta_y: f32 = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
-                    MouseScrollDelta::PixelDelta(pos) => -(pos.y / scale) as f32,
+                let delta = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => Point {
+                        x: -x * 40.0,
+                        y: -y * 40.0,
+                    },
+                    MouseScrollDelta::PixelDelta(pos) => Point {
+                        x: -(pos.x / scale) as f32,
+                        y: -(pos.y / scale) as f32,
+                    },
                 };
-                self.scroll_at(self.pointer_pos, delta_y);
+                self.wheel_at(
+                    self.pointer_pos,
+                    WheelInput {
+                        delta,
+                        modifiers: Modifiers {
+                            ctrl: self.modifiers.ctrl,
+                            shift: self.modifiers.shift,
+                            alt: self.modifiers.alt,
+                            logo: self.modifiers.logo,
+                        },
+                    },
+                );
             }
             WindowEvent::Touch {
                 id,
@@ -7150,6 +7186,84 @@ mod tests {
         harness.send(WindowEvent::RedrawRequested);
         assert_eq!(builds.get(), baseline_builds);
         assert_eq!(paints.get(), baseline_paints + 1);
+    }
+
+    struct WheelWidget(Rc<Cell<Option<WheelInput>>>);
+
+    impl creamui_core::Widget for WheelWidget {
+        fn style(&self) -> creamui_core::Style {
+            creamui_core::Style::new().width(100.0).height(100.0)
+        }
+
+        fn paint(&self, _: &mut dyn creamui_core::Painter, _: Rect) {}
+
+        fn on_wheel(&self) -> Option<Rc<dyn Fn(WheelInput)>> {
+            let received = self.0.clone();
+            Some(Rc::new(move |input| received.set(Some(input))))
+        }
+    }
+
+    #[test]
+    fn wheel_delivers_both_axes_and_modifiers_to_widget() {
+        let received = Rc::new(Cell::new(None));
+        let mut harness = WindowEventHarness::new({
+            let received = received.clone();
+            move |_| Box::new(WheelWidget(received.clone()))
+        });
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::ModifiersChanged(PlatformModifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        }));
+        harness.send(WindowEvent::MouseWheel {
+            delta: MouseScrollDelta::LineDelta(1.0, -2.0),
+        });
+        assert_eq!(
+            received.get(),
+            Some(WheelInput {
+                delta: Point { x: -40.0, y: 80.0 },
+                modifiers: Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Default::default()
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn wheel_reaches_retained_runtime_nodes() {
+        let received = Rc::new(Cell::new(None));
+        let mut runtime = Runtime::new();
+        let root = {
+            let mut tx = runtime.transaction();
+            let root = tx.create_node(NodeKind::Container);
+            tx.apply(Mutation::SetLayoutStyle {
+                node: root,
+                style: creamui_core::Style::new().width(100.0).height(100.0).layout,
+            });
+            let received = received.clone();
+            tx.apply(Mutation::SetEventHandlers {
+                node: root,
+                handlers: EventState {
+                    on_wheel: Some(Rc::new(move |input| received.set(Some(input)))),
+                    ..Default::default()
+                },
+            });
+            root
+        };
+        runtime.set_root(Some(root));
+        let mut harness = WindowEventHarness::retained(SharedRuntime::new(runtime));
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::MouseWheel {
+            delta: MouseScrollDelta::LineDelta(-1.0, 2.0),
+        });
+        assert_eq!(received.get().unwrap().delta, Point { x: 40.0, y: -80.0 });
     }
 
     struct SmallHoverWidget {

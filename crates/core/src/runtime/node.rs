@@ -215,6 +215,7 @@ pub struct EventState {
     pub on_drag_start: Option<Rc<dyn Fn(crate::Point, crate::Rect)>>,
     pub on_drag_end: Option<Rc<dyn Fn()>>,
     pub on_scroll: Option<Rc<dyn Fn(f32)>>,
+    pub on_wheel: Option<Rc<dyn Fn(crate::WheelInput)>>,
     pub cursor: Option<crate::CursorIcon>,
     pub focusable: bool,
     pub text_input: bool,
@@ -230,6 +231,7 @@ impl EventState {
             || self.on_drag.is_some()
             || self.on_drag_start.is_some()
             || self.on_scroll.is_some()
+            || self.on_wheel.is_some()
             || self.cursor.is_some()
             || self.focusable
     }

@@ -1,5 +1,5 @@
 use crate::geometry::{Point, Rect, Size};
-use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter, WidgetKey};
+use crate::widget::{BoxedWidget, CursorIcon, KeyInput, MeasureFn, Painter, WheelInput, WidgetKey};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -302,7 +302,7 @@ struct PaintOutputs {
     window_drag_content: Vec<Rect>,
     /// Depth of enclosing widgets whose intrinsic content passes window drags.
     window_drag_passthrough: u32,
-    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
+    scrollables: Vec<(Rect, ScrollHandler, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
 }
@@ -335,6 +335,11 @@ struct PointerBarrier {
     scrollables: usize,
     cursors: usize,
     hovers: usize,
+}
+
+enum ScrollHandler {
+    Vertical(Rc<dyn Fn(f32)>),
+    Wheel(Rc<dyn Fn(WheelInput)>),
 }
 
 impl PaintOutputs {
@@ -734,6 +739,7 @@ fn paint_instance(
             if instance.has_measure && out.window_drag_passthrough == 0 {
                 out.window_drag_content.push(visible);
             }
+            let on_wheel = instance.widget.on_wheel();
             let on_scroll_bounded = instance.widget.on_scroll_bounded();
             let on_content_overflow = instance.widget.on_content_overflow();
             if on_scroll_bounded.is_some() || on_content_overflow.is_some() {
@@ -747,18 +753,31 @@ fn paint_instance(
                 if let Some(report) = on_content_overflow {
                     report(max_offset);
                 }
-                if let Some(on_scroll) = on_scroll_bounded {
+                if let Some(on_wheel) = on_wheel {
+                    out.scrollables.push((
+                        visible,
+                        ScrollHandler::Wheel(on_wheel),
+                        true,
+                        instance.widget.scroll_requires_layout(),
+                    ));
+                } else if let Some(on_scroll) = on_scroll_bounded {
                     if max_offset > 0.5 {
                         out.scrollables.push((
                             visible,
-                            Rc::new(move |delta| on_scroll(delta, max_offset)),
+                            ScrollHandler::Vertical(Rc::new(move |delta| {
+                                on_scroll(delta, max_offset)
+                            })),
                             true,
                             instance.widget.scroll_requires_layout(),
                         ));
                     }
                 }
+            } else if let Some(on_wheel) = on_wheel {
+                out.scrollables
+                    .push((visible, ScrollHandler::Wheel(on_wheel), true, false));
             } else if let Some(on_scroll) = instance.widget.on_scroll() {
-                out.scrollables.push((visible, on_scroll, false, false));
+                out.scrollables
+                    .push((visible, ScrollHandler::Vertical(on_scroll), false, false));
             }
             if let Some(cursor) = instance.widget.cursor_icon() {
                 out.cursors.push((visible, cursor));
@@ -915,7 +934,7 @@ pub struct Scene {
     drag_starts: Vec<(Rect, Rect, Rc<dyn Fn(Point, Rect)>)>,
     window_drags: Vec<(Rect, Rc<dyn Fn()>, RegionMarks)>,
     window_drag_content: Vec<Rect>,
-    scrollables: Vec<(Rect, Rc<dyn Fn(f32)>, bool, bool)>,
+    scrollables: Vec<(Rect, ScrollHandler, bool, bool)>,
     cursors: Vec<(Rect, CursorIcon)>,
     hovers: Vec<(Rect, Rc<dyn Fn(bool)>)>,
 }
@@ -1149,9 +1168,17 @@ impl Scene {
 
     /// The scroll-wheel handler at `index`, if it still exists this render.
     pub fn on_scroll_at(&self, index: usize) -> Option<&Rc<dyn Fn(f32)>> {
-        self.scrollables
-            .get(index)
-            .map(|(_, handler, _, _)| handler)
+        match &self.scrollables.get(index)?.1 {
+            ScrollHandler::Vertical(handler) => Some(handler),
+            ScrollHandler::Wheel(_) => None,
+        }
+    }
+
+    pub fn on_wheel_at(&self, index: usize) -> Option<&Rc<dyn Fn(WheelInput)>> {
+        match &self.scrollables.get(index)?.1 {
+            ScrollHandler::Wheel(handler) => Some(handler),
+            ScrollHandler::Vertical(_) => None,
+        }
     }
 
     pub fn scroll_is_local_at(&self, index: usize) -> bool {

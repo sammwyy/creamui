@@ -40,6 +40,12 @@ pub struct Modifiers {
     pub logo: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WheelInput {
+    pub delta: Point,
+    pub modifiers: Modifiers,
+}
+
 /// A widget's intrinsic-size function, used by `taffy`'s layout algorithm
 /// for leaves whose size depends on content (e.g. text) rather than being
 /// fully determined by their `Style`. Called with the dimensions already
@@ -794,6 +800,10 @@ pub trait Widget {
         None
     }
 
+    fn on_wheel(&self) -> Option<Rc<dyn Fn(WheelInput)>> {
+        None
+    }
+
     /// Like [`Widget::on_scroll`], but receives the resolved maximum vertical
     /// offset for this widget's content. Returning this handler lets a
     /// controlled scroll view clamp itself without application-specific
@@ -1077,6 +1087,9 @@ impl<W: Widget> Widget for KeyedWidget<W> {
     }
     fn on_scroll(&self) -> Option<Rc<dyn Fn(f32)>> {
         self.widget.on_scroll()
+    }
+    fn on_wheel(&self) -> Option<Rc<dyn Fn(WheelInput)>> {
+        self.widget.on_wheel()
     }
     fn on_scroll_bounded(&self) -> Option<Rc<dyn Fn(f32, f32)>> {
         self.widget.on_scroll_bounded()

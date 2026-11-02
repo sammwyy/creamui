@@ -35,7 +35,7 @@ pub use style::{
 pub use virtualize::{visible_range, HeightIndex, Interval, IntervalIndex};
 pub use widget::{
     keyed, BoxedWidget, CursorIcon, FileDropTarget, Key, KeyInput, MeasureFn, Modifiers, Painter,
-    Styled, TextAlign, Widget, WidgetKey, WindowDragHandle,
+    Styled, TextAlign, WheelInput, Widget, WidgetKey, WindowDragHandle,
 };
 pub use window_controls::{
     TitlebarMode, TitlebarState, WindowButton, WindowControls, WindowControlsBackend,

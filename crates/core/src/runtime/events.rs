@@ -400,7 +400,7 @@ impl Runtime {
         let mut current = self.hit_test(point)?;
         loop {
             let node = self.nodes.get(current)?;
-            if node.events.on_scroll.is_some() {
+            if node.events.on_scroll.is_some() || node.events.on_wheel.is_some() {
                 return Some(current);
             }
             current = node.parent?;

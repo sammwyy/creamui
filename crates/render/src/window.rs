@@ -1390,6 +1390,7 @@ struct AppCommands {
     proxy: EventLoopProxy<AppEvent>,
     next_job_id: u64,
     background_jobs: HashMap<u64, Box<dyn FnOnce(Box<dyn Any + Send>)>>,
+    background_streams: HashMap<u64, Box<dyn FnMut(Box<dyn Any + Send>)>>,
 }
 
 impl AppHandle {
@@ -1516,6 +1517,43 @@ impl AppHandle {
             let _ = proxy.send_event(AppEvent::BackgroundJob(job_id, result));
         }
     }
+
+    pub fn spawn_stream<T, F, D>(&self, work: F, on_item: D)
+    where
+        T: Send + 'static,
+        F: FnOnce(Box<dyn Fn(T) + Send>) + Send + 'static,
+        D: FnMut(T) + 'static,
+    {
+        let (job_id, proxy) = {
+            let mut commands = self.commands.borrow_mut();
+            let job_id = commands.next_job_id;
+            commands.next_job_id += 1;
+            let mut on_item = on_item;
+            commands.background_streams.insert(
+                job_id,
+                Box::new(move |value| {
+                    on_item(
+                        *value
+                            .downcast::<T>()
+                            .expect("background stream type mismatch"),
+                    );
+                }),
+            );
+            (job_id, commands.proxy.clone())
+        };
+        let worker = move || {
+            let sender = proxy.clone();
+            work(Box::new(move |value| {
+                let _ =
+                    sender.send_event(AppEvent::BackgroundStream(job_id, Some(Box::new(value))));
+            }));
+            let _ = proxy.send_event(AppEvent::BackgroundStream(job_id, None));
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(worker);
+        #[cfg(target_arch = "wasm32")]
+        worker();
+    }
 }
 
 /// Looks up and runs the `on_done` continuation registered by
@@ -1531,6 +1569,21 @@ fn resolve_background_job(
     let callback = commands.borrow_mut().background_jobs.remove(&job_id);
     if let Some(callback) = callback {
         callback(value);
+    }
+}
+
+fn resolve_background_stream(
+    commands: &Rc<RefCell<AppCommands>>,
+    job_id: u64,
+    value: Option<Box<dyn Any + Send>>,
+) {
+    let callback = commands.borrow_mut().background_streams.remove(&job_id);
+    if let (Some(mut callback), Some(value)) = (callback, value) {
+        callback(value);
+        commands
+            .borrow_mut()
+            .background_streams
+            .insert(job_id, callback);
     }
 }
 
@@ -4174,6 +4227,7 @@ enum AppEvent {
     #[cfg(all(feature = "tray", target_os = "linux"))]
     TrayMenu(String),
     BackgroundJob(u64, Box<dyn Any + Send>),
+    BackgroundStream(u64, Option<Box<dyn Any + Send>>),
 }
 
 impl ApplicationHandler<AppEvent> for AppHandler {
@@ -4308,6 +4362,9 @@ impl ApplicationHandler<AppEvent> for AppHandler {
             }
             AppEvent::BackgroundJob(job_id, value) => {
                 resolve_background_job(&self.commands, job_id, value);
+            }
+            AppEvent::BackgroundStream(job_id, value) => {
+                resolve_background_stream(&self.commands, job_id, value);
             }
         }
         self.drain_app_commands(event_loop);
@@ -4586,6 +4643,7 @@ fn run_windows(
         proxy: event_loop.create_proxy(),
         next_job_id: 0,
         background_jobs: HashMap::new(),
+        background_streams: HashMap::new(),
     }));
     let app = AppHandle {
         commands: commands.clone(),
@@ -5127,6 +5185,7 @@ mod tests {
                 proxy: test_proxy(),
                 next_job_id: 0,
                 background_jobs: HashMap::new(),
+                background_streams: HashMap::new(),
             })),
         }
     }
@@ -7899,6 +7958,7 @@ mod tests {
             proxy: test_proxy(),
             next_job_id: 0,
             background_jobs: HashMap::new(),
+            background_streams: HashMap::new(),
         }));
         let handle = AppHandle {
             commands: commands.clone(),
@@ -7935,6 +7995,49 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn background_stream_delivers_multiple_items_and_releases_callback() {
+        let commands = Rc::new(RefCell::new(AppCommands {
+            system_theme: None,
+            windows: Vec::new(),
+            exit_requested: false,
+            proxy: test_proxy(),
+            next_job_id: 0,
+            background_jobs: HashMap::new(),
+            background_streams: HashMap::new(),
+        }));
+        let handle = AppHandle {
+            commands: commands.clone(),
+        };
+        let received = Rc::new(RefCell::new(Vec::new()));
+        let values = received.clone();
+        let nested = handle.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        handle.spawn_stream(
+            move |emit| {
+                emit(1u32);
+                emit(2);
+                done_tx.send(()).unwrap();
+            },
+            move |value| {
+                values.borrow_mut().push(value);
+                if value == 1 {
+                    nested.spawn_background(|| 3u32, |_| {});
+                }
+            },
+        );
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        resolve_background_stream(&commands, 0, Some(Box::new(1u32)));
+        resolve_background_stream(&commands, 0, Some(Box::new(2u32)));
+        assert_eq!(*received.borrow(), vec![1, 2]);
+        assert_eq!(commands.borrow().background_streams.len(), 1);
+        resolve_background_stream(&commands, 0, None);
+        assert!(commands.borrow().background_streams.is_empty());
+        resolve_background_stream(&commands, 0, Some(Box::new(4u32)));
+        assert_eq!(*received.borrow(), vec![1, 2]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn resolve_background_job_is_a_no_op_for_an_unknown_or_already_resolved_id() {
         let commands = Rc::new(RefCell::new(AppCommands {
             system_theme: None,
@@ -7943,6 +8046,7 @@ mod tests {
             proxy: test_proxy(),
             next_job_id: 0,
             background_jobs: HashMap::new(),
+            background_streams: HashMap::new(),
         }));
         resolve_background_job(&commands, 99, Box::new(0u32));
     }

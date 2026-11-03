@@ -35,6 +35,7 @@ impl GpuFrameSlot {
 pub struct GpuViewport {
     pub style: creamui_core::Style,
     slot: GpuFrameSlot,
+    aspect_ratio: Option<f32>,
 }
 
 impl GpuViewport {
@@ -42,7 +43,13 @@ impl GpuViewport {
         Self {
             style: style.into(),
             slot,
+            aspect_ratio: None,
         }
+    }
+
+    pub fn aspect_ratio(mut self, ratio: f32) -> Self {
+        self.aspect_ratio = (ratio.is_finite() && ratio > 0.0).then_some(ratio);
+        self
     }
 }
 
@@ -53,7 +60,19 @@ impl Widget for GpuViewport {
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         if let Some(frame) = self.slot.0.borrow().as_ref() {
-            painter.draw_native_image(rect, &frame.0);
+            let bounds = if let Some(ratio) = self.aspect_ratio {
+                let width = rect.width.min(rect.height * ratio);
+                let height = rect.height.min(rect.width / ratio);
+                Rect {
+                    x: rect.x + (rect.width - width) / 2.0,
+                    y: rect.y + (rect.height - height) / 2.0,
+                    width,
+                    height,
+                }
+            } else {
+                rect
+            };
+            painter.draw_native_image(bounds, &frame.0);
         } else {
             painter.fill_rect(rect, Color::rgb(32, 32, 32), 0.0);
         }
@@ -68,14 +87,16 @@ mod tests {
     #[derive(Default)]
     struct TestPainter {
         image: Option<u64>,
+        image_rect: Option<Rect>,
     }
 
     impl Painter for TestPainter {
         fn fill_rect(&mut self, _: Rect, _: Color, _: f32) {}
         fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
         fn fill_text(&mut self, _: Rect, _: &str, _: Color, _: f32, _: TextAlign) {}
-        fn draw_native_image(&mut self, _: Rect, image: &NativeImage) {
+        fn draw_native_image(&mut self, rect: Rect, image: &NativeImage) {
             self.image = Some(image.id());
+            self.image_rect = Some(rect);
         }
     }
 
@@ -101,6 +122,29 @@ mod tests {
             &mut painter,
         );
         assert_eq!(painter.image, Some(last.0.id()));
+    }
+
+    #[test]
+    fn native_viewport_letterboxes_to_project_aspect_ratio() {
+        let slot = GpuFrameSlot::new();
+        *slot.0.borrow_mut() = Some(GpuFrame(NativeImage::new(1u32)));
+        let mut painter = TestPainter::default();
+        GpuViewport::new(creamui_core::layout::Style::default(), slot)
+            .aspect_ratio(16.0 / 9.0)
+            .paint(
+                &mut painter,
+                Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 200.0,
+                    height: 200.0,
+                },
+            );
+        let bounds = painter.image_rect.unwrap();
+        assert!((bounds.x - 10.0).abs() < 0.01);
+        assert!((bounds.y - 63.75).abs() < 0.01);
+        assert!((bounds.width - 200.0).abs() < 0.01);
+        assert!((bounds.height - 112.5).abs() < 0.01);
     }
 
     #[test]

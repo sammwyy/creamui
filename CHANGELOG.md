@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Discard oversized released Wayland SHM pools when presenting at a smaller
+  size. In-flight buffers remain untouched; newly allocated buffers copy a
+  full frame before incremental updates resume.
 - Reclaim oversized CPU clip scratch after a window shrinks, without changing
   rendered pixels. The `raster_memory` benchmark measures retained memory
   after a large clipped frame and a subsequent small frame.

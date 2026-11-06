@@ -35,8 +35,9 @@ Current limitations and work still to do. Implemented changes belong in
 - Replace the native Wayland event loop's 8 ms user-event polling with a
   wake descriptor for proxy events and queued window requests, preserving
   redraw and timer delivery while allowing an idle app to block.
-- Reclaim released Wayland SHM buffers after a window shrinks; they currently
-  retain their high-water allocation.
+- Reclaim a Wayland SHM buffer released after a resize even when the window
+  does not present another frame. Pools are currently reclaimed on the next
+  presentation.
 - Improve scrolling when a framebuffer shift is unavailable. The CPU blits
   only when one scroll layer moves by whole physical pixels over a solid,
   opaque backdrop; otherwise it repaints the layer viewport.

@@ -143,6 +143,12 @@ fn create_buffer(
     )
 }
 
+fn reclaim_released(buffers: &mut Vec<ShmBuffer>, needed: usize) {
+    buffers.retain(|buffer| {
+        !buffer.released.load(Ordering::SeqCst) || buffer.map_len <= needed.saturating_mul(4)
+    });
+}
+
 pub struct ShmSurface {
     buffers: Vec<ShmBuffer>,
     surface: wl_surface::WlSurface,
@@ -200,6 +206,10 @@ impl ShmSurface {
         if let Err(err) = self.queue.dispatch_pending(&mut State) {
             log::warn!("creamui-render: wl_shm dispatch failed: {err}");
         }
+        let needed = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(4);
+        reclaim_released(&mut self.buffers, needed);
         loop {
             let free = self
                 .buffers
@@ -331,5 +341,52 @@ impl Dispatch<wl_buffer::WlBuffer, Arc<AtomicBool>> for State {
         if let wl_buffer::Event::Release = event {
             released.store(true, Ordering::SeqCst);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn released_pool_shrinks_after_a_large_frame() {
+        if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        let conn = Connection::connect_to_env().expect("Wayland compositor");
+        let (globals, queue) = registry_queue_init::<State>(&conn).expect("Wayland registry");
+        let qh = queue.handle();
+        let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
+        let mut buffers = vec![ShmBuffer::new(&shm, 2048, 2048, &qh).expect("large buffer")];
+        buffers[0].pixels().fill(0xff00ff00);
+        let before = buffers[0].map_len;
+        let shmem_kib = || {
+            std::fs::read_to_string("/proc/self/status")
+                .expect("process status")
+                .lines()
+                .find_map(|line| line.strip_prefix("RssShmem:"))
+                .and_then(|value| value.split_whitespace().next())
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("shared memory")
+        };
+        let before_kib = shmem_kib();
+        reclaim_released(&mut buffers, 320 * 200 * 4);
+        assert!(buffers.is_empty());
+        buffers.push(ShmBuffer::new(&shm, 320, 200, &qh).expect("small buffer"));
+        buffers[0].pixels().fill(0xff00ff00);
+        eprintln!(
+            "wayland shm mapped bytes: {before} -> {}; rss_shmem_kib: {before_kib} -> {}",
+            buffers[0].map_len,
+            shmem_kib()
+        );
+        assert!(buffers[0].map_len <= (320usize * 200 * 4).next_power_of_two());
+
+        let mut buffers = vec![ShmBuffer::new(&shm, 1024, 1024, &qh).expect("in-flight buffer")];
+        buffers[0].released.store(false, Ordering::SeqCst);
+        reclaim_released(&mut buffers, 320 * 200 * 4);
+        assert_eq!(buffers.len(), 1);
+        buffers[0].released.store(true, Ordering::SeqCst);
+        reclaim_released(&mut buffers, 320 * 200 * 4);
+        assert!(buffers.is_empty());
     }
 }

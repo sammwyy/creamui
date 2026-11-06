@@ -15,11 +15,15 @@ categories = ["api-bindings", "gui"]
 name = "creamui"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["gpu"]
+gpu = ["creamui-render/gpu"]
+
 [dependencies]
 creamui-core = { workspace = true }
 creamui-theme = { workspace = true }
 creamui-widgets = { workspace = true }
-creamui-render = { workspace = true }
+creamui-render = { version = "0.3.0", path = "../render", default-features = false, features = ["platform-winit"] }
 creamui-reactive = { workspace = true }
 creamui-abi = { workspace = true }
 

@@ -4,14 +4,14 @@
 /// Which renderer turns a window's display lists into pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderBackend {
-    /// Draw with `wgpu` (the default with the `gpu` feature), falling back
+    /// Draw with `wgpu` when requested, falling back
     /// to [`RenderBackend::Cpu`] when GPU support or a usable adapter is absent.
-    #[cfg_attr(feature = "gpu", default)]
     Gpu,
     /// Rasterize damaged regions on the CPU and present them without any
-    /// GPU instance, adapter or device. Useful when no usable GPU driver is
-    /// present, or when GPU init cost and memory aren't worth it.
-    #[cfg_attr(not(feature = "gpu"), default)]
+    /// GPU instance, adapter or device. The default for all builds.
+    /// Useful when no usable GPU driver is present, or when GPU init cost
+    /// and memory aren't worth it.
+    #[default]
     Cpu,
 }
 
@@ -51,5 +51,15 @@ impl RenderBackend {
                 requested
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_is_default() {
+        assert_eq!(RenderBackend::default(), RenderBackend::Cpu);
     }
 }

@@ -373,8 +373,8 @@ pub struct WindowOptions {
     pub role: WindowRole,
     /// How a close request from the window manager is handled.
     pub close_behavior: CloseBehavior,
-    /// Which backend renders the window: GPU (`wgpu`, the default with the
-    /// `gpu` feature, falling back to CPU when no adapter is usable) or CPU-only. Can be
+    /// Which backend renders the window: CPU by default, or GPU (`wgpu`,
+    /// falling back to CPU when no adapter is usable). Can be
     /// force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`
     /// regardless of what's set here — see [`RenderBackend::resolve`].
     pub backend: RenderBackend,

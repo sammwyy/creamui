@@ -6,6 +6,12 @@ Most Rust applications should use the native crates directly. CreamUI also offer
 - `creamui-ffi` builds the `creamui` shared library and exports C functions.
 - `creamui-dynamic` is the safe Rust client that loads that library with `libloading`.
 
+The shared library includes GPU support by default but starts each window on CPU
+unless explicitly requested. Build a smaller CPU-only runtime with
+`cargo build -p creamui-ffi --release --no-default-features`. Applications that
+load it use the same C ABI and `creamui-dynamic` client. A GPU request against
+the CPU-only library falls back to CPU.
+
 The ABI is intentionally separate from the normal Rust widget API. It is useful for plugin hosts and shared desktop runtimes, but it is not required for ordinary native applications.
 
 For a retained ABI-v2 window, create a tree with `cui_runtime_new`, add nodes

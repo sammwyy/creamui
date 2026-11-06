@@ -13,7 +13,7 @@ categories = ["gui"]
 
 [features]
 default = ["gpu", "platform-winit"]
-gpu = ["creamui-render/gpu"]
+gpu = ["creamui-render/gpu", "creamui_ffi?/gpu"]
 image = ["dep:creamui-image"]
 image-jpeg = ["image", "creamui-image/jpeg"]
 image-webp = ["image", "creamui-image/webp"]
@@ -57,4 +57,4 @@ creamui-jsx = { workspace = true, optional = true }
 creamui-macros = { workspace = true, optional = true }
 creamui-abi = { workspace = true, optional = true }
 creamui-dynamic = { workspace = true, optional = true }
-creamui_ffi = { package = "creamui-ffi", version = "0.3.0", path = "../ffi", optional = true }
+creamui_ffi = { package = "creamui-ffi", version = "0.3.0", path = "../ffi", optional = true, default-features = false }

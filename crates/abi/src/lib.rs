@@ -331,8 +331,9 @@ impl Default for CTypographyStyle {
     }
 }
 
-/// Render backend requested via [`CWindowOptions::backend`]: [`CUI_RENDER_BACKEND_GPU`]
-/// (`wgpu`, the default) or [`CUI_RENDER_BACKEND_CPU`] (software rasterizer). Can
+/// Render backend requested via [`CWindowOptions::backend`]: [`CUI_RENDER_BACKEND_CPU`]
+/// (software rasterizer, the default of the Rust clients) or [`CUI_RENDER_BACKEND_GPU`]
+/// (`wgpu`). The C ABI has no implicit default: callers must set this field. Can
 /// still be force-overridden at launch with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`.
 pub const CUI_RENDER_BACKEND_GPU: c_int = 0;
 pub const CUI_RENDER_BACKEND_CPU: c_int = 1;

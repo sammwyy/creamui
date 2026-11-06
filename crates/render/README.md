@@ -4,8 +4,8 @@ Native window hosting and frame presentation for CreamUI.
 
 `run` creates a desktop window, builds a widget tree reactively, lays it out and records it into a display list. Each frame is diffed against the one on screen, so only changed regions are redrawn and presented.
 
-- **GPU** (default): an instanced `wgpu` pipeline draws calculated damage into a retained color texture (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
-- **CPU**: `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, Android copies premultiplied RGBA directly into its native buffer and honors the expanded damage returned by the platform; other platforms use `softbuffer`.
+- **GPU** (opt-in per window): an instanced `wgpu` pipeline draws calculated damage into a retained color texture (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
+- **CPU** (default): `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, Android copies premultiplied RGBA directly into its native buffer and honors the expanded damage returned by the platform; other platforms use `softbuffer`.
 
 Force a backend with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`. `CUI_DUMP_FRAME=path.png` writes every presented frame to disk.
 
@@ -16,8 +16,9 @@ and select a platform explicitly:
 creamui-render = { version = "0.2", default-features = false, features = ["platform-winit"] }
 ```
 
-The `gpu` feature is enabled by default. Disabling it excludes `wgpu` and its
-GPU dependencies from the build and makes `RenderBackend::Cpu` the default.
+The `gpu` feature is enabled by default, but GPU initialization is skipped unless
+a window explicitly requests it (or `CUI_OVERRIDE_RENDER_BACKEND=gpu` is set).
+Disabling the feature excludes `wgpu` and its GPU dependencies from the build.
 An explicit GPU request also uses CPU in this configuration. With default
 features disabled, add `gpu` to retain GPU support on a custom platform build.
 The `GpuRenderer` and `HeadlessGpu` APIs require `gpu`. Browser rendering

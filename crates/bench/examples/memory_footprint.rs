@@ -4,7 +4,7 @@
 //!
 //! ```sh
 //! cargo run -p creamui-bench --release --example memory_footprint -- \
-//!     [--windows N] [--font FAMILY] [--image PATH] [--cpu]
+//!     [--windows N] [--font FAMILY] [--image PATH] [--cpu|--gpu]
 //! ```
 
 use creamui_core::layout::{FlexDirection, Style};
@@ -26,7 +26,7 @@ struct Args {
     windows: usize,
     font: Option<String>,
     image: Option<String>,
-    cpu: bool,
+    backend: Option<RenderBackend>,
 }
 
 fn parse_args() -> Args {
@@ -34,7 +34,7 @@ fn parse_args() -> Args {
         windows: 1,
         font: None,
         image: None,
-        cpu: false,
+        backend: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -42,7 +42,8 @@ fn parse_args() -> Args {
             "--windows" => args.windows = iter.next().and_then(|n| n.parse().ok()).unwrap_or(1),
             "--font" => args.font = iter.next(),
             "--image" => args.image = iter.next(),
-            "--cpu" => args.cpu = true,
+            "--cpu" => args.backend = Some(RenderBackend::Cpu),
+            "--gpu" => args.backend = Some(RenderBackend::Gpu),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -142,11 +143,7 @@ fn main() {
                 title: format!("memory window {i}"),
                 width: 640,
                 height: 360,
-                backend: if args.cpu {
-                    RenderBackend::Cpu
-                } else {
-                    RenderBackend::Gpu
-                },
+                backend: args.backend.unwrap_or_default(),
                 ..Default::default()
             },
             Color::rgb(20, 20, 24),

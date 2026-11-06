@@ -16,9 +16,19 @@ pub use creamui_abi::{
 /// regardless of what's set here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderBackend {
-    #[default]
     Gpu,
+    #[default]
     Cpu,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_is_default() {
+        assert_eq!(WindowOptions::default().backend, RenderBackend::Cpu);
+    }
 }
 
 /// Compositor blur requested when a window is created.

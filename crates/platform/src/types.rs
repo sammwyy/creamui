@@ -437,6 +437,21 @@ pub struct KeyEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyboardRepeatSettings {
+    pub rate: u32,
+    pub delay_ms: u32,
+}
+
+impl Default for KeyboardRepeatSettings {
+    fn default() -> Self {
+        Self {
+            rate: 25,
+            delay_ms: 600,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputSerial(pub u32);
 
 /// A bitmap shown next to the cursor for [`crate::PlatformWindow::start_drag`].

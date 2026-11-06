@@ -1,9 +1,10 @@
 use crate::{
     BackendKind, BlurRegion, CompositorControls, CompositorIntegrationMode,
     CompositorIntegrationRequest, ControlFlow, CursorIcon, DecorationNegotiation, DragIcon, Key,
-    KeyEvent, LogicalPosition, LogicalSize, Modifiers, MouseButton, MouseScrollDelta,
-    PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection,
-    WindowAttributes, WindowDecorations, WindowEvent, WindowId, WindowLevel, WindowRole,
+    KeyEvent, KeyboardRepeatSettings, LogicalPosition, LogicalSize, Modifiers, MouseButton,
+    MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
+    PopupOptions, ResizeDirection, WindowAttributes, WindowDecorations, WindowEvent, WindowId,
+    WindowLevel, WindowRole,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -236,7 +237,13 @@ impl<T: 'static> EventLoop<T> {
             }
             dispatch_redraws(&runtime);
             let timeout = timeout_for(&self.state);
+            let timeout = runtime
+                .borrow()
+                .key_repeat
+                .timeout()
+                .map_or(timeout, |repeat| repeat.min(timeout));
             dispatch_with_timeout(&connection, &mut event_queue, timeout, &mut dispatch)?;
+            runtime.borrow_mut().emit_key_repeat();
             std::mem::swap(&mut window_events, &mut runtime.borrow_mut().events);
             for (window_id, event) in window_events.drain(..) {
                 handler.window_event(&active, window_id, event);
@@ -422,6 +429,14 @@ impl ActiveEventLoop<'_> {
         self.state.exit.store(true, Ordering::Release);
     }
 
+    pub fn keyboard_repeat_settings(&self) -> KeyboardRepeatSettings {
+        let repeat = &self.runtime.borrow().key_repeat;
+        KeyboardRepeatSettings {
+            rate: repeat.rate.max(0) as u32,
+            delay_ms: repeat.delay.max(0) as u32,
+        }
+    }
+
     pub fn set_control_flow(&self, control_flow: ControlFlow) {
         *self
             .state
@@ -455,6 +470,52 @@ impl PlatformBackend for ActiveEventLoop<'_> {
 type RcRuntime = std::rc::Rc<RefCell<Runtime>>;
 type ShortcutRequests = Arc<Mutex<Vec<(WindowId, bool)>>>;
 
+struct KeyRepeat {
+    rate: i32,
+    delay: i32,
+    held: Option<(u32, Instant)>,
+}
+
+impl Default for KeyRepeat {
+    fn default() -> Self {
+        let settings = KeyboardRepeatSettings::default();
+        Self {
+            rate: settings.rate as i32,
+            delay: settings.delay_ms as i32,
+            held: None,
+        }
+    }
+}
+
+impl KeyRepeat {
+    fn press(&mut self, key: u32, repeats: bool, now: Instant) {
+        if repeats && self.rate > 0 {
+            self.held = Some((key, now + Duration::from_millis(self.delay.max(0) as u64)));
+        }
+    }
+
+    fn release(&mut self, key: u32) {
+        if self.held.is_some_and(|(held, _)| held == key) {
+            self.held = None;
+        }
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        self.held
+            .map(|(_, deadline)| deadline.saturating_duration_since(Instant::now()))
+    }
+
+    fn due(&mut self, now: Instant) -> Option<u32> {
+        let (key, deadline) = self.held.as_mut()?;
+        if now < *deadline || self.rate <= 0 {
+            return None;
+        }
+        let interval = Duration::from_secs_f64(1.0 / f64::from(self.rate));
+        *deadline = now + interval;
+        Some(*key)
+    }
+}
+
 struct Runtime {
     compositor: CompositorState,
     xdg_shell: XdgShell,
@@ -463,6 +524,7 @@ struct Runtime {
     keyboard: Option<wl_keyboard::WlKeyboard>,
     xkb_context: xkb::Context,
     xkb_state: Option<xkb::State>,
+    key_repeat: KeyRepeat,
     cursor_shape_manager: Option<CursorShapeManager>,
     layer_shell: Option<ZwlrLayerShellV1>,
     blur: Option<blur::BlurBackend>,
@@ -612,6 +674,7 @@ impl Runtime {
             keyboard: None,
             xkb_context: xkb::Context::new(xkb::CONTEXT_NO_FLAGS),
             xkb_state: None,
+            key_repeat: KeyRepeat::default(),
             cursor_shape_manager,
             layer_shell,
             blur,
@@ -644,6 +707,19 @@ impl Runtime {
             interactive_requests: Arc::new(Mutex::new(Vec::new())),
             icon_pool,
         }))
+    }
+
+    fn emit_key_repeat(&mut self) {
+        if let (Some(id), Some(key)) = (self.keyboard_focus, self.key_repeat.due(Instant::now())) {
+            self.events.push((
+                id,
+                WindowEvent::KeyboardInput(KeyEvent {
+                    key: keyboard_key(key, self.xkb_state.as_ref()),
+                    pressed: true,
+                    synthetic: false,
+                }),
+            ));
+        }
     }
 
     fn finish_drag(&mut self, source: &wl_data_source::WlDataSource) {
@@ -708,6 +784,7 @@ impl Runtime {
             }
             if self.keyboard_focus == Some(id) {
                 self.keyboard_focus = None;
+                self.key_repeat.held = None;
             }
         }
     }
@@ -1379,6 +1456,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for DispatchState {
             }
             if capabilities.contains(wl_seat::Capability::Keyboard) && runtime.keyboard.is_none() {
                 runtime.keyboard = Some(seat.get_keyboard(qh, ()));
+            } else if !capabilities.contains(wl_seat::Capability::Keyboard) {
+                runtime.keyboard = None;
+                runtime.keyboard_focus = None;
+                runtime.key_repeat.held = None;
             }
         }
     }
@@ -1546,11 +1627,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                             xkb::COMPILE_NO_FLAGS,
                         )
                         .map(|keymap| xkb::State::new(&keymap));
+                        runtime.key_repeat.held = None;
                     }
                 }
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 if let Some(id) = runtime.id_for_surface(&surface) {
+                    runtime.key_repeat.held = None;
                     runtime.keyboard_focus = Some(id);
                     runtime.events.push((id, WindowEvent::Focused(true)));
                 }
@@ -1559,6 +1642,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                 if let Some(id) = runtime.id_for_surface(&surface) {
                     if runtime.keyboard_focus == Some(id) {
                         runtime.keyboard_focus = None;
+                        runtime.key_repeat.held = None;
                     }
                     runtime.events.push((id, WindowEvent::Focused(false)));
                 }
@@ -1576,6 +1660,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                         .expect("input serial lock poisoned") = Some(crate::InputSerial(serial));
                 }
                 if let Some(id) = runtime.keyboard_focus {
+                    if key_state == wl_keyboard::KeyState::Pressed {
+                        let repeats = runtime.xkb_state.as_ref().is_some_and(|state| {
+                            state.get_keymap().key_repeats(xkb::Keycode::new(key + 8))
+                        });
+                        runtime.key_repeat.press(key, repeats, Instant::now());
+                    } else {
+                        runtime.key_repeat.release(key);
+                    }
                     let key = keyboard_key(key, runtime.xkb_state.as_ref());
                     runtime.events.push((
                         id,
@@ -1612,6 +1704,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for DispatchState {
                             .push((id, WindowEvent::ModifiersChanged(modifiers)));
                     }
                 }
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                runtime.key_repeat.rate = rate.max(0);
+                runtime.key_repeat.delay = delay.max(0);
+                runtime.key_repeat.held = None;
             }
             _ => {}
         }

@@ -2,6 +2,30 @@ mod compositor;
 
 use super::*;
 
+#[test]
+fn key_repeat_obeys_delay_rate_and_release() {
+    let start = Instant::now();
+    let mut repeat = KeyRepeat {
+        rate: 20,
+        delay: 400,
+        ..Default::default()
+    };
+    repeat.press(30, true, start);
+    assert_eq!(repeat.due(start + Duration::from_millis(399)), None);
+    assert_eq!(repeat.due(start + Duration::from_millis(400)), Some(30));
+    assert_eq!(repeat.due(start + Duration::from_millis(449)), None);
+    assert_eq!(repeat.due(start + Duration::from_millis(450)), Some(30));
+    repeat.press(42, false, start);
+    assert_eq!(repeat.due(start + Duration::from_millis(500)), Some(30));
+    repeat.release(42);
+    repeat.release(30);
+    assert_eq!(repeat.due(start + Duration::from_secs(2)), None);
+
+    repeat.rate = 0;
+    repeat.press(30, true, start);
+    assert!(repeat.held.is_none());
+}
+
 #[derive(Clone, Copy)]
 enum Event {
     Minimized,

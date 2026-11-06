@@ -21,10 +21,10 @@ use winit::window::{
 };
 
 use crate::{
-    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, LogicalPosition, LogicalSize, Modifiers,
-    MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize, PlatformBackend, PlatformWindow,
-    PopupOptions, ResizeDirection, TouchPhase, WindowAttributes, WindowEvent, WindowId,
-    WindowLevel,
+    BackendKind, ControlFlow, CursorIcon, Key, KeyEvent, KeyboardRepeatSettings, LogicalPosition,
+    LogicalSize, Modifiers, MouseButton, MouseScrollDelta, PhysicalPosition, PhysicalSize,
+    PlatformBackend, PlatformWindow, PopupOptions, ResizeDirection, TouchPhase, WindowAttributes,
+    WindowEvent, WindowId, WindowLevel,
 };
 
 type WindowIds = Arc<Mutex<HashMap<WinitWindowId, WindowId>>>;
@@ -328,6 +328,17 @@ pub struct ActiveEventLoop<'a> {
 }
 
 impl ActiveEventLoop<'_> {
+    pub fn keyboard_repeat_settings(&self) -> KeyboardRepeatSettings {
+        #[cfg(target_os = "windows")]
+        {
+            windows_keyboard_repeat_settings()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            KeyboardRepeatSettings::default()
+        }
+    }
+
     pub fn create_window(
         &self,
         attributes: WindowAttributes,
@@ -409,6 +420,35 @@ impl ActiveEventLoop<'_> {
             ControlFlow::WaitUntil(instant) => WinitControlFlow::WaitUntil(instant),
         });
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_keyboard_repeat_settings() -> KeyboardRepeatSettings {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETKEYBOARDDELAY, SPI_GETKEYBOARDSPEED,
+    };
+
+    let mut delay = 0u32;
+    let mut speed = 0u32;
+    let read = unsafe {
+        SystemParametersInfoW(SPI_GETKEYBOARDDELAY, 0, (&mut delay as *mut u32).cast(), 0) != 0
+            && SystemParametersInfoW(SPI_GETKEYBOARDSPEED, 0, (&mut speed as *mut u32).cast(), 0)
+                != 0
+    };
+    if !read {
+        log::warn!("creamui-platform: cannot read Windows keyboard repeat settings");
+    }
+    read.then(|| windows_repeat_values(delay, speed))
+        .flatten()
+        .unwrap_or_default()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_repeat_values(delay: u32, speed: u32) -> Option<KeyboardRepeatSettings> {
+    (delay <= 3 && speed <= 31).then(|| KeyboardRepeatSettings {
+        delay_ms: (delay + 1) * 250,
+        rate: (2.5 + f64::from(speed) * 27.5 / 31.0).round() as u32,
+    })
 }
 
 impl PlatformBackend for ActiveEventLoop<'_> {
@@ -612,6 +652,15 @@ impl ModifierKeys {
 
 impl<T: 'static, H: ApplicationHandler<T>> WinitApplicationHandler<T> for Adapter<H> {
     fn resumed(&mut self, event_loop: &WinitActiveEventLoop) {
+        #[cfg(target_os = "windows")]
+        {
+            let settings = windows_keyboard_repeat_settings();
+            log::debug!(
+                "creamui-platform: Windows keyboard repeat delay={}ms rate≈{}Hz",
+                settings.delay_ms,
+                settings.rate
+            );
+        }
         self.handler.resumed(&ActiveEventLoop {
             inner: event_loop,
             ids: &self.ids,
@@ -842,6 +891,26 @@ fn to_winit_resize_direction(direction: ResizeDirection) -> WinitResizeDirection
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_repeat_settings_convert_native_ranges() {
+        assert_eq!(
+            windows_repeat_values(0, 0),
+            Some(KeyboardRepeatSettings {
+                delay_ms: 250,
+                rate: 3,
+            })
+        );
+        assert_eq!(
+            windows_repeat_values(3, 31),
+            Some(KeyboardRepeatSettings {
+                delay_ms: 1000,
+                rate: 30,
+            })
+        );
+        assert_eq!(windows_repeat_values(4, 31), None);
+        assert_eq!(windows_repeat_values(3, 32), None);
+    }
 
     #[test]
     fn modifier_keys_keep_both_sides_and_clear_on_focus_loss() {

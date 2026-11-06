@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Reclaim oversized CPU clip scratch after a window shrinks, without changing
+  rendered pixels. The `raster_memory` benchmark measures retained memory
+  after a large clipped frame and a subsequent small frame.
 - Add filtered `FileDropTarget` hooks for widgets and retained runtime nodes.
   Drop dispatch respects visible clips, modal barriers and paint order, with
   window-wide callbacks as the fallback. `on_files_dropped_at` preserves the

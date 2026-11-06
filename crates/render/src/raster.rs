@@ -53,6 +53,12 @@ impl Rasterizer {
         let resized = self.pixmap.width() != list.width || self.pixmap.height() != list.height;
         if resized {
             self.pixmap = Pixmap::new(list.width, list.height).expect("non-zero pixmap size");
+            let frame_bytes = (list.width as usize)
+                .saturating_mul(list.height as usize)
+                .saturating_mul(4);
+            if self.scratch.capacity() > frame_bytes.saturating_mul(4) {
+                self.scratch = Vec::new();
+            }
         }
         let damage = if resized { &Damage::Full } else { damage };
         let viewport = list.viewport();
@@ -1292,6 +1298,30 @@ mod tests {
         let mut r = Rasterizer::new(10, 10);
         assert_eq!(r.render(&list, &Damage::None), Damage::Full);
         assert_eq!((r.pixmap().width(), r.pixmap().height()), (40, 30));
+    }
+
+    #[test]
+    fn shrinking_the_frame_reclaims_oversized_clip_scratch() {
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(
+            1024,
+            1024,
+            1.0,
+            Color::rgb(10, 20, 30),
+            ColorScheme::default(),
+        );
+        recorder.push_clip_rounded(rect(0.0, 0.0, 1024.0, 1024.0), 16.0);
+        recorder.fill_rect(rect(0.0, 0.0, 1024.0, 1024.0), Color::rgb(255, 0, 0), 16.0);
+        recorder.pop_clip();
+        let mut raster = Rasterizer::new(1024, 1024);
+        raster.render(&recorder.finish(), &Damage::Full);
+        assert!(raster.scratch.capacity() >= 1024 * 1024 * 4);
+
+        let mut recorder = SceneRecorder::new();
+        recorder.begin(64, 64, 1.0, Color::rgb(10, 20, 30), ColorScheme::default());
+        raster.render(&recorder.finish(), &Damage::None);
+        assert!(raster.scratch.capacity() <= 64 * 64 * 4);
+        assert_eq!(rgba(&raster, 0, 0), [10, 20, 30, 255]);
     }
 
     struct ScrollScene {

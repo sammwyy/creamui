@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Skip unchanged blocks when checking GPU instance uploads, retaining the
+  existing partial-upload ranges for changed instances.
 - Optimize Naga for binary size in release builds while keeping the renderer
   and layout on their existing performance profile.
 - Tint heavily downscaled CPU images after sampling instead of caching another

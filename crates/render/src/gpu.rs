@@ -15,6 +15,7 @@ use creamui_theme::Color;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,6 +60,45 @@ struct Instance {
     shape: [f32; 3],
     /// Primitive kind in the low `KIND_BITS`, clip table index above them.
     tag: u32,
+}
+
+fn instance_upload_ranges(
+    instances: &[Instance],
+    uploaded: &[Instance],
+    ranges: &mut Vec<Range<usize>>,
+) {
+    ranges.clear();
+    let mut coalesced = false;
+    for (block, chunk) in instances.chunks(64).enumerate() {
+        let start = block * 64;
+        if uploaded.get(start..start + chunk.len()).is_some_and(|old| {
+            bytemuck::cast_slice::<_, u8>(chunk) == bytemuck::cast_slice::<_, u8>(old)
+        }) {
+            continue;
+        }
+        for (offset, instance) in chunk.iter().enumerate() {
+            let index = start + offset;
+            let changed = uploaded
+                .get(index)
+                .is_none_or(|old| bytemuck::bytes_of(instance) != bytemuck::bytes_of(old));
+            if !changed {
+                continue;
+            }
+            if let Some(range) = ranges.last_mut() {
+                if coalesced || index - range.end <= MIN_INSTANCE_UPLOAD_GAP {
+                    range.end = index + 1;
+                    continue;
+                }
+            }
+            ranges.push(index..index + 1);
+            if ranges.len() > MAX_INSTANCE_UPLOAD_RANGES {
+                let first = ranges[0].start;
+                ranges.clear();
+                ranges.push(first..index + 1);
+                coalesced = true;
+            }
+        }
+    }
 }
 
 #[repr(C)]
@@ -1393,29 +1433,7 @@ impl GpuRenderer {
                 self.last_upload.push(0..self.instances.len());
             }
         } else {
-            let mut coalesced = false;
-            for (index, instance) in self.instances.iter().enumerate() {
-                let changed = self
-                    .uploaded
-                    .get(index)
-                    .is_none_or(|old| bytemuck::bytes_of(instance) != bytemuck::bytes_of(old));
-                if !changed {
-                    continue;
-                }
-                if let Some(range) = self.last_upload.last_mut() {
-                    if coalesced || index - range.end <= MIN_INSTANCE_UPLOAD_GAP {
-                        range.end = index + 1;
-                        continue;
-                    }
-                }
-                self.last_upload.push(index..index + 1);
-                if self.last_upload.len() > MAX_INSTANCE_UPLOAD_RANGES {
-                    let first = self.last_upload[0].start;
-                    self.last_upload.clear();
-                    self.last_upload.push(first..index + 1);
-                    coalesced = true;
-                }
-            }
+            instance_upload_ranges(&self.instances, &self.uploaded, &mut self.last_upload);
         }
         for range in &self.last_upload {
             let bytes = bytemuck::cast_slice(&self.instances[range.clone()]);
@@ -3136,6 +3154,35 @@ mod tests {
         assert_eq!(gpu.renderer().last_upload, [4..5]);
         gpu.render(&frame(Color::rgb(8, 8, 8)));
         assert!(gpu.renderer().last_upload.is_empty());
+    }
+
+    #[test]
+    fn instance_upload_ranges_handle_block_edges_and_appended_instances() {
+        let uploaded = vec![Instance::zeroed(); 130];
+        let mut instances = uploaded.clone();
+        let mut ranges = Vec::new();
+        instance_upload_ranges(&instances, &uploaded, &mut ranges);
+        assert!(ranges.is_empty());
+
+        for index in [63, 64, 129] {
+            instances[index].color[0] = 1;
+        }
+        instances.extend_from_slice(&[Instance::zeroed(); 20]);
+        instance_upload_ranges(&instances, &uploaded, &mut ranges);
+        assert_eq!(ranges, [63..65, 129..150]);
+
+        instances[63].color[0] = 0;
+        instances[64].color[0] = 0;
+        instance_upload_ranges(&instances, &uploaded, &mut ranges);
+        assert_eq!(ranges, [129..150]);
+
+        let uploaded = vec![Instance::zeroed(); 192];
+        let mut instances = uploaded.clone();
+        for index in (0..=160).step_by(20) {
+            instances[index].color[0] = 1;
+        }
+        instance_upload_ranges(&instances, &uploaded, &mut ranges);
+        assert_eq!(ranges, [0..161]);
     }
 
     #[test]

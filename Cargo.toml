@@ -99,3 +99,6 @@ opt-level = 2
 lto = "fat"
 codegen-units = 1
 strip = true
+
+[profile.release.package.naga]
+opt-level = "s"

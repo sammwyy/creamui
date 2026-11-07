@@ -4,6 +4,10 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Tint heavily downscaled CPU images after sampling instead of caching another
+  full-resolution RGBA copy. Cache the resulting screen-sized images with an
+  8 MiB limit, preserving full-resolution tinting for other sizes. The
+  `image_tint_memory` benchmark measures resident memory and repaint time.
 - Discard oversized released Wayland SHM pools when presenting at a smaller
   size. In-flight buffers remain untouched; newly allocated buffers copy a
   full frame before incremental updates resume.

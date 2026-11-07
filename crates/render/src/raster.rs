@@ -18,6 +18,7 @@ use tiny_skia::{
 };
 
 const TINT_CACHE_FRAMES: u64 = 300;
+const SCALED_TINT_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct Rasterizer {
     pixmap: Pixmap,
@@ -28,7 +29,39 @@ pub struct Rasterizer {
 #[derive(Default)]
 struct TintCache {
     tinted: HashMap<(u64, Color), (Pixmap, u64)>,
+    scaled: HashMap<ScaledTintKey, (Pixmap, u64)>,
+    scaled_bytes: usize,
     frame: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct ScaledTintKey {
+    image: u64,
+    tint: Color,
+    transform: [u32; 6],
+    crop: [u32; 4],
+    matrix: [u32; 12],
+}
+
+impl TintCache {
+    fn store_scaled(&mut self, key: ScaledTintKey, pixmap: Pixmap) {
+        let bytes = pixmap.data().len();
+        if bytes > SCALED_TINT_CACHE_BYTES {
+            return;
+        }
+        while self.scaled_bytes + bytes > SCALED_TINT_CACHE_BYTES {
+            let key = *self
+                .scaled
+                .iter()
+                .min_by_key(|(_, (_, used))| used)
+                .unwrap()
+                .0;
+            let (old, _) = self.scaled.remove(&key).unwrap();
+            self.scaled_bytes -= old.data().len();
+        }
+        self.scaled_bytes += bytes;
+        self.scaled.insert(key, (pixmap, self.frame));
+    }
 }
 
 impl Rasterizer {
@@ -84,6 +117,13 @@ impl Rasterizer {
         self.images.frame += 1;
         let horizon = self.images.frame.saturating_sub(TINT_CACHE_FRAMES);
         self.images.tinted.retain(|_, (_, used)| *used >= horizon);
+        self.images.scaled.retain(|_, (pixmap, used)| {
+            if *used >= horizon {
+                return true;
+            }
+            self.images.scaled_bytes -= pixmap.data().len();
+            false
+        });
         damage.clone()
     }
 
@@ -315,9 +355,15 @@ fn draw_image(
     images: &mut TintCache,
 ) {
     let (width, height) = (image.image.width(), image.image.height());
+    let b = image.bounds;
+    let tint_after_scaling = image.tint.filter(|_| {
+        let source_area = width as u64 * height as u64;
+        source_area >= 256 * 256
+            && source_area as f64 >= (b.width() as f64 * b.height() as f64) * 16.0
+    });
     let frame = images.frame;
     let pixels;
-    let source = match image.tint {
+    let source = match image.tint.filter(|_| tint_after_scaling.is_none()) {
         None => {
             pixels = image.image.pixels();
             PixmapRef::from_bytes(&pixels, width, height)
@@ -334,7 +380,6 @@ fn draw_image(
     let Some(source) = source else {
         return;
     };
-    let b = image.bounds;
     let mapping = match image.effects.quarter_turns {
         1 => Transform::from_row(
             0.0,
@@ -375,7 +420,7 @@ fn draw_image(
         opacity: image.opacity,
         ..Default::default()
     };
-    if image.effects.has_color_transform() {
+    if image.effects.has_color_transform() || tint_after_scaling.is_some() {
         let mut corners = [
             Point::from_xy(0.0, 0.0),
             Point::from_xy(width as f32, 0.0),
@@ -414,6 +459,32 @@ fn draw_image(
         if x1 <= x0 || y1 <= y0 {
             return;
         }
+        let scaled_key = tint_after_scaling.map(|tint| ScaledTintKey {
+            image: image.image.id(),
+            tint,
+            transform: [
+                transform.sx.to_bits(),
+                transform.kx.to_bits(),
+                transform.ky.to_bits(),
+                transform.sy.to_bits(),
+                transform.tx.to_bits(),
+                transform.ty.to_bits(),
+            ],
+            crop: [x0, y0, x1, y1],
+            matrix: std::array::from_fn(|i| image.effects.color_matrix[i / 4][i % 4].to_bits()),
+        });
+        if let Some((cached, used)) = scaled_key.and_then(|key| images.scaled.get_mut(&key)) {
+            *used = images.frame;
+            target.draw_pixmap(
+                x0 as i32,
+                y0 as i32,
+                cached.as_ref(),
+                &paint,
+                Transform::identity(),
+                mask,
+            );
+            return;
+        }
         let mut filtered = Pixmap::new(x1 - x0, y1 - y0).expect("nonempty visible image");
         filtered.draw_pixmap(
             0,
@@ -427,7 +498,18 @@ fn draw_image(
             None,
         );
         for pixel in filtered.data_mut().chunks_exact_mut(4) {
-            image.effects.transform_pixel(pixel);
+            if let Some(tint) = tint_after_scaling {
+                let alpha = (pixel[3] as u32 * tint.a as u32 + 127) / 255;
+                pixel.copy_from_slice(&[
+                    mul(tint.r, alpha),
+                    mul(tint.g, alpha),
+                    mul(tint.b, alpha),
+                    alpha as u8,
+                ]);
+            }
+            if image.effects.has_color_transform() {
+                image.effects.transform_pixel(pixel);
+            }
         }
         target.draw_pixmap(
             x0 as i32,
@@ -437,6 +519,9 @@ fn draw_image(
             Transform::identity(),
             mask,
         );
+        if let Some(key) = scaled_key {
+            images.store_scaled(key, filtered);
+        }
     } else {
         target.draw_pixmap(0, 0, source, &paint, transform, mask);
     }
@@ -1290,6 +1375,90 @@ mod tests {
         assert_eq!(alpha, 255);
         assert!(blue > 130 && red < 10);
         assert_eq!(r.images.tinted.len(), 1);
+    }
+
+    #[test]
+    fn large_tinted_thumbnails_do_not_cache_full_size_pixels() {
+        let mut pixels = vec![0; 1024 * 1024 * 4];
+        for (index, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+            let alpha = (index % 253) as u8;
+            pixel.copy_from_slice(&[alpha / 2, alpha / 3, alpha / 4, alpha]);
+        }
+        let image = RgbaImage::new(1024, 1024, pixels).unwrap();
+        let tint = Color::rgba(35, 140, 225, 180);
+        let effects = creamui_core::ImageEffects {
+            quarter_turns: 1,
+            color_matrix: [
+                [0.5, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        };
+        let list = record(|p| {
+            p.push_clip_rounded(rect(5.0, 4.0, 30.0, 22.0), 5.0);
+            p.draw_image_effects(rect(4.0, 3.0, 32.0, 24.0), &image, Some(tint), 0.8, effects);
+            p.pop_clip();
+        });
+        let mut raster = Rasterizer::new(40, 30);
+        raster.render(&list, &Damage::Full);
+        assert!(raster.images.tinted.is_empty());
+        assert_eq!(raster.images.scaled.len(), 1);
+        assert!(raster.images.scaled_bytes <= 40 * 30 * 4);
+        let first = raster.pixmap().data().to_vec();
+        raster.render(&list, &Damage::Full);
+        assert_eq!(raster.pixmap().data(), first);
+
+        let mut pre_tinted = image.pixels().to_vec();
+        for pixel in pre_tinted.chunks_exact_mut(4) {
+            let alpha = (pixel[3] as u32 * tint.a as u32 + 127) / 255;
+            pixel.copy_from_slice(&[
+                mul(tint.r, alpha),
+                mul(tint.g, alpha),
+                mul(tint.b, alpha),
+                alpha as u8,
+            ]);
+        }
+        let pre_tinted = RgbaImage::new(1024, 1024, pre_tinted).unwrap();
+        let reference = record(|p| {
+            p.push_clip_rounded(rect(5.0, 4.0, 30.0, 22.0), 5.0);
+            p.draw_image_effects(rect(4.0, 3.0, 32.0, 24.0), &pre_tinted, None, 0.8, effects);
+            p.pop_clip();
+        });
+        let mut expected = Rasterizer::new(40, 30);
+        expected.render(&reference, &Damage::Full);
+        let max_difference = raster
+            .pixmap()
+            .data()
+            .iter()
+            .zip(expected.pixmap().data())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(
+            max_difference <= 2,
+            "max pixel difference: {max_difference}"
+        );
+    }
+
+    #[test]
+    fn scaled_tint_cache_evicts_old_entries_at_its_byte_limit() {
+        let mut cache = TintCache::default();
+        let key = |image| ScaledTintKey {
+            image,
+            tint: Color::rgb(1, 2, 3),
+            transform: [0; 6],
+            crop: [0; 4],
+            matrix: [0; 12],
+        };
+        for image in 0..3 {
+            cache.frame = image;
+            cache.store_scaled(key(image), Pixmap::new(1024, 1024).unwrap());
+        }
+        assert_eq!(cache.scaled.len(), 2);
+        assert_eq!(cache.scaled_bytes, SCALED_TINT_CACHE_BYTES);
+        assert!(!cache.scaled.contains_key(&key(0)));
+        cache.store_scaled(key(3), Pixmap::new(2048, 2048).unwrap());
+        assert_eq!(cache.scaled.len(), 2);
     }
 
     #[test]

@@ -24,6 +24,10 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all --check
+      - name: Check default CPU builds
+        run: cargo check -p creamui -p creamui-render -p creamui-ffi -p hello-world -p showcase
+      - name: Check opt-in GPU build
+        run: cargo check -p creamui --features gpu
       - name: Test workspace (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum cargo test --workspace

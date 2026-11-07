@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Default to CPU-only builds in the main, renderer, and FFI crates and desktop
+  examples. The `gpu` feature remains opt-in; GPU benchmarks enable it explicitly.
 - Skip unchanged blocks when checking GPU instance uploads, retaining the
   existing partial-upload ranges for changed instances.
 - Optimize Naga for binary size in release builds while keeping the renderer

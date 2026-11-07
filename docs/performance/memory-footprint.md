@@ -180,12 +180,14 @@ it is not a measure of the widget heap. PSS apportions shared pages and varies
 with what other processes are running. A 30 MiB minimum was not reproduced
 with this example and window configuration.
 
-To repeat the comparison, preserve the first executable before rebuilding:
+To repeat the comparison on current sources, explicitly enable GPU support
+for the first executable; it was enabled by default at the baseline commit.
+Preserve that executable before rebuilding:
 
 ```sh
-cargo build -p hello-world --release
+cargo build -p hello-world --release --features gpu
 cp target/release/hello-world target/hello-default
-cargo build -p hello-world --release --no-default-features --features platform-winit
+cargo build -p hello-world --release
 cp target/release/hello-world target/hello-cpu
 upx -o target/hello-default-upx target/hello-default
 upx -o target/hello-cpu-upx target/hello-cpu

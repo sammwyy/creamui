@@ -12,7 +12,7 @@ keywords = ["gui", "ui", "rendering", "wgpu"]
 categories = ["gui"]
 
 [features]
-default = ["gpu", "platform-winit"]
+default = ["platform-winit"]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 context-menu = ["dep:creamui-widgets"]
 platform-winit = ["creamui-platform/winit-adapter", "creamui-platform/desktop"]

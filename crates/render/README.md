@@ -7,30 +7,28 @@ Native window hosting and frame presentation for CreamUI.
 - **GPU** (opt-in per window): an instanced `wgpu` pipeline draws calculated damage into a retained color texture (SDF rounded rects, borders, lines, glyph atlas, images). Falls back to CPU when no adapter is usable.
 - **CPU** (default): `tiny-skia` replays only the damaged regions; Wayland presents through an `Argb8888` `wl_shm` buffer so transparent windows keep per-pixel alpha, Android copies premultiplied RGBA directly into its native buffer and honors the expanded damage returned by the platform; other platforms use `softbuffer`.
 
-Force a backend with `CUI_OVERRIDE_RENDER_BACKEND=gpu|cpu`. `CUI_DUMP_FRAME=path.png` writes every presented frame to disk.
-
-For an application that only uses the CPU renderer, disable default features
-and select a platform explicitly:
+Default builds include the CPU renderer and `platform-winit`, but not `wgpu`:
 
 ```toml
-creamui-render = { version = "0.2", default-features = false, features = ["platform-winit"] }
+creamui-render = "0.3"
 ```
 
-The `gpu` feature is enabled by default, but GPU initialization is skipped unless
-a window explicitly requests it (or `CUI_OVERRIDE_RENDER_BACKEND=gpu` is set).
-Disabling the feature excludes `wgpu` and its GPU dependencies from the build.
-An explicit GPU request also uses CPU in this configuration. With default
-features disabled, add `gpu` to retain GPU support on a custom platform build.
+Add `features = ["gpu"]` to compile GPU support. A GPU-enabled build still
+starts on CPU unless a window requests `RenderBackend::Gpu` or
+`CUI_OVERRIDE_RENDER_BACKEND=gpu` is set; CPU-only builds cannot enable GPU
+through that override and fall back to CPU if GPU is requested. To choose a
+different platform, disable defaults and select that platform explicitly.
 The `GpuRenderer` and `HeadlessGpu` APIs require `gpu`. Browser rendering
-continues to use the canvas independently of this feature.
+continues to use the canvas independently of this feature. `CUI_DUMP_FRAME=path.png`
+writes every presented frame to disk.
 
-Compare the minimal example and its CPU-only build with:
+Compare the minimal CPU-only example and its GPU-capable build with:
 
 ```sh
 cargo build -p hello-world --release
 python3 crates/bench/scripts/idle_memory.py target/release/hello-world
-cargo build -p hello-world --release --no-default-features --features platform-winit
-python3 crates/bench/scripts/idle_memory.py target/release/hello-world
+cargo build -p hello-world --release --features gpu
+python3 crates/bench/scripts/idle_memory.py target/release/hello-world --backend gpu
 ```
 
 GPU damage regions are cleared before their primitives are replayed, preserving

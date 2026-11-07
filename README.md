@@ -82,6 +82,14 @@ cargo run -p jsx-styles
 cargo run -p tray
 ```
 
+These examples build CPU-only by default. To include GPU rendering in an
+application, enable its `gpu` feature; the window still starts on CPU unless
+it requests `RenderBackend::Gpu` or the backend is overridden at launch:
+
+```sh
+CUI_OVERRIDE_RENDER_BACKEND=gpu cargo run -p hello-world --features gpu
+```
+
 The showcase is the fastest way to explore the available controls and theme behavior.
 The `tray` example shows a persistent background application: closing its
 window leaves the process alive, while the system tray can create it again,

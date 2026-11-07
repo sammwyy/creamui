@@ -16,7 +16,7 @@ name = "creamui"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["gpu"]
+default = []
 gpu = ["creamui-render/gpu"]
 
 [dependencies]

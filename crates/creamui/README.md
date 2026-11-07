@@ -6,12 +6,12 @@ By default, `creamui` re-exports the native runtime: widgets, theme tokens, reac
 
 ```toml
 [dependencies]
-creamui = { version = "0.1", features = ["jsx", "image"] }
+creamui = { version = "0.3", features = ["jsx", "image"] }
 ```
 
 | Feature | Enables |
 |---|---|
-| `gpu` (default) | `wgpu` renderer with CPU fallback |
+| `gpu` | `wgpu` renderer with CPU fallback |
 | `image` | `creamui-image` with PNG decoding |
 | `image-jpeg` / `image-webp` | JPEG or WebP decoding, respectively |
 | `jsx` | JSX macros and runtime support |
@@ -26,18 +26,19 @@ creamui = { version = "0.1", features = ["jsx", "image"] }
 
 Use modules such as `creamui::widgets`, `creamui::theme`, and `creamui::render`, or import common items directly from `creamui`.
 
-For CPU rendering without compiling GPU support, use
-`creamui = { version = "0.2", default-features = false, features = ["platform-winit"] }`.
-This defaults to `RenderBackend::Cpu`; `platform-wayland` and `platform-x11`
-can be selected instead. Custom builds that disable defaults must explicitly
-enable `gpu` when they need GPU rendering.
+Default builds use `RenderBackend::Cpu` and do not compile `wgpu`. Add the
+`gpu` feature to make the GPU backend available, then request
+`RenderBackend::Gpu` for a window or set `CUI_OVERRIDE_RENDER_BACKEND=gpu`.
+The override cannot enable GPU in a CPU-only binary. Custom builds that
+disable defaults must explicitly select a platform such as
+`platform-winit`, `platform-wayland`, or `platform-x11`.
 
 For local development, enable the optional devtools integration and install it
 before opening any windows. F3 then shows or hides the per-window performance
 overlay:
 
 ```toml
-creamui = { version = "0.1", features = ["devtools"] }
+creamui = { version = "0.3", features = ["devtools"] }
 ```
 
 ```rust

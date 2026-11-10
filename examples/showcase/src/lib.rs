@@ -100,6 +100,11 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_step = Signal::new(1usize);
     let components_tag = Signal::new(false);
     let components_tag_visible = Signal::new(true);
+    let components_group_input = TextController::default();
+    let components_raw_group = Signal::new(String::new());
+    let components_pressed = Signal::new(false);
+    let components_menu_open = Signal::new(false);
+    let components_action_count = Signal::new(0usize);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -286,6 +291,11 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     step: components_step.clone(),
                     tag: components_tag.clone(),
                     tag_visible: components_tag_visible.clone(),
+                    group_input: components_group_input.clone(),
+                    raw_group: components_raw_group.clone(),
+                    pressed: components_pressed.clone(),
+                    menu_open: components_menu_open.clone(),
+                    action_count: components_action_count.clone(),
                 }),
             };
 

@@ -17,10 +17,10 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Shortcuts | `Kbd` | Platform-aware modifier sequences in themed keycaps. | `RawKbd` |
 | Typography | `Quote`, `Pre`, `Link` | Quotation, preformatted text, and clickable links. | `RawQuote`, `RawPre`, `RawLink` |
 | Visuals | `Icon`, `Surface`, `Avatar`, `Card` | Symbols/images, themed surfaces, avatar fallback, and content cards. | `RawView`, `RawText`; no dedicated raw avatar or card |
-| Actions | `Button` | Action with size, variant, and loading/success/disabled states. | `RawButton` |
+| Actions | `Button`, `ToggleButton`, `DropdownButton` | Sized actions, controlled pressed state, and split menu triggers. | `RawButton`, `RawDropdownButton` |
 | Disclosure | `Accordion`, `Collapsible` | Controlled expandable sections with keyboard-accessible triggers. | `RawAccordion`, `RawCollapsible` |
 | Forms | `Field`, `Form` | Labeled inputs with hints/errors and controlled submission. | `RawField`, `RawForm` |
-| Text entry | `TextInput`, `TextArea` | Controlled single- and multiline editing. | `RawTextInput`, `RawTextArea` |
+| Text entry | `TextInput`, `TextArea`, `InputGroup` | Controlled editing and composable prefix/suffix addons. | `RawTextInput`, `RawTextArea`, `RawInputGroup` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
 | Numeric and activity | `Slider`, `Spinner` | Range selection and activity indicator. | `RawSlider`, `RawSpinner` |
 | Choice | `Select`, `ComboBox` | Option popup; searchable mode (`ComboBox` alias). | `RawView`, `RawTextInput`, `RawScrollView`; no dedicated raw select |

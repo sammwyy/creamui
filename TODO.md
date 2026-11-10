@@ -60,18 +60,18 @@ one can be extended. Variants are design suggestions, not promised features.
 |---|---|---|---|
 | `Toast` | Queue transient nonmodal notifications with timeout and dismissal. | `RawToast` plus a host/controller handle stacking, timers, focus, and close actions. | `Toast` uses success/error/info variants, action and progress options. |
 | `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
-| `InputGroup` | Attach prefixes, suffixes, icons, or buttons to existing text inputs. | `RawInputGroup` arranges focus-aware addons around `RawTextInput`/`RawTextArea`. | `InputGroup` shares borders and focus ring; inline/toolbar variants. |
 | `NumberInput` | Edit bounded numbers using typing, step buttons, and keyboard increments. | `RawNumberInput` parses/formats controlled values, clamps on commit, and exposes step actions. | `NumberInput` themes steppers; integer/decimal, compact/regular. |
 | `OtpInput` | Enter a fixed-length one-time code with predictable paste and focus. | `RawOtpInput` owns cell navigation, paste distribution, and controlled value. | `OtpInput` themes focus/error states; grouped or uniform cells. |
 | `Calendar` | Browse months and select a date independently of the existing date input. | `RawCalendar` handles date grid, disabled days, locale/week start, and keyboard navigation. | `Calendar` styles today/selected/range days; single/range and multi-month. |
-| `ToggleButton` | Expose on/off pressed state as a button, not a checkbox or switch. | Extend `RawButton` with explicit pressed state and accessible activation. | `ToggleButton` themes icon/text and single/grouped styles. |
-| `DropdownButton` | Keep a primary action separate from an adjacent menu trigger. | Compose `RawButton` with raw menu behavior and split focus handling. | `DropdownButton` themes joined/split borders and small/regular sizes. |
 
 - Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
   modes to `Skeleton`. Both currently render without animation.
 - Add roving heading focus and bordered/flush layouts to `Accordion`, horizontal
   labels to `Field`, multi-column layout to `Form`, and page-size selection to
   `Pagination`.
+- Add a shared focus ring and toolbar layout to `InputGroup`, grouped styles
+  to `ToggleButton`, and a built-in menu host to `DropdownButton`. The split
+  button currently delegates menu presentation to its callback.
 
 ### Priority: workspace and data
 

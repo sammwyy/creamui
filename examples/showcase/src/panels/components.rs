@@ -2,9 +2,10 @@ use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, ChatMessage, Collapsible,
-    DescriptionList, EmptyState, Field, Form, Kbd, Pagination, RawAlert, RawAttachment,
-    RawChatMessage, RawCollapsible, RawDescriptionList, RawEmptyState, RawField, RawKbd,
-    RawSkeleton, RawStatusBar, RawStepper, RawTag, Skeleton, StatusBar, StepState, Stepper, Tag,
+    DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd, Pagination,
+    RawAlert, RawAttachment, RawChatMessage, RawCollapsible, RawDescriptionList, RawDropdownButton,
+    RawEmptyState, RawField, RawInputGroup, RawKbd, RawSkeleton, RawStatusBar, RawStepper, RawTag,
+    RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
 };
 
 #[component]
@@ -18,6 +19,11 @@ pub fn ComponentsPanel(
     step: Signal<usize>,
     tag: Signal<bool>,
     tag_visible: Signal<bool>,
+    group_input: TextController,
+    raw_group: Signal<String>,
+    pressed: Signal<bool>,
+    menu_open: Signal<bool>,
+    action_count: Signal<usize>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -338,6 +344,104 @@ pub fn ComponentsPanel(
     )
     .text_style(theme.text_primary, theme.typography.caption)
     .background(theme.surface_hover);
+    let set_pressed = pressed.clone();
+    let toggle = ToggleButton::new("Pin selection", pressed.get(), move |next| {
+        set_pressed.set(next)
+    });
+    let set_action_count = action_count.clone();
+    let toggle_menu = menu_open.clone();
+    let dropdown = DropdownButton::new(
+        "Save",
+        move || set_action_count.update(|count| *count += 1),
+        move || toggle_menu.update(|open| *open = !*open),
+    );
+    let menu_content: BoxedWidget = if menu_open.get() {
+        Box::new(
+            RawView::new(Style::default().padding_all(theme.spacing_medium))
+                .background(theme.surface_hover)
+                .child(Box::new(RawText::new(
+                    "Save as…     Export…",
+                    theme.text_primary,
+                    theme.typography.body,
+                ))),
+        )
+    } else {
+        Box::new(RawView::new(Style::default()))
+    };
+    let raw_group_value = raw_group.get();
+    let set_raw_group = raw_group.clone();
+    let raw_input = RawTextInput::new(
+        Style::default().size(140.0, 34.0),
+        raw_group_value,
+        theme.typography.body,
+        theme.text_primary,
+        move |next| set_raw_group.set(next),
+    )
+    .background(theme.surface_elevated);
+    let raw_input_group = RawInputGroup::new(
+        Style::default()
+            .flex_row()
+            .align(Align::Center)
+            .padding_all(2.0),
+        Box::new(raw_input),
+    )
+    .leading(Box::new(RawText::new(
+        "€",
+        theme.text_secondary,
+        theme.typography.body,
+    )))
+    .trailing(Box::new(RawText::new(
+        "EUR",
+        theme.text_secondary,
+        theme.typography.body,
+    )))
+    .border(theme.border, 1.0)
+    .corner_radius(theme.input_radius);
+    let set_pressed_raw = pressed.clone();
+    let raw_toggle = creamui_widgets::RawButton::new(
+        Style::default().padding_all(theme.spacing_small),
+        move || set_pressed_raw.update(|active| *active = !*active),
+    )
+    .pressed_state(pressed.get())
+    .background(if pressed.get() {
+        theme.accent
+    } else {
+        theme.surface_hover
+    })
+    .child(Box::new(RawText::new(
+        "Raw toggle",
+        if pressed.get() {
+            theme.selection_text
+        } else {
+            theme.text_primary
+        },
+        theme.typography.body,
+    )));
+    let raw_split = RawDropdownButton::new(
+        Style::default().flex_row().gap(2.0),
+        Box::new(RawText::new(
+            "Raw action",
+            theme.text_primary,
+            theme.typography.body,
+        )),
+        Box::new(RawText::new("…", theme.text_primary, theme.typography.body)),
+        {
+            let count = action_count.clone();
+            move || count.update(|value| *value += 1)
+        },
+        {
+            let open = menu_open.clone();
+            move || open.update(|value| *value = !*value)
+        },
+    )
+    .button_styles(
+        creamui_core::Style::new()
+            .background(theme.surface_hover)
+            .padding(theme.spacing_small),
+        creamui_core::Style::new()
+            .background(theme.surface_hover)
+            .padding(theme.spacing_small),
+    );
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
@@ -430,6 +534,22 @@ pub fn ComponentsPanel(
                 ),
                 Box::new(raw_attachment),
                 Box::new(raw_chat),
+            ]))
+            .child(card(vec![
+                label("Grouped inputs & split actions"),
+                Box::new(InputGroup::controlled(&group_input).prefix("$").suffix("USD")),
+                Box::new(RawView::new(row(theme.spacing_medium)).child(Box::new(toggle)).child(Box::new(dropdown))),
+                menu_content,
+                Box::new(RawText::new(
+                    format!("Primary action: {} activations", action_count.get()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+            ]))
+            .child(card(vec![
+                label("Raw input & action building blocks"),
+                Box::new(raw_input_group),
+                Box::new(RawView::new(row(theme.spacing_small)).child(Box::new(raw_toggle)).child(Box::new(raw_split))),
             ])),
     )
 }

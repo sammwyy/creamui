@@ -609,11 +609,10 @@ fn paint_instance(
     {
         painter.set_pointer_enabled(pointer.enabled);
         let focusable = instance.widget.focusable() && instance.widget.on_key().is_some();
-        let states = instance
-            .widget
-            .style_state()
+        let declared_state = instance.widget.style_state();
+        let states = declared_state
             .with_hovered(pointer.enabled && painter.hovered(rect))
-            .with_pressed(pointer.enabled && painter.pressed(rect))
+            .with_pressed(declared_state.pressed() || (pointer.enabled && painter.pressed(rect)))
             .with_focused(focus_visible && focusable && focus.is_focused(instance.node_id));
         let colors = painter.color_scheme();
         let resolved = instance.style.resolve(states);

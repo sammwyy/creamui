@@ -39,6 +39,28 @@ fn every_widget_gets_common_builders_without_component_forwarders() {
         .expect("styled wrapper must preserve the button handler")();
     assert!(clicked.get());
 }
+
+#[test]
+fn toggle_button_pressed_state_survives_pointer_state_resolution() {
+    let widget = RawButton::new(Style::default(), || {})
+        .width(80.0)
+        .height(32.0)
+        .pressed_state(true)
+        .pressed_style(StateStyle::new().background(Color::rgb(50, 100, 150)));
+    let mut painter = RecordingPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 80.0,
+            height: 32.0,
+        },
+        &mut painter,
+    );
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(_, color)| *color == Color::rgb(50, 100, 150)));
+}
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{

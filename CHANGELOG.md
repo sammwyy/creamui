@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawInputGroup`/`InputGroup`, controlled `ToggleButton` with an explicit
+  pressed state on `RawButton`, and `RawDropdownButton`/`DropdownButton`
+  with independent, keyboard-focusable primary and menu actions.
 - Add `RawKbd`/`Kbd`, `RawTag`/`Tag`, `RawAttachment`/`Attachment`,
   and `RawChatMessage`/`ChatMessage` for shortcuts, selectable and removable
   tags, attachment status slots, and message metadata/actions.

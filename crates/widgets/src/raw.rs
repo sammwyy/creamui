@@ -88,6 +88,7 @@ fn draw_text_decorations(
     }
 }
 
+mod actions;
 mod application;
 mod button;
 mod canvas;
@@ -108,6 +109,7 @@ mod typography;
 mod virtualize;
 mod workspace;
 
+pub use actions::*;
 pub use application::*;
 pub use button::*;
 pub use canvas::*;
@@ -151,10 +153,12 @@ impl_direct_styled!(
     RawColorPicker,
     RawDateTimePicker,
     RawDescriptionList,
+    RawDropdownButton,
     RawEmptyState,
     RawField,
     RawFilePicker,
     RawForm,
+    RawInputGroup,
     RawKbd,
     RawLink,
     RawListView,

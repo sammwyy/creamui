@@ -36,6 +36,7 @@ fn centered_box_style(padding: f32) -> Style {
     }
 }
 
+mod actions;
 mod application;
 mod avatar;
 mod button;
@@ -59,6 +60,7 @@ mod titlebar;
 mod typography;
 mod workspace;
 
+pub use actions::*;
 pub use application::*;
 pub use avatar::*;
 pub use button::*;

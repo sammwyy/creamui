@@ -1,9 +1,9 @@
-use std::{borrow::Borrow, collections::HashMap, hash::Hash, time::Instant};
+use std::{borrow::Borrow, collections::HashMap, hash::Hash};
 
 struct Entry<V> {
     value: V,
     bytes: usize,
-    used: Instant,
+    used: u64,
 }
 
 pub(super) struct Lru<K, V> {
@@ -11,6 +11,7 @@ pub(super) struct Lru<K, V> {
     bytes: usize,
     max_entries: usize,
     max_bytes: usize,
+    clock: u64,
 }
 
 impl<K: Eq + Hash + Clone, V> Lru<K, V> {
@@ -20,6 +21,7 @@ impl<K: Eq + Hash + Clone, V> Lru<K, V> {
             bytes: 0,
             max_entries,
             max_bytes,
+            clock: 0,
         }
     }
 
@@ -28,7 +30,8 @@ impl<K: Eq + Hash + Clone, V> Lru<K, V> {
         K: Borrow<Q>,
     {
         let entry = self.entries.get_mut(key)?;
-        entry.used = Instant::now();
+        self.clock = self.clock.wrapping_add(1);
+        entry.used = self.clock;
         Some(&entry.value)
     }
 
@@ -38,7 +41,8 @@ impl<K: Eq + Hash + Clone, V> Lru<K, V> {
             .values_mut()
             .find(|entry| predicate(&entry.value))
         {
-            entry.used = Instant::now();
+            self.clock = self.clock.wrapping_add(1);
+            entry.used = self.clock;
         }
     }
 
@@ -59,12 +63,13 @@ impl<K: Eq + Hash + Clone, V> Lru<K, V> {
                 .clone();
             self.bytes -= self.entries.remove(&oldest).unwrap().bytes;
         }
+        self.clock = self.clock.wrapping_add(1);
         self.entries.insert(
             key,
             Entry {
                 value,
                 bytes,
-                used: Instant::now(),
+                used: self.clock,
             },
         );
         self.bytes += bytes;
@@ -78,5 +83,26 @@ impl<K: Eq + Hash + Clone, V> Lru<K, V> {
     #[cfg(test)]
     pub(super) fn bytes(&self) -> usize {
         self.bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Lru;
+
+    #[test]
+    fn evicts_least_recently_used_after_get_and_touch() {
+        let mut cache = Lru::new(2, 4);
+        cache.insert("first", 1, 2);
+        cache.insert("second", 2, 2);
+        assert_eq!(cache.get(&"first"), Some(&1));
+        cache.insert("third", 3, 2);
+        assert_eq!(cache.get(&"second"), None);
+        cache.touch(|value| *value == 1);
+        cache.insert("fourth", 4, 2);
+        assert_eq!(cache.get(&"third"), None);
+        assert_eq!(cache.get(&"first"), Some(&1));
+        assert_eq!(cache.bytes(), 4);
+        assert_eq!(cache.len(), 2);
     }
 }

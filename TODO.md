@@ -59,12 +59,8 @@ one can be extended. Variants are design suggestions, not promised features.
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
 | `Accordion` | Group independently expandable sections. | `RawAccordion` manages item expansion, headings, and keyboard navigation without colors. | `Accordion` themes headers and panels; single/multiple-open, bordered/flush. |
-| `Collapsible` | Expand one content region from a trigger, without an accordion group. | `RawCollapsible` exposes expanded state and trigger/content slots. | `Collapsible` supplies disclosure icon, motion, and compact/regular spacing. |
-| `Alert` | Inline persistent status or guidance; unlike the existing modal `AlertDialog`. | `RawAlert` provides semantic status, icon/text/action slots, and optional dismissal. | `Alert` uses info/success/warning/error tones and solid/subtle styles. |
 | `Toast` | Queue transient nonmodal notifications with timeout and dismissal. | `RawToast` plus a host/controller handle stacking, timers, focus, and close actions. | `Toast` uses success/error/info variants, action and progress options. |
 | `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
-| `Skeleton` | Hold layout while content loads, without reflow. | `RawSkeleton` exposes block/circle shapes and optional animation state. | `Skeleton` uses theme neutrals; static, pulse, and reduced-motion modes. |
-| `EmptyState` | Explain an empty result with optional illustration and action. | `RawEmptyState` composes media, title, description, and action slots. | `EmptyState` offers compact/full-page and no-results/error variants. |
 | `Field` | Associate a field name, hint, required state, and errors with an input. | `RawField` composes labels and content with explicit semantics and validation state. | `Field` themes labels/help/errors; horizontal/stacked layouts. |
 | `Form` | Group fields, validation results, and submission state. | `RawForm` composes `RawField` and controlled input callbacks; no implicit storage. | `Form` themes spacing and summary errors; single/two-column layouts. |
 | `InputGroup` | Attach prefixes, suffixes, icons, or buttons to existing text inputs. | `RawInputGroup` arranges focus-aware addons around `RawTextInput`/`RawTextArea`. | `InputGroup` shares borders and focus ring; inline/toolbar variants. |
@@ -74,6 +70,9 @@ one can be extended. Variants are design suggestions, not promised features.
 | `Pagination` | Navigate paged datasets with current page and total count. | `RawPagination` calculates page links, ellipses, and previous/next actions. | `Pagination` themes buttons; compact/full and page-size option. |
 | `ToggleButton` | Expose on/off pressed state as a button, not a checkbox or switch. | Extend `RawButton` with explicit pressed state and accessible activation. | `ToggleButton` themes icon/text and single/grouped styles. |
 | `DropdownButton` | Keep a primary action separate from an adjacent menu trigger. | Compose `RawButton` with raw menu behavior and split focus handling. | `DropdownButton` themes joined/split borders and small/regular sizes. |
+
+- Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
+  modes to `Skeleton`. Both currently render without animation.
 
 ### Priority: workspace and data
 

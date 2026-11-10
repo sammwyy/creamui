@@ -4,6 +4,10 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add controlled `RawCollapsible`/`Collapsible`, slotted inline `RawAlert`/`Alert`
+  with status tones and dismissal, static `RawSkeleton`/`Skeleton` placeholders,
+  and slotted `RawEmptyState`/`EmptyState` layouts. Raw widgets accept explicit
+  styles; themed widgets use the active theme.
 - Default to CPU-only builds in the main, renderer, and FFI crates and desktop
   examples. The `gpu` feature remains opt-in; GPU benchmarks enable it explicitly.
 - Skip unchanged blocks when checking GPU instance uploads, retaining the

@@ -17,6 +17,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Typography | `Quote`, `Pre`, `Link` | Quotation, preformatted text, and clickable links. | `RawQuote`, `RawPre`, `RawLink` |
 | Visuals | `Icon`, `Surface`, `Avatar`, `Card` | Symbols/images, themed surfaces, avatar fallback, and content cards. | `RawView`, `RawText`; no dedicated raw avatar or card |
 | Actions | `Button` | Action with size, variant, and loading/success/disabled states. | `RawButton` |
+| Disclosure | `Collapsible` | Controlled single expandable region with a keyboard-accessible trigger. | `RawCollapsible` |
 | Text entry | `TextInput`, `TextArea` | Controlled single- and multiline editing. | `RawTextInput`, `RawTextArea` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
 | Numeric and activity | `Slider`, `Spinner` | Range selection and activity indicator. | `RawSlider`, `RawSpinner` |
@@ -30,6 +31,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Data | `ListView`, `Table`, `VirtualTable` | Lists, tabular data, and virtualized rows. | `RawListView`, `RawTable`, `RawVirtualTable` |
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
 | Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
+| Feedback | `Alert`, `Skeleton`, `EmptyState` | Inline status, loading placeholder, and empty-content layout. | `RawAlert`, `RawSkeleton`, `RawEmptyState` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Menus | `MenuBar`, `MenuPopup`, `MenuItem`, `ContextMenu` | Menus, popup items, and right-click actions. | `RawContextMenu` for context menus; `RawView` for other menus |

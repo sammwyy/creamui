@@ -56,6 +56,103 @@ use creamui_widgets::{
 };
 
 #[test]
+fn compact_raw_controls_keep_all_paint_inside_their_bounds() {
+    let rect = Rect {
+        x: 10.0,
+        y: 20.0,
+        width: 12.0,
+        height: 10.0,
+    };
+    for checked in [false, true] {
+        let switch = RawSwitch::new(
+            checked,
+            Color::rgb(10, 20, 30),
+            Color::rgb(40, 50, 60),
+            Color::rgb(70, 80, 90),
+            || {},
+        )
+        .thumb_inset(3.0);
+        let mut painter = RecordingPainter::default();
+        switch.paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    }
+    let slider = RawSlider::new(
+        Style::default(),
+        1.0,
+        Color::rgb(10, 20, 30),
+        Color::rgb(40, 50, 60),
+        Color::rgb(70, 80, 90),
+        |_| {},
+    )
+    .handle(24.0, 12.0)
+    .track(14.0, 7.0);
+    let mut painter = RecordingPainter::default();
+    slider.paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+}
+
+#[test]
+fn compact_themed_feedback_keeps_animated_dots_inside_its_bounds() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
+        let indicator = creamui_widgets::TypingIndicator::new();
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 18.0,
+            height: 10.0,
+        };
+        for time in [0.0, 0.2, 0.4, 0.6, 1.0] {
+            let mut painter = RecordingPainter {
+                time,
+                ..Default::default()
+            };
+            indicator.paint(&mut painter, rect);
+            assert_paint_inside(&painter, rect);
+        }
+    });
+}
+
+#[test]
+fn themed_controls_with_manual_sizes_keep_paint_inside_their_bounds() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 12.0,
+            height: 10.0,
+        };
+        let mut painter = RecordingPainter::default();
+        Slider::new(1.0, |_| {})
+            .width(rect.width)
+            .height(rect.height)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+        let mut painter = RecordingPainter::default();
+        creamui_widgets::Switch::new(true, || {})
+            .width(rect.width)
+            .height(rect.height)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    });
+}
+
+fn assert_paint_inside(painter: &RecordingPainter, bounds: Rect) {
+    for (painted, _) in &painter.filled_rects {
+        assert!(
+            painted.x >= bounds.x && painted.y >= bounds.y,
+            "{painted:?}"
+        );
+        assert!(
+            painted.x + painted.width <= bounds.x + bounds.width
+                && painted.y + painted.height <= bounds.y + bounds.height,
+            "{painted:?}"
+        );
+    }
+}
+
+#[test]
 fn themed_file_picker_paints_its_box_and_preserves_common_overrides() {
     creamui_reactive::with_context_scope(|| {
         let theme = Theme::light();
@@ -219,6 +316,7 @@ fn file_prompt_isolates_background_input_and_cancels_without_a_callback() {
 struct RecordingPainter {
     hovered: bool,
     pressed: bool,
+    time: f32,
     filled_rects: Vec<(Rect, Color)>,
     stroked_rects: Vec<(Rect, Color)>,
     texts: Vec<String>,
@@ -253,6 +351,9 @@ impl Painter for StatePainter {
 }
 
 impl Painter for RecordingPainter {
+    fn animation_time(&mut self) -> f32 {
+        self.time
+    }
     fn hovered(&self, _: Rect) -> bool {
         self.hovered
     }

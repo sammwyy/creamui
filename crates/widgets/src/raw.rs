@@ -91,6 +91,7 @@ fn draw_text_decorations(
 mod actions;
 mod application;
 mod button;
+mod calendar;
 mod canvas;
 mod content;
 mod context_menu;
@@ -113,6 +114,7 @@ mod workspace;
 pub use actions::*;
 pub use application::*;
 pub use button::*;
+pub use calendar::*;
 pub use canvas::*;
 pub use content::*;
 pub use context_menu::*;
@@ -149,6 +151,7 @@ impl_direct_styled!(
     RawAlert,
     RawAttachment,
     RawButton,
+    RawCalendar,
     RawCheckbox,
     RawChatMessage,
     RawCollapsible,

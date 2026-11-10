@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawCalendar` and `Calendar` with controlled month and day selection,
+  disabled dates, week-start configuration, keyboard day navigation, and
+  today highlighting.
 - Add `RawNumberInput` and `NumberInput` with persistent draft text,
   finite bounded values, configurable decimal precision, commit on Enter or
   blur, and stepper buttons and arrow-key increments.

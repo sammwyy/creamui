@@ -1,12 +1,12 @@
 use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
-    Accordion, Alert, AlertStatus, AlertVariant, Attachment, ChatMessage, Collapsible,
-    DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd, NumberInput,
-    Pagination, RawAlert, RawAttachment, RawChatMessage, RawCollapsible, RawDescriptionList,
-    RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawSkeleton,
-    RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag,
-    ToggleButton,
+    Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, ChatMessage,
+    Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd,
+    NumberInput, Pagination, RawAlert, RawAttachment, RawCalendar, RawChatMessage, RawCollapsible,
+    RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd,
+    RawNumberInput, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton,
+    StatusBar, StepState, Stepper, Tag, ToggleButton,
 };
 
 #[component]
@@ -29,6 +29,8 @@ pub fn ComponentsPanel(
     number_text: TextController,
     raw_number: Signal<f64>,
     raw_number_text: TextController,
+    month: Signal<DateTime>,
+    date: Signal<Option<DateTime>>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -317,6 +319,41 @@ pub fn ComponentsPanel(
         )),
     )
     .background(theme.surface_hover);
+    let set_month = month.clone();
+    let select_date = date.clone();
+    let on_month = month.clone();
+    let themed_calendar = Calendar::new(
+        month.get(),
+        date.get(),
+        move |next| {
+            set_month.set(DateTime::new(next.year, next.month, 1, 0, 0));
+            select_date.set(Some(next));
+        },
+        move |next| on_month.set(next),
+    )
+    .today(DateTime::new(2026, 3, 15, 0, 0))
+    .week_start(1);
+    let raw_calendar = RawCalendar::new(
+        Style::default().flex_column(),
+        month.get(),
+        date.get(),
+        {
+            let set_date = date.clone();
+            move |next| set_date.set(Some(next))
+        },
+        {
+            let set_month = month.clone();
+            move |next| set_month.set(next)
+        },
+    )
+    .colors(CalendarColors {
+        text: theme.text_primary,
+        muted: theme.text_secondary,
+        selected: theme.accent,
+        selected_text: theme.selection_text,
+        today: theme.accent,
+    })
+    .background(theme.surface_hover);
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -590,6 +627,17 @@ pub fn ComponentsPanel(
                     theme.typography.caption,
                 )),
                 Box::new(raw_numeric),
+            ]))
+            .child(card(vec![
+                label("Calendar"),
+                Box::new(themed_calendar),
+                Box::new(RawText::new(
+                    date.get().map(|selected| format!("{:04}-{:02}-{:02}", selected.year, selected.month, selected.day)).unwrap_or_else(|| "None".to_owned()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw calendar"),
+                Box::new(raw_calendar),
             ])),
     )
 }

@@ -7,6 +7,11 @@ use crate::prelude::*;
 #[component]
 pub fn Card(gap: f32, children: Vec<BoxedWidget>) -> BoxedWidget {
     let theme = use_theme();
+    let inset = if use_screen_class() == ScreenClass::Compact {
+        theme.spacing_medium
+    } else {
+        theme.spacing_large
+    };
     Box::new(
         creamui_widgets::Surface::new(
             SurfaceRole::Inset,
@@ -18,7 +23,7 @@ pub fn Card(gap: f32, children: Vec<BoxedWidget>) -> BoxedWidget {
                     },
                     ..column(gap)
                 },
-                theme.spacing_large,
+                inset,
             ),
         )
         .with_children(children),

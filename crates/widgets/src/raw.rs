@@ -88,6 +88,7 @@ fn draw_text_decorations(
     }
 }
 
+mod application;
 mod button;
 mod canvas;
 mod context_menu;
@@ -105,6 +106,7 @@ mod text_input;
 mod typography;
 mod virtualize;
 
+pub use application::*;
 pub use button::*;
 pub use canvas::*;
 pub use context_menu::*;
@@ -135,6 +137,7 @@ macro_rules! impl_direct_styled {
 }
 
 impl_direct_styled!(
+    RawAccordion,
     RawAlert,
     RawButton,
     RawCheckbox,
@@ -142,10 +145,13 @@ impl_direct_styled!(
     RawColorPicker,
     RawDateTimePicker,
     RawEmptyState,
+    RawField,
     RawFilePicker,
+    RawForm,
     RawLink,
     RawListView,
     RawMarquee,
+    RawPagination,
     RawPre,
     RawQuote,
     RawScrollView,

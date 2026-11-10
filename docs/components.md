@@ -17,7 +17,8 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Typography | `Quote`, `Pre`, `Link` | Quotation, preformatted text, and clickable links. | `RawQuote`, `RawPre`, `RawLink` |
 | Visuals | `Icon`, `Surface`, `Avatar`, `Card` | Symbols/images, themed surfaces, avatar fallback, and content cards. | `RawView`, `RawText`; no dedicated raw avatar or card |
 | Actions | `Button` | Action with size, variant, and loading/success/disabled states. | `RawButton` |
-| Disclosure | `Collapsible` | Controlled single expandable region with a keyboard-accessible trigger. | `RawCollapsible` |
+| Disclosure | `Accordion`, `Collapsible` | Controlled expandable sections with keyboard-accessible triggers. | `RawAccordion`, `RawCollapsible` |
+| Forms | `Field`, `Form` | Labeled inputs with hints/errors and controlled submission. | `RawField`, `RawForm` |
 | Text entry | `TextInput`, `TextArea` | Controlled single- and multiline editing. | `RawTextInput`, `RawTextArea` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
 | Numeric and activity | `Slider`, `Spinner` | Range selection and activity indicator. | `RawSlider`, `RawSpinner` |
@@ -26,6 +27,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Date and time | `DateTimePicker`, `DateInput`, `TimeInput` | Date/time editing and input wrappers. | `RawDateTimePicker` |
 | Color and files | `ColorPicker`, `FilePicker`, `FilePrompt` | Color selection, native/browser file selection, and path prompt fallback. | `RawColorPicker`, `RawFilePicker`; no dedicated raw prompt |
 | Tabs | `Tabs`, `Tab` | Tab strip and individual selectable tab. | `RawTabs`, `RawTab` |
+| Navigation | `Pagination` | Controlled page links, gaps, and previous/next controls. | `RawPagination` |
 | Navigation | `Sidebar`, `SidebarItem`, `SidebarSeparator`, `SidebarNode` | Sidebar navigation and its items, separators, and tree model. | `RawSidebar`, `RawView`; no dedicated raw item/node |
 | Scrolling | `ScrollView`, `VirtualList` | Scrollable content and visible-range list rendering. | `RawScrollView`, `RawScrollbar`, `RawVirtualList` |
 | Data | `ListView`, `Table`, `VirtualTable` | Lists, tabular data, and virtualized rows. | `RawListView`, `RawTable`, `RawVirtualTable` |

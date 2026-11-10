@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawAccordion`/`Accordion`, `RawField`/`Field`, `RawForm`/`Form`,
+  and `RawPagination`/`Pagination` with controlled callbacks, optional errors,
+  submission state, and gap-aware page links.
 - Add controlled `RawCollapsible`/`Collapsible`, slotted inline `RawAlert`/`Alert`
   with status tones and dismissal, static `RawSkeleton`/`Skeleton` placeholders,
   and slotted `RawEmptyState`/`EmptyState` layouts. Raw widgets accept explicit

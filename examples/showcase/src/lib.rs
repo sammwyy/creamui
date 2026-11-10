@@ -91,6 +91,12 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let tree_demo = TreeController::default();
     let table_scroll_demo = ScrollController::default();
     let table_selected = Signal::new(0usize);
+    let components_expanded = Signal::new(false);
+    let components_accordion = Signal::new(vec![true, false]);
+    let components_page = Signal::new(6usize);
+    let components_alert = Signal::new(true);
+    let components_submissions = Signal::new(0usize);
+    let components_input = TextController::default();
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -266,7 +272,15 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     table_selected: table_selected.clone(),
                 }),
                 15 => GridPanel(),
-                _ => FlexPanel(),
+                16 => FlexPanel(),
+                _ => ComponentsPanel(ComponentsPanelProps {
+                    expanded: components_expanded.clone(),
+                    accordion: components_accordion.clone(),
+                    page: components_page.clone(),
+                    visible: components_alert.clone(),
+                    submissions: components_submissions.clone(),
+                    input: components_input.clone(),
+                }),
             };
 
             let scroll_style = Style {

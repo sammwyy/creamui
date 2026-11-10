@@ -216,6 +216,7 @@ pub struct RawPagination {
     pub total: usize,
     on_change: Rc<dyn Fn(usize)>,
     colors: Option<(Color, Color, Color)>,
+    compact: bool,
 }
 
 impl RawPagination {
@@ -231,7 +232,13 @@ impl RawPagination {
             total,
             on_change: Rc::new(on_change),
             colors: None,
+            compact: false,
         }
+    }
+
+    pub fn compact(mut self) -> Self {
+        self.compact = true;
+        self
     }
 
     pub fn colors(mut self, background: Color, text: Color, selected: Color) -> Self {
@@ -260,7 +267,9 @@ impl Widget for RawPagination {
             if let Some((background, foreground, active)) = self.colors {
                 button = button
                     .background(if selected { active } else { background })
-                    .corner_radius(6.0);
+                    .corner_radius(6.0)
+                    .padding(6.0)
+                    .height(30.0);
                 text = text.color(foreground);
             }
             Box::new(button.child(Box::new(text))) as BoxedWidget
@@ -271,7 +280,12 @@ impl Widget for RawPagination {
             current == 1,
             false,
         )];
-        for item in page_items(current, self.total) {
+        let pages = if self.compact {
+            vec![PageItem::Page(current)]
+        } else {
+            page_items(current, self.total)
+        };
+        for item in pages {
             match item {
                 PageItem::Page(page) => children.push(button(
                     page.to_string(),
@@ -279,7 +293,13 @@ impl Widget for RawPagination {
                     page == current,
                     page == current,
                 )),
-                PageItem::Ellipsis => children.push(Box::new(RawText::unstyled("…"))),
+                PageItem::Ellipsis => {
+                    let mut text = RawText::unstyled("…");
+                    if let Some((_, foreground, _)) = self.colors {
+                        text = text.color(foreground);
+                    }
+                    children.push(Box::new(text));
+                }
             }
         }
         children.push(button(

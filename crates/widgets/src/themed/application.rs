@@ -59,10 +59,17 @@ impl Field {
         let label = format!("{}{}", label.into(), if required { " *" } else { "" });
         Self {
             inner: RawField::new(
-                Style::default()
-                    .flex_column()
-                    .gap(theme.spacing_small)
-                    .width(280.0),
+                Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Percent(1.0),
+                        height: Dimension::Auto,
+                    },
+                    min_size: creamui_core::layout::Size {
+                        width: Dimension::Length(0.0),
+                        height: Dimension::Auto,
+                    },
+                    ..Style::default().flex_column().gap(theme.spacing_small)
+                },
                 Box::new(RawText::new(
                     label,
                     theme.text_primary,
@@ -176,6 +183,11 @@ impl Pagination {
             )
             .colors(theme.surface_elevated, theme.text_primary, theme.accent),
         }
+    }
+
+    pub fn compact(mut self) -> Self {
+        self.inner = self.inner.compact();
+        self
     }
 }
 

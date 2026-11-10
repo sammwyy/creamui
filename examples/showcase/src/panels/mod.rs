@@ -4,6 +4,7 @@
 mod appearance;
 mod button;
 mod checkbox;
+mod components;
 mod feedback;
 mod flex;
 mod grid;
@@ -22,6 +23,7 @@ mod typography;
 pub use appearance::*;
 pub use button::*;
 pub use checkbox::*;
+pub use components::*;
 pub use feedback::*;
 pub use flex::*;
 pub use grid::*;

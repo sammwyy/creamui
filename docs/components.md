@@ -14,6 +14,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Area | Public components | What they do | Raw foundation |
 |---|---|---|---|
 | Text | `Text`, `Heading` | Body copy and display headings. | `RawText` |
+| Shortcuts | `Kbd` | Platform-aware modifier sequences in themed keycaps. | `RawKbd` |
 | Typography | `Quote`, `Pre`, `Link` | Quotation, preformatted text, and clickable links. | `RawQuote`, `RawPre`, `RawLink` |
 | Visuals | `Icon`, `Surface`, `Avatar`, `Card` | Symbols/images, themed surfaces, avatar fallback, and content cards. | `RawView`, `RawText`; no dedicated raw avatar or card |
 | Actions | `Button` | Action with size, variant, and loading/success/disabled states. | `RawButton` |
@@ -35,6 +36,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
 | Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
 | Feedback | `Alert`, `Skeleton`, `EmptyState` | Inline status, loading placeholder, and empty-content layout. | `RawAlert`, `RawSkeleton`, `RawEmptyState` |
+| Content | `Tag`, `Attachment`, `ChatMessage` | Selectable labels, attachment progress/errors, and sender/body/action layouts. | `RawTag`, `RawAttachment`, `RawChatMessage` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Menus | `MenuBar`, `MenuPopup`, `MenuItem`, `ContextMenu` | Menus, popup items, and right-click actions. | `RawContextMenu` for context menus; `RawView` for other menus |

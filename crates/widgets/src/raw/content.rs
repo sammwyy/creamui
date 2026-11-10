@@ -1,0 +1,333 @@
+use super::*;
+use creamui_core::layout::FlexDirection;
+
+pub struct RawKbd {
+    pub style: creamui_core::Style,
+    keys: Vec<String>,
+    color: Color,
+    size: f32,
+}
+
+impl RawKbd {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        keys: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            style: style.into(),
+            keys: keys.into_iter().collect(),
+            color: Color::rgb(0, 0, 0),
+            size: 12.0,
+        }
+    }
+
+    pub fn text_style(mut self, color: Color, size: f32) -> Self {
+        self.color = color;
+        self.size = size.max(1.0);
+        self
+    }
+
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+
+    fn formatted(&self) -> String {
+        self.keys
+            .iter()
+            .map(|key| {
+                if key.eq_ignore_ascii_case("mod") {
+                    if cfg!(target_os = "macos") {
+                        "Cmd"
+                    } else {
+                        "Ctrl"
+                    }
+                } else {
+                    key.as_str()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" + ")
+    }
+}
+
+impl Widget for RawKbd {
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
+    }
+
+    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        vec![Box::new(RawText::new(
+            self.formatted(),
+            self.color,
+            self.size,
+        ))]
+    }
+}
+
+pub struct RawTag {
+    pub style: creamui_core::Style,
+    pub selected: bool,
+    label: Option<BoxedWidget>,
+    on_select: Option<Rc<dyn Fn(bool)>>,
+    remove: Option<(BoxedWidget, Rc<dyn Fn()>)>,
+}
+
+impl RawTag {
+    pub fn new(style: impl Into<creamui_core::Style>, label: BoxedWidget) -> Self {
+        Self {
+            style: style.into(),
+            selected: false,
+            label: Some(label),
+            on_select: None,
+            remove: None,
+        }
+    }
+
+    pub fn selectable(mut self, selected: bool, on_select: impl Fn(bool) + 'static) -> Self {
+        self.selected = selected;
+        self.on_select = Some(Rc::new(on_select));
+        self
+    }
+
+    pub fn label(mut self, label: BoxedWidget) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    pub fn removable(mut self, label: BoxedWidget, on_remove: impl Fn() + 'static) -> Self {
+        self.remove = Some((label, Rc::new(on_remove)));
+        self
+    }
+}
+
+impl Widget for RawTag {
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
+    }
+
+    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        let mut children = Vec::new();
+        if let Some(label) = self.label.take() {
+            if let Some(callback) = self.on_select.clone() {
+                let selected = self.selected;
+                children.push(Box::new(
+                    RawButton::new(Style::default(), move || callback(!selected)).child(label),
+                ) as BoxedWidget);
+            } else {
+                children.push(label);
+            }
+        }
+        if let Some((label, callback)) = self.remove.take() {
+            children.push(Box::new(
+                RawButton::new(Style::default(), move || callback()).child(label),
+            ));
+        }
+        children
+    }
+}
+
+pub struct RawAttachment {
+    pub style: creamui_core::Style,
+    preview: Option<BoxedWidget>,
+    name: Option<BoxedWidget>,
+    progress: Option<BoxedWidget>,
+    error: Option<BoxedWidget>,
+    action: Option<BoxedWidget>,
+}
+
+impl RawAttachment {
+    pub fn new(style: impl Into<creamui_core::Style>, name: BoxedWidget) -> Self {
+        Self {
+            style: style.into(),
+            preview: None,
+            name: Some(name),
+            progress: None,
+            error: None,
+            action: None,
+        }
+    }
+
+    pub fn preview(mut self, preview: BoxedWidget) -> Self {
+        self.preview = Some(preview);
+        self
+    }
+
+    pub fn progress(mut self, progress: BoxedWidget) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
+    pub fn error(mut self, error: BoxedWidget) -> Self {
+        self.error = Some(error);
+        self
+    }
+
+    pub fn action(mut self, action: BoxedWidget) -> Self {
+        self.action = Some(action);
+        self
+    }
+}
+
+impl Widget for RawAttachment {
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
+    }
+
+    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        let mut children = Vec::new();
+        children.extend(self.preview.take());
+        let mut details = RawView::new(Style {
+            flex_direction: FlexDirection::Column,
+            flex_grow: 1.0,
+            min_size: creamui_core::layout::Size {
+                width: creamui_core::layout::Dimension::Length(0.0),
+                height: creamui_core::layout::Dimension::Auto,
+            },
+            ..Default::default()
+        });
+        if let Some(name) = self.name.take() {
+            details = details.child(name);
+        }
+        if let Some(error) = self.error.take() {
+            details = details.child(error);
+        } else if let Some(progress) = self.progress.take() {
+            details = details.child(progress);
+        }
+        children.push(Box::new(details) as BoxedWidget);
+        children.extend(self.action.take());
+        children
+    }
+}
+
+pub struct RawChatMessage {
+    pub style: creamui_core::Style,
+    sender: Option<BoxedWidget>,
+    body: Option<BoxedWidget>,
+    timestamp: Option<BoxedWidget>,
+    actions: Vec<BoxedWidget>,
+}
+
+impl RawChatMessage {
+    pub fn new(
+        style: impl Into<creamui_core::Style>,
+        sender: BoxedWidget,
+        body: BoxedWidget,
+    ) -> Self {
+        Self {
+            style: style.into(),
+            sender: Some(sender),
+            body: Some(body),
+            timestamp: None,
+            actions: Vec::new(),
+        }
+    }
+
+    pub fn timestamp(mut self, timestamp: BoxedWidget) -> Self {
+        self.timestamp = Some(timestamp);
+        self
+    }
+
+    pub fn action(mut self, action: BoxedWidget) -> Self {
+        self.actions.push(action);
+        self
+    }
+}
+
+impl Widget for RawChatMessage {
+    fn style(&self) -> creamui_core::Style {
+        let mut style = self.style.clone();
+        style.layout.flex_direction = FlexDirection::Column;
+        style
+    }
+
+    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        let mut children = Vec::new();
+        let mut header = RawView::new(Style {
+            flex_direction: FlexDirection::Row,
+            gap: creamui_core::layout::Size {
+                width: creamui_core::layout::LengthPercentage::Length(8.0),
+                height: creamui_core::layout::LengthPercentage::Length(0.0),
+            },
+            ..Default::default()
+        });
+        if let Some(sender) = self.sender.take() {
+            header = header.child(sender);
+        }
+        if let Some(timestamp) = self.timestamp.take() {
+            header = header.child(timestamp);
+        }
+        children.push(Box::new(header) as BoxedWidget);
+        children.extend(self.body.take());
+        children.append(&mut self.actions);
+        children
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slot() -> BoxedWidget {
+        Box::new(RawView::new(Style::default()))
+    }
+
+    #[test]
+    fn shortcuts_format_platform_modifiers() {
+        let mut shortcut = RawKbd::new(Style::default(), ["Mod".into(), "K".into()]);
+        assert_eq!(shortcut.children().len(), 1);
+        assert_eq!(
+            shortcut.formatted(),
+            if cfg!(target_os = "macos") {
+                "Cmd + K"
+            } else {
+                "Ctrl + K"
+            }
+        );
+    }
+
+    #[test]
+    fn tag_actions_do_not_share_callbacks() {
+        let selected = Rc::new(Cell::new(false));
+        let removed = Rc::new(Cell::new(false));
+        let selected_target = selected.clone();
+        let removed_target = removed.clone();
+        let mut tag = RawTag::new(Style::default(), slot())
+            .selectable(false, move |next| selected_target.set(next))
+            .removable(slot(), move || removed_target.set(true));
+        let parts = tag.children();
+        parts[0].on_click().unwrap()();
+        assert!(selected.get());
+        assert!(!removed.get());
+        parts[1].on_click().unwrap()();
+        assert!(removed.get());
+    }
+
+    #[test]
+    fn attachment_prioritizes_error_over_progress() {
+        let mut attachment = RawAttachment::new(Style::default(), slot())
+            .progress(slot())
+            .error(slot())
+            .action(slot());
+        let mut parts = attachment.children();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].children().len(), 2);
+    }
+
+    #[test]
+    fn chat_message_keeps_header_body_and_actions() {
+        let mut message = RawChatMessage::new(Style::default(), slot(), slot())
+            .timestamp(slot())
+            .action(slot());
+        let mut parts = message.children();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].children().len(), 2);
+    }
+}

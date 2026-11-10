@@ -1,9 +1,10 @@
 use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
-    Accordion, Alert, AlertStatus, AlertVariant, Collapsible, DescriptionList, EmptyState, Field,
-    Form, Pagination, RawAlert, RawCollapsible, RawDescriptionList, RawEmptyState, RawField,
-    RawSkeleton, RawStatusBar, RawStepper, Skeleton, StatusBar, StepState, Stepper,
+    Accordion, Alert, AlertStatus, AlertVariant, Attachment, ChatMessage, Collapsible,
+    DescriptionList, EmptyState, Field, Form, Kbd, Pagination, RawAlert, RawAttachment,
+    RawChatMessage, RawCollapsible, RawDescriptionList, RawEmptyState, RawField, RawKbd,
+    RawSkeleton, RawStatusBar, RawStepper, RawTag, Skeleton, StatusBar, StepState, Stepper, Tag,
 };
 
 #[component]
@@ -15,6 +16,8 @@ pub fn ComponentsPanel(
     submissions: Signal<usize>,
     input: TextController,
     step: Signal<usize>,
+    tag: Signal<bool>,
+    tag_visible: Signal<bool>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -259,6 +262,82 @@ pub fn ComponentsPanel(
         )),
         StepState::Active,
     );
+    let set_tag = tag.clone();
+    let set_tag_visible = tag_visible.clone();
+    let themed_tag: BoxedWidget = if tag_visible.get() {
+        Box::new(
+            Tag::new("Selectable tag")
+                .selected(tag.get(), move |next| set_tag.set(next))
+                .removable(move || set_tag_visible.set(false)),
+        )
+    } else {
+        let show_tag = tag_visible.clone();
+        Box::new(Button::secondary(
+            ButtonSize::Sm,
+            "Restore tag",
+            move || show_tag.set(true),
+        ))
+    };
+    let content = ChatMessage::new(
+        "Dana",
+        Box::new(RawText::new(
+            "The design is ready for review.",
+            theme.text_primary,
+            theme.typography.body,
+        )),
+        false,
+    )
+    .timestamp("10:42");
+    let attachment = Attachment::new("wireframes.png")
+        .preview(Box::new(
+            RawView::new(Style::default().size(36.0, 36.0))
+                .background(theme.accent)
+                .corner_radius(theme.radius_small),
+        ))
+        .progress(0.65);
+    let raw_tag = RawTag::new(
+        Style::default()
+            .flex_row()
+            .padding_xy(theme.spacing_small, 4.0),
+        Box::new(RawText::new(
+            "Raw tag",
+            theme.text_primary,
+            theme.typography.caption,
+        )),
+    )
+    .background(theme.surface_hover);
+    let raw_attachment = RawAttachment::new(
+        Style::default().flex_row().gap(theme.spacing_medium),
+        Box::new(RawText::new(
+            "raw-file.zip",
+            theme.text_primary,
+            theme.typography.body,
+        )),
+    )
+    .error(Box::new(RawText::new(
+        "Upload failed",
+        theme.danger,
+        theme.typography.caption,
+    )));
+    let raw_chat = RawChatMessage::new(
+        Style::default().flex_column().gap(theme.spacing_small),
+        Box::new(RawText::new(
+            "Raw sender",
+            theme.text_primary,
+            theme.typography.caption,
+        )),
+        Box::new(RawText::new(
+            "Content remains caller-controlled.",
+            theme.text_secondary,
+            theme.typography.body,
+        )),
+    );
+    let raw_shortcut = RawKbd::new(
+        Style::default().padding_all(4.0),
+        ["Mod".to_owned(), "P".to_owned()],
+    )
+    .text_style(theme.text_primary, theme.typography.caption)
+    .background(theme.surface_hover);
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
@@ -331,6 +410,26 @@ pub fn ComponentsPanel(
                 Box::new(raw_stepper),
                 Box::new(raw_details),
                 Box::new(raw_status),
+            ]))
+            .child(card(vec![
+                label("Shortcuts, tags & content"),
+                Box::new(
+                    RawView::new(row(theme.spacing_medium))
+                        .child(Box::new(Kbd::new(["Mod".to_owned(), "K".to_owned()])))
+                        .child(themed_tag),
+                ),
+                Box::new(attachment),
+                Box::new(content),
+            ]))
+            .child(card(vec![
+                label("Raw content building blocks"),
+                Box::new(
+                    RawView::new(row(theme.spacing_medium))
+                        .child(Box::new(raw_shortcut))
+                        .child(Box::new(raw_tag)),
+                ),
+                Box::new(raw_attachment),
+                Box::new(raw_chat),
             ])),
     )
 }

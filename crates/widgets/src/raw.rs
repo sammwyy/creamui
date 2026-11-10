@@ -91,6 +91,7 @@ fn draw_text_decorations(
 mod application;
 mod button;
 mod canvas;
+mod content;
 mod context_menu;
 mod controls;
 mod dataview;
@@ -110,6 +111,7 @@ mod workspace;
 pub use application::*;
 pub use button::*;
 pub use canvas::*;
+pub use content::*;
 pub use context_menu::*;
 pub use controls::*;
 pub use dataview::*;
@@ -141,8 +143,10 @@ macro_rules! impl_direct_styled {
 impl_direct_styled!(
     RawAccordion,
     RawAlert,
+    RawAttachment,
     RawButton,
     RawCheckbox,
+    RawChatMessage,
     RawCollapsible,
     RawColorPicker,
     RawDateTimePicker,
@@ -151,6 +155,7 @@ impl_direct_styled!(
     RawField,
     RawFilePicker,
     RawForm,
+    RawKbd,
     RawLink,
     RawListView,
     RawMarquee,
@@ -168,6 +173,7 @@ impl_direct_styled!(
     RawSwitch,
     RawTab,
     RawTable,
+    RawTag,
     RawTabs,
     RawText,
     RawTextArea,

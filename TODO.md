@@ -93,17 +93,17 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `Kbd` | Display platform-aware keyboard shortcuts in help or menus. | `RawKbd` formats key sequences without prescribing keycap appearance. | `Kbd` themes keycaps; inline/stacked chords. |
-| `Tag` | Show a category label, optionally removable or selectable. | `RawTag` exposes label, optional close action, and selection state. | `Tag` themes neutral/accent tones; outlined/filled and sizes. |
 | `Rating` | Choose a rating by keyboard or pointer, including read-only display. | `RawRating` handles bounded values and focus/pointer hit regions. | `Rating` themes stars; interactive/read-only and half-step. |
 | `Chart` | Plot application-provided series without embedding a web view. | `RawPlot` draws axes/series with explicit scales, clipping, and hit tests. | `Chart` themes grid/legend; line/bar/area first, other types later. |
 | `Diff` | Review supplied patch hunks without editing source. | `RawDiff` virtualizes lines/hunks with gutter, selection, and conflict markers. | `Diff` themes insert/delete/neutral lines; unified/side-by-side. |
 | `CodeEditor` | Edit source with line numbers, highlighting, and large-file navigation. | `RawCodeEditor` builds on text editing with revisioned document, gutter, IME, and undo. | `CodeEditor` themes tokens/selection; read-only/editable and wrap/no-wrap. |
 | `RichTextView` | Render application-provided Markdown or rich document nodes. | `RawRichTextView` lays out text runs, links, images, and selections safely. | `RichTextView` themes headings/links/code; Markdown as an optional parser. |
-| `Attachment` | Show file or media previews and upload/download lifecycle. | `RawAttachment` composes preview, progress, error, and action slots. | `Attachment` themes compact/card and pending/failed/complete states. |
-| `ChatMessage` | Group sender, body, timestamp, and actions in a conversation. | `RawChatMessage` arranges arbitrary message content and metadata. | `ChatMessage` themes incoming/outgoing and compact/expanded layouts. |
 | `MessageScroller` | Follow the tail of a long conversation and preserve position on prepend. | Extend `RawVirtualList` with anchored scrolling, unread marker, and jump-to-latest. | `MessageScroller` themes jump/unread affordances; follow/pause states. |
 | `Questionnaire` | Navigate multi-step questions with validation and branching. | `RawQuestionnaire` models steps, answers, and controlled navigation. | `Questionnaire` composes `Form`/`Stepper`; linear/branching flows. |
+
+- Add stacked shortcut chords to `Kbd`, outlined and size variants to `Tag`,
+  compact attachment layout to `Attachment`, and dense chat rows to
+  `ChatMessage`.
 
 These are intentionally distinct from existing `ColorPicker`, `TimeInput`,
 `Select`/`ComboBox`, `CommandPalette`, `ContextMenu`, `VirtualList`,

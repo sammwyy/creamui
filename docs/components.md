@@ -31,6 +31,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Navigation | `Sidebar`, `SidebarItem`, `SidebarSeparator`, `SidebarNode` | Sidebar navigation and its items, separators, and tree model. | `RawSidebar`, `RawView`; no dedicated raw item/node |
 | Scrolling | `ScrollView`, `VirtualList` | Scrollable content and visible-range list rendering. | `RawScrollView`, `RawScrollbar`, `RawVirtualList` |
 | Data | `ListView`, `Table`, `VirtualTable` | Lists, tabular data, and virtualized rows. | `RawListView`, `RawTable`, `RawVirtualTable` |
+| Data | `DescriptionList` | Read-only key/value details with aligned or stacked labels. | `RawDescriptionList` |
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
 | Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
 | Feedback | `Alert`, `Skeleton`, `EmptyState` | Inline status, loading placeholder, and empty-content layout. | `RawAlert`, `RawSkeleton`, `RawEmptyState` |
@@ -39,6 +40,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Menus | `MenuBar`, `MenuPopup`, `MenuItem`, `ContextMenu` | Menus, popup items, and right-click actions. | `RawContextMenu` for context menus; `RawView` for other menus |
 | Commands | `CommandPalette` | Searchable commands with shortcuts and grouped results. | `RawTextInput`, `RawScrollView`, `RawView`; no dedicated raw palette |
 | Window | `AppTitlebar`, `CaptionButtonView` | Custom titlebar and window caption actions. | `RawView`, `RawButton`; no dedicated raw counterparts |
+| Workspace | `StatusBar`, `Stepper` | Slotted status content and controlled workflow stages. | `RawStatusBar`, `RawStepper` |
 
 The raw-only building blocks `RawCanvas`, `RawMarquee`, `RawSplitView`, `RawTranslate`, and `RawView` cover custom painting, moving text, resizable splits, translations, and containers. `Block`, `Flex`, and `Grid` live in `creamui_widgets::layout`; `Image` is exported by the separate `creamui-image` crate. `RawScrollbar` is a lower-level part of scrolling. Controllers and models such as `TabController`, `TextController`, `TreeController`, `SplitState`, and `VirtualListState` are support APIs rather than additional visual components.
 

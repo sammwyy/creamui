@@ -105,6 +105,7 @@ mod split;
 mod text_input;
 mod typography;
 mod virtualize;
+mod workspace;
 
 pub use application::*;
 pub use button::*;
@@ -123,6 +124,7 @@ pub use split::*;
 pub use text_input::*;
 pub use typography::*;
 pub use virtualize::*;
+pub use workspace::*;
 
 macro_rules! impl_direct_styled {
     ($($widget:ty),+ $(,)?) => {
@@ -144,6 +146,7 @@ impl_direct_styled!(
     RawCollapsible,
     RawColorPicker,
     RawDateTimePicker,
+    RawDescriptionList,
     RawEmptyState,
     RawField,
     RawFilePicker,
@@ -160,6 +163,8 @@ impl_direct_styled!(
     RawSkeleton,
     RawSlider,
     RawSpinner,
+    RawStatusBar,
+    RawStepper,
     RawSwitch,
     RawTab,
     RawTable,

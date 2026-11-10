@@ -97,6 +97,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_alert = Signal::new(true);
     let components_submissions = Signal::new(0usize);
     let components_input = TextController::default();
+    let components_step = Signal::new(1usize);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -280,6 +281,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     visible: components_alert.clone(),
                     submissions: components_submissions.clone(),
                     input: components_input.clone(),
+                    step: components_step.clone(),
                 }),
             };
 

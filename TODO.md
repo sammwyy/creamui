@@ -78,16 +78,16 @@ one can be extended. Variants are design suggestions, not promised features.
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
 | `DataTable` | Add sorting, filtering, selection, and column management to large tables. | Extend `RawTable`/`RawVirtualTable` with controlled column, row, and sort models. | `DataTable` themes headers and selection; dense/comfortable and virtualized. |
-| `DescriptionList` | Present aligned key/value details, not editable rows. | `RawDescriptionList` handles term/value layout and wrapping. | `DescriptionList` themes labels/dividers; horizontal/stacked. |
 | `ResizablePanels` | Resize multiple panels with handles and min/max constraints. | Extend `RawSplitView`/`SplitState` for nested panels, keyboard resize, and persistence. | `ResizablePanels` themes handles; horizontal/vertical and collapsible. |
 | `Dock` | Arrange persistent tab groups and split/edge panels in a workspace. | `RawDock` models drag, drop, nested layouts, and serializable state on raw tabs/splits. | `Dock` themes drop targets, tabs, and panels; optional edge docks. |
-| `StatusBar` | Display left/center/right contextual status at the window edge. | `RawStatusBar` lays out slotted content without deciding text or actions. | `StatusBar` themes separators and compact/regular heights. |
 | `Toolbar` | Arrange commands in a header or editor with overflow handling. | `RawToolbar` owns group ordering, focus navigation, and overflow. | `Toolbar` themes icon/text actions; attached/floating variants. |
-| `Stepper` | Show and navigate stages in a workflow. | `RawStepper` exposes active/completed/disabled step state and activation. | `Stepper` themes connectors; horizontal/vertical, numbered/icon. |
 | `Sheet` | Reveal contextual content from an edge, separate from centered dialogs. | `RawSheet` handles overlay placement, focus return, dismissal, and scrolling. | `Sheet` themes panel/backdrop; left/right/bottom and modal/nonmodal. |
 | `HoverCard` | Show richer interactive preview content than a tooltip. | `RawHoverCard` shares anchored positioning with `RawTooltip` but allows focusable content. | `HoverCard` themes preview surface; delayed hover/focus. |
 | `Carousel` | Browse a finite sequence of slides by keyboard, pointer, or controls. | `RawCarousel` manages index, clipping, snap behavior, and reduced motion. | `Carousel` themes arrows/indicators; contained/full-bleed. |
 | `GridLayout` | Rearrange and resize dashboard cards with drag handles. | `RawGridLayout` exposes controlled item coordinates, collision rules, and bounds. | `GridLayout` themes drag previews and handles; editable/locked. |
+
+- Add dividers to `DescriptionList`, compact height to `StatusBar`, and
+  connectors and custom step icons to `Stepper`.
 
 ### Priority: specialized content
 

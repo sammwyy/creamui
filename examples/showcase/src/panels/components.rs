@@ -1,8 +1,9 @@
 use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
-    Accordion, Alert, AlertStatus, AlertVariant, Collapsible, EmptyState, Field, Form, Pagination,
-    RawAlert, RawCollapsible, RawEmptyState, RawField, RawSkeleton, Skeleton,
+    Accordion, Alert, AlertStatus, AlertVariant, Collapsible, DescriptionList, EmptyState, Field,
+    Form, Pagination, RawAlert, RawCollapsible, RawDescriptionList, RawEmptyState, RawField,
+    RawSkeleton, RawStatusBar, RawStepper, Skeleton, StatusBar, StepState, Stepper,
 };
 
 #[component]
@@ -13,6 +14,7 @@ pub fn ComponentsPanel(
     visible: Signal<bool>,
     submissions: Signal<usize>,
     input: TextController,
+    step: Signal<usize>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -172,6 +174,91 @@ pub fn ComponentsPanel(
         theme.text_secondary,
         theme.typography.caption,
     )));
+    let set_step = step.clone();
+    let mut stepper = Stepper::new(move |next| set_step.set(next))
+        .step(
+            "Draft",
+            if step.get() == 0 {
+                StepState::Active
+            } else {
+                StepState::Completed
+            },
+        )
+        .step(
+            "Review",
+            if step.get() == 1 {
+                StepState::Active
+            } else {
+                StepState::Upcoming
+            },
+        )
+        .step(
+            "Publish",
+            if step.get() == 2 {
+                StepState::Active
+            } else {
+                StepState::Upcoming
+            },
+        );
+    if use_screen_class() == ScreenClass::Compact {
+        stepper = stepper.vertical();
+    }
+    let detail = DescriptionList::new()
+        .horizontal(100.0)
+        .entry("Owner", "Design team")
+        .entry("Status", "In progress")
+        .entry("Updated", "Today");
+    let status = StatusBar::new()
+        .start(Box::new(RawText::new(
+            "Ready",
+            theme.text_primary,
+            theme.typography.caption,
+        )))
+        .center(Box::new(RawText::new(
+            "UTF-8",
+            theme.text_secondary,
+            theme.typography.caption,
+        )))
+        .end(Box::new(RawText::new(
+            "Online",
+            theme.success,
+            theme.typography.caption,
+        )));
+    let raw_details =
+        RawDescriptionList::new(Style::default().flex_column().gap(theme.spacing_small))
+            .term_width(96.0)
+            .entry(
+                Box::new(RawText::new(
+                    "Raw term",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )),
+                Box::new(RawText::new(
+                    "Custom value",
+                    theme.text_primary,
+                    theme.typography.body,
+                )),
+            );
+    let raw_status =
+        RawStatusBar::new(Style::default().flex_row().padding_all(theme.spacing_small))
+            .background(theme.surface_hover)
+            .start(Box::new(RawText::new(
+                "Raw status",
+                theme.text_primary,
+                theme.typography.caption,
+            )));
+    let raw_stepper = RawStepper::new(Style::default().flex_row().gap(theme.spacing_small), {
+        let set_step = step.clone();
+        move |next| set_step.set(next)
+    })
+    .step(
+        Box::new(RawText::new(
+            "Raw step",
+            theme.accent,
+            theme.typography.body,
+        )),
+        StepState::Active,
+    );
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
@@ -232,6 +319,18 @@ pub fn ComponentsPanel(
                 Box::new(raw_disclosure),
                 Box::new(raw_field),
                 Box::new(raw_empty),
+            ]))
+            .child(card(vec![
+                label("Workspace & data"),
+                Box::new(stepper),
+                Box::new(detail),
+                Box::new(status),
+            ]))
+            .child(card(vec![
+                label("Raw workspace building blocks"),
+                Box::new(raw_stepper),
+                Box::new(raw_details),
+                Box::new(raw_status),
             ])),
     )
 }

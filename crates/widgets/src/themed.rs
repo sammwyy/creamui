@@ -56,6 +56,7 @@ mod surfaces;
 mod text;
 mod titlebar;
 mod typography;
+mod workspace;
 
 pub use application::*;
 pub use avatar::*;
@@ -77,3 +78,4 @@ pub use surfaces::*;
 pub use text::*;
 pub use titlebar::*;
 pub use typography::*;
+pub use workspace::*;

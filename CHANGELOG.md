@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawDescriptionList`/`DescriptionList`, `RawStatusBar`/`StatusBar`,
+  and `RawStepper`/`Stepper` for key/value details, slotted status content,
+  and controlled workflow stages.
 - Add `RawAccordion`/`Accordion`, `RawField`/`Field`, `RawForm`/`Form`,
   and `RawPagination`/`Pagination` with controlled callbacks, optional errors,
   submission state, and gap-aware page links.

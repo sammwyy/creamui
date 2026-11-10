@@ -170,6 +170,30 @@ fn button_states_keep_readable_labels_without_font_dependent_glyphs() {
 }
 
 #[test]
+fn color_picker_chevron_does_not_depend_on_font_glyphs() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let picker = ColorPicker::controlled(
+            Color::rgb(10, 20, 30),
+            &ColorPickerController::default(),
+            |_| {},
+        );
+        let mut painter = RecordingPainter::default();
+        picker.paint(
+            &mut painter,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 220.0,
+                height: 38.0,
+            },
+        );
+        assert_eq!(painter.texts, ["#0A141E"]);
+        assert!(!painter.lines.is_empty());
+    });
+}
+
+#[test]
 fn narrow_typography_keeps_rules_and_quote_bar_inside_its_bounds() {
     let rect = Rect {
         x: 10.0,
@@ -382,6 +406,7 @@ struct RecordingPainter {
     texts: Vec<String>,
     text_colors: Vec<Color>,
     text_rects: Vec<Rect>,
+    lines: Vec<(Point, Point)>,
 }
 
 #[derive(Default)]
@@ -440,6 +465,9 @@ impl Painter for RecordingPainter {
         self.texts.push(text.to_string());
         self.text_colors.push(color);
         self.text_rects.push(rect);
+    }
+    fn stroke_line(&mut self, from: Point, to: Point, _: Color, _: f32) {
+        self.lines.push((from, to));
     }
 }
 

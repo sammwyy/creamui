@@ -139,6 +139,37 @@ fn themed_controls_with_manual_sizes_keep_paint_inside_their_bounds() {
 }
 
 #[test]
+fn button_states_keep_readable_labels_without_font_dependent_glyphs() {
+    creamui_reactive::with_context_scope(|| {
+        let theme = Theme::dark();
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+        for state in [
+            creamui_widgets::ButtonState::Loading,
+            creamui_widgets::ButtonState::Success,
+        ] {
+            let mut painter = RecordingPainter::default();
+            render_frame(
+                Box::new(Button::state(
+                    creamui_widgets::ButtonSize::Md,
+                    "Saved",
+                    state,
+                    || {},
+                )),
+                Size {
+                    width: 120.0,
+                    height: 36.0,
+                },
+                &mut painter,
+            );
+            assert!(painter.texts.iter().any(|text| text == "Saved"));
+            if state == creamui_widgets::ButtonState::Loading {
+                assert!(painter.text_colors.contains(&theme.text_secondary));
+            }
+        }
+    });
+}
+
+#[test]
 fn narrow_typography_keeps_rules_and_quote_bar_inside_its_bounds() {
     let rect = Rect {
         x: 10.0,
@@ -349,6 +380,7 @@ struct RecordingPainter {
     filled_rects: Vec<(Rect, Color)>,
     stroked_rects: Vec<(Rect, Color)>,
     texts: Vec<String>,
+    text_colors: Vec<Color>,
     text_rects: Vec<Rect>,
 }
 
@@ -401,11 +433,12 @@ impl Painter for RecordingPainter {
         &mut self,
         rect: Rect,
         text: &str,
-        _color: Color,
+        color: Color,
         _font_size: f32,
         _align: TextAlign,
     ) {
         self.texts.push(text.to_string());
+        self.text_colors.push(color);
         self.text_rects.push(rect);
     }
 }

@@ -88,9 +88,11 @@ impl Button {
             ButtonVariant::Destructive => (theme.danger, theme.danger, theme.selection_text),
             ButtonVariant::Success => (theme.success, theme.success, theme.selection_text),
         };
-        let label = match state {
-            ButtonState::Success => format!("✓ {}", label.into()),
-            _ => label.into(),
+        let label = label.into();
+        let foreground = if state == ButtonState::Loading {
+            theme.text_secondary
+        } else {
+            foreground
         };
         let mut style = centered_box_style(size.padding());
         style.size.height =
@@ -100,7 +102,7 @@ impl Button {
             foreground,
             size.font_size() * theme.text_scale,
         );
-        let child: BoxedWidget = if state == ButtonState::Loading {
+        let child: BoxedWidget = if state != ButtonState::Normal {
             let content = Style {
                 display: creamui_core::layout::Display::Flex,
                 flex_direction: creamui_core::layout::FlexDirection::Row,
@@ -111,11 +113,12 @@ impl Button {
                 },
                 ..Default::default()
             };
-            Box::new(
-                RawView::new(content)
-                    .child(Box::new(RawSpinner::new(foreground).size(size.font_size())))
-                    .child(Box::new(text)),
-            )
+            let icon: BoxedWidget = if state == ButtonState::Loading {
+                Box::new(RawSpinner::new(foreground).size(size.font_size()))
+            } else {
+                Box::new(crate::Icon::new(crate::Symbol::Check, foreground).size(size.font_size()))
+            };
+            Box::new(RawView::new(content).child(icon).child(Box::new(text)))
         } else {
             Box::new(text)
         };
@@ -201,7 +204,7 @@ impl Button {
     /// Disable activation and apply the shared muted control treatment.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.inner.disabled = disabled || self.state == ButtonState::Loading;
-        if disabled && self.enabled_children.is_none() {
+        if disabled && self.state != ButtonState::Loading && self.enabled_children.is_none() {
             self.enabled_children = Some(std::mem::take(&mut self.inner.children));
             self.inner.children = vec![Box::new(RawText::new(
                 self.label.clone(),

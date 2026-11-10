@@ -93,6 +93,7 @@ mod canvas;
 mod context_menu;
 mod controls;
 mod dataview;
+mod disclosure;
 mod foundation;
 mod marquee;
 mod navigation;
@@ -109,6 +110,7 @@ pub use canvas::*;
 pub use context_menu::*;
 pub use controls::*;
 pub use dataview::*;
+pub use disclosure::*;
 pub use foundation::*;
 pub use marquee::*;
 pub use navigation::*;
@@ -133,10 +135,13 @@ macro_rules! impl_direct_styled {
 }
 
 impl_direct_styled!(
+    RawAlert,
     RawButton,
     RawCheckbox,
+    RawCollapsible,
     RawColorPicker,
     RawDateTimePicker,
+    RawEmptyState,
     RawFilePicker,
     RawLink,
     RawListView,
@@ -146,6 +151,7 @@ impl_direct_styled!(
     RawScrollView,
     RawScrollbar,
     RawSidebar,
+    RawSkeleton,
     RawSlider,
     RawSpinner,
     RawSwitch,

@@ -201,9 +201,7 @@ impl Tab {
         } else {
             colors.muted_text
         };
-        let text = RawText::new(label, text_color, 14.0)
-            .text_align(TextAlign::Center)
-            .layout(style.clone());
+        let text = RawText::new(label, text_color, 14.0).text_align(TextAlign::Center);
         let mut inner = RawTab::new(style, active, on_click)
             .corner_radius(colors.radius)
             .child(Box::new(text));

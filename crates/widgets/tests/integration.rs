@@ -791,6 +791,51 @@ fn tab_sizing_supports_content_equal_and_fill_widths() {
 }
 
 #[test]
+fn equal_tabs_keep_labels_on_one_line_inside_their_buttons() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
+        let labels = ["Overview", "Activity", "Settings"];
+        let colors = TabColors::dark();
+        let tabs = tab_styles(&labels, TabSizing::Equal, 34.0, 12.0)
+            .into_iter()
+            .zip(labels)
+            .fold(
+                Tabs::new(colors, creamui_widgets::layout::row(colors.gap)),
+                |tabs, (style, label)| {
+                    tabs.child(Box::new(creamui_widgets::Tab::new(
+                        colors,
+                        style,
+                        label,
+                        false,
+                        || {},
+                    )))
+                },
+            );
+        let mut painter = RecordingPainter::default();
+        render_frame(
+            Box::new(tabs),
+            Size {
+                width: 320.0,
+                height: 42.0,
+            },
+            &mut painter,
+        );
+        assert_eq!(painter.texts, labels);
+        for (label, rect) in labels.iter().zip(&painter.text_rects) {
+            let Dimension::Length(label_width) = tab_styles(&[label], TabSizing::Equal, 34.0, 0.0)
+                [0]
+            .size
+            .width
+            else {
+                panic!("equal tabs must have a fixed width");
+            };
+            assert!(rect.height <= 34.0, "{rect:?}");
+            assert!(rect.width >= label_width, "{rect:?} < {label_width}");
+        }
+    });
+}
+
+#[test]
 fn tabs_preserve_the_callers_layout_style() {
     let theme = Theme::dark();
     creamui_reactive::with_context_scope(|| {

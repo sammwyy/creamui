@@ -22,7 +22,7 @@ CreamUI pairs a familiar component model with native windows, CSS-like flex and 
 
 CreamUI includes text, buttons, text inputs, text areas, checkboxes, switches, sliders, select/list/radio controls, tabs, sidebars, scroll views, trees, tables, popovers, dialogs, progress indicators, pickers, and images.
 
-Every visual component has a lower-level `Raw*` counterpart where applications can choose colors, radii, spacing, and event behavior themselves.
+Core controls have lower-level `Raw*` counterparts for manual styling. Composite themed widgets can also be customized with `Styled` or assembled from raw controls and layout primitives. See the [component catalog](docs/components.md#component-catalog) for the available foundations.
 
 ## Quick start
 

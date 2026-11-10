@@ -83,7 +83,6 @@ one can be extended. Variants are design suggestions, not promised features.
 | `Toolbar` | Arrange commands in a header or editor with overflow handling. | `RawToolbar` owns group ordering, focus navigation, and overflow. | `Toolbar` themes icon/text actions; attached/floating variants. |
 | `Sheet` | Reveal contextual content from an edge, separate from centered dialogs. | `RawSheet` handles overlay placement, focus return, dismissal, and scrolling. | `Sheet` themes panel/backdrop; left/right/bottom and modal/nonmodal. |
 | `HoverCard` | Show richer interactive preview content than a tooltip. | `RawHoverCard` shares anchored positioning with `RawTooltip` but allows focusable content. | `HoverCard` themes preview surface; delayed hover/focus. |
-| `Carousel` | Browse a finite sequence of slides by keyboard, pointer, or controls. | `RawCarousel` manages index, clipping, snap behavior, and reduced motion. | `Carousel` themes arrows/indicators; contained/full-bleed. |
 | `GridLayout` | Rearrange and resize dashboard cards with drag handles. | `RawGridLayout` exposes controlled item coordinates, collision rules, and bounds. | `GridLayout` themes drag previews and handles; editable/locked. |
 
 - Add dividers to `DescriptionList`, compact height to `StatusBar`, and

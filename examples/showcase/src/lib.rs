@@ -112,6 +112,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_month = Signal::new(DateTime::new(2026, 3, 1, 0, 0));
     let components_date = Signal::new(Some(DateTime::new(2026, 3, 15, 0, 0)));
     let components_rating = Signal::new(3.5f32);
+    let components_carousel = Signal::new(0usize);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -310,6 +311,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     month: components_month.clone(),
                     date: components_date.clone(),
                     rating: components_rating.clone(),
+                    carousel: components_carousel.clone(),
                 }),
             };
 

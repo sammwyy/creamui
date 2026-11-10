@@ -93,6 +93,7 @@ mod application;
 mod button;
 mod calendar;
 mod canvas;
+mod carousel;
 mod content;
 mod context_menu;
 mod controls;
@@ -117,6 +118,7 @@ pub use application::*;
 pub use button::*;
 pub use calendar::*;
 pub use canvas::*;
+pub use carousel::*;
 pub use content::*;
 pub use context_menu::*;
 pub use controls::*;
@@ -154,6 +156,7 @@ impl_direct_styled!(
     RawAttachment,
     RawButton,
     RawCalendar,
+    RawCarousel,
     RawCheckbox,
     RawChatMessage,
     RawCollapsible,

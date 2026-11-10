@@ -1,12 +1,12 @@
 use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
-    Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, ChatMessage,
-    Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd,
-    NumberInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawChatMessage,
-    RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawInputGroup,
-    RawKbd, RawNumberInput, RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
-    Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
+    Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
+    ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup,
+    Kbd, NumberInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel,
+    RawChatMessage, RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField,
+    RawInputGroup, RawKbd, RawNumberInput, RawRating, RawSkeleton, RawStatusBar, RawStepper,
+    RawTag, RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
 };
 
 #[component]
@@ -32,6 +32,7 @@ pub fn ComponentsPanel(
     month: Signal<DateTime>,
     date: Signal<Option<DateTime>>,
     rating: Signal<f32>,
+    carousel: Signal<usize>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -363,6 +364,42 @@ pub fn ComponentsPanel(
     })
     .step(0.5)
     .colors(theme.success, theme.border);
+    let select_slide = carousel.clone();
+    let mut themed_carousel = Carousel::new(carousel.get(), move |index| select_slide.set(index));
+    let raw_select_slide = carousel.clone();
+    let mut raw_carousel = RawCarousel::new(
+        Style::default().flex_column().gap(theme.spacing_small),
+        carousel.get(),
+        move |index| raw_select_slide.set(index),
+    )
+    .indicators(theme.border, theme.success)
+    .looping(true);
+    for (index, name) in ["Overview", "Details", "Activity"].iter().enumerate() {
+        themed_carousel = themed_carousel.slide(Box::new(
+            RawView::new(Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Auto,
+                },
+                ..Style::default().padding_all(theme.spacing_medium)
+            })
+            .background(theme.surface_hover)
+            .corner_radius(theme.radius_small)
+            .child(Box::new(RawText::new(
+                format!("Slide {}: {}", index + 1, name),
+                theme.text_primary,
+                theme.typography.body,
+            ))),
+        ));
+        raw_carousel = raw_carousel.slide(Box::new(
+            RawText::new(
+                format!("Raw slide {}", index + 1),
+                theme.text_primary,
+                theme.typography.body,
+            )
+            .padding(theme.spacing_small),
+        ));
+    }
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -657,6 +694,12 @@ pub fn ComponentsPanel(
                     theme.typography.caption,
                 )),
                 Box::new(raw_rating),
+            ]))
+            .child(card(vec![
+                label("Carousel"),
+                Box::new(themed_carousel),
+                label("Raw carousel"),
+                Box::new(raw_carousel),
             ])),
     )
 }

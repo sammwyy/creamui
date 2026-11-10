@@ -44,6 +44,10 @@ Current limitations and work still to do. Implemented changes belong in
 
 ## Tooling
 
+- Add raw, manually styled, and themed visual coverage for every exported widget
+  not yet represented by the showcase, including overlays, virtualized data
+  views, menus, titlebars, and pickers. Exercise narrow and high-DPI viewports,
+  light/dark themes, keyboard focus, hover, scrolling, and animation states.
 - Clear existing strict Clippy diagnostics in `creamui-core` and `creamui-render`.
   `cargo clippy -p creamui-render --all-targets -- -D warnings` currently fails
   on complex callback types, large enum variants, macro paths and other style

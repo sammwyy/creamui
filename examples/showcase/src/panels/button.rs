@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use creamui_core::Styled as _;
 
 /// The "Button" panel: the default themed `Button`, a couple of
 /// semantically-colored variants built straight from `RawButton`, and a
@@ -50,6 +51,40 @@ pub fn ButtonPanel(clicks: Signal<i32>) -> BoxedWidget {
     })
     .collect();
 
+    let raw_clicks = clicks.clone();
+    let custom_clicks = clicks.clone();
+    let raw_button = creamui_widgets::RawButton::new(
+        Style {
+            size: fixed(74.0, 36.0),
+            align_items: Some(AlignItems::Center),
+            justify_content: Some(JustifyContent::Center),
+            ..Default::default()
+        },
+        move || raw_clicks.update(|count| *count += 1),
+    )
+    .child(Box::new(RawText::new(
+        "Raw",
+        theme.text_primary,
+        theme.typography.body,
+    )));
+    let custom_button = creamui_widgets::RawButton::new(
+        Style {
+            size: fixed(126.0, 36.0),
+            align_items: Some(AlignItems::Center),
+            justify_content: Some(JustifyContent::Center),
+            ..Default::default()
+        },
+        move || custom_clicks.update(|count| *count += 1),
+    )
+    .background(Color::rgb(0x16, 0x48, 0x51))
+    .border(Color::rgb(0x5c, 0xe1, 0xff), 1.0)
+    .corner_radius(9.0)
+    .child(Box::new(RawText::new(
+        "Custom raw",
+        Color::rgb(0xbf, 0xef, 0xff),
+        theme.typography.body,
+    )));
+
     Box::new(jsx! {
         <RawView style={column(section_gap())}>
             <SectionHeader title={"Buttons".to_owned()} subtitle={"A clear hierarchy, from everyday actions to important decisions.".to_owned()} />
@@ -69,6 +104,13 @@ pub fn ButtonPanel(clicks: Signal<i32>) -> BoxedWidget {
                     <StyledButton variant={ButtonVariant::Primary} size={ButtonSize::Md} label={"Saved".to_owned()} state={ButtonState::Success} on_click={Box::new(|| {}) as Box<dyn Fn()>} disabled={false} />
                 </RawView>
                 <RawText color={theme.text_secondary} font_size={12.0} align={TextAlign::Start}>{format!("{} actions · Try Tab, then Enter or Space", clicks.get())}</RawText>
+            </Card>
+            <Card gap={theme.spacing_medium}>
+                <FieldLabel text={"Headless and manual styling".to_owned()} />
+                <RawView style={row(10.)}>
+                    {Box::new(raw_button) as BoxedWidget}
+                    {Box::new(custom_button) as BoxedWidget}
+                </RawView>
             </Card>
         </RawView>
     })

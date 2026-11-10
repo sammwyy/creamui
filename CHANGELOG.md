@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawNumberInput` and `NumberInput` with persistent draft text,
+  finite bounded values, configurable decimal precision, commit on Enter or
+  blur, and stepper buttons and arrow-key increments.
 - Add `RawInputGroup`/`InputGroup`, controlled `ToggleButton` with an explicit
   pressed state on `RawButton`, and `RawDropdownButton`/`DropdownButton`
   with independent, keyboard-focusable primary and menu actions.

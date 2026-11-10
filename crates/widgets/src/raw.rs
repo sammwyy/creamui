@@ -100,6 +100,7 @@ mod disclosure;
 mod foundation;
 mod marquee;
 mod navigation;
+mod number;
 mod pickers;
 mod scroll;
 mod spinner;
@@ -121,6 +122,7 @@ pub use disclosure::*;
 pub use foundation::*;
 pub use marquee::*;
 pub use navigation::*;
+pub use number::*;
 pub use pickers::*;
 pub use scroll::*;
 pub use spinner::*;
@@ -163,6 +165,7 @@ impl_direct_styled!(
     RawLink,
     RawListView,
     RawMarquee,
+    RawNumberInput,
     RawPagination,
     RawPre,
     RawQuote,

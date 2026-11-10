@@ -60,7 +60,6 @@ one can be extended. Variants are design suggestions, not promised features.
 |---|---|---|---|
 | `Toast` | Queue transient nonmodal notifications with timeout and dismissal. | `RawToast` plus a host/controller handle stacking, timers, focus, and close actions. | `Toast` uses success/error/info variants, action and progress options. |
 | `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
-| `NumberInput` | Edit bounded numbers using typing, step buttons, and keyboard increments. | `RawNumberInput` parses/formats controlled values, clamps on commit, and exposes step actions. | `NumberInput` themes steppers; integer/decimal, compact/regular. |
 | `OtpInput` | Enter a fixed-length one-time code with predictable paste and focus. | `RawOtpInput` owns cell navigation, paste distribution, and controlled value. | `OtpInput` themes focus/error states; grouped or uniform cells. |
 | `Calendar` | Browse months and select a date independently of the existing date input. | `RawCalendar` handles date grid, disabled days, locale/week start, and keyboard navigation. | `Calendar` styles today/selected/range days; single/range and multi-month. |
 

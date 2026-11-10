@@ -22,7 +22,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Forms | `Field`, `Form` | Labeled inputs with hints/errors and controlled submission. | `RawField`, `RawForm` |
 | Text entry | `TextInput`, `TextArea`, `InputGroup` | Controlled editing and composable prefix/suffix addons. | `RawTextInput`, `RawTextArea`, `RawInputGroup` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
-| Numeric and activity | `Slider`, `Spinner` | Range selection and activity indicator. | `RawSlider`, `RawSpinner` |
+| Numeric and activity | `Slider`, `Spinner`, `NumberInput` | Range selection, activity indicator, and bounded numeric editing. | `RawSlider`, `RawSpinner`, `RawNumberInput` |
 | Choice | `Select`, `ComboBox` | Option popup; searchable mode (`ComboBox` alias). | `RawView`, `RawTextInput`, `RawScrollView`; no dedicated raw select |
 | Choice | `Radio`, `RadioGroup`, `SegmentedControl`, `ListBox` | Single-choice buttons, groups, segments, and option list. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Date and time | `DateTimePicker`, `DateInput`, `TimeInput` | Date/time editing and input wrappers. | `RawDateTimePicker` |

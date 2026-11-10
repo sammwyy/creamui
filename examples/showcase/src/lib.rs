@@ -105,6 +105,10 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_pressed = Signal::new(false);
     let components_menu_open = Signal::new(false);
     let components_action_count = Signal::new(0usize);
+    let components_number = Signal::new(2.5f64);
+    let components_number_text = TextController::new("2.5");
+    let components_raw_number_text = TextController::new("3");
+    let components_raw_number = Signal::new(3.0f64);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -296,6 +300,10 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     pressed: components_pressed.clone(),
                     menu_open: components_menu_open.clone(),
                     action_count: components_action_count.clone(),
+                    number: components_number.clone(),
+                    number_text: components_number_text.clone(),
+                    raw_number: components_raw_number.clone(),
+                    raw_number_text: components_raw_number_text.clone(),
                 }),
             };
 

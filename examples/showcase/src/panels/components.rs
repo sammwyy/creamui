@@ -2,10 +2,11 @@ use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, ChatMessage, Collapsible,
-    DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd, Pagination,
-    RawAlert, RawAttachment, RawChatMessage, RawCollapsible, RawDescriptionList, RawDropdownButton,
-    RawEmptyState, RawField, RawInputGroup, RawKbd, RawSkeleton, RawStatusBar, RawStepper, RawTag,
-    RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
+    DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd, NumberInput,
+    Pagination, RawAlert, RawAttachment, RawChatMessage, RawCollapsible, RawDescriptionList,
+    RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawSkeleton,
+    RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag,
+    ToggleButton,
 };
 
 #[component]
@@ -24,6 +25,10 @@ pub fn ComponentsPanel(
     pressed: Signal<bool>,
     menu_open: Signal<bool>,
     action_count: Signal<usize>,
+    number: Signal<f64>,
+    number_text: TextController,
+    raw_number: Signal<f64>,
+    raw_number_text: TextController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -442,6 +447,31 @@ pub fn ComponentsPanel(
             .background(theme.surface_hover)
             .padding(theme.spacing_small),
     );
+    let set_number = number.clone();
+    let themed_number =
+        NumberInput::new(&number_text, number.get(), move |next| set_number.set(next))
+            .bounds(Some(0.0), Some(10.0))
+            .step(0.5)
+            .precision(1);
+    let set_raw_number = raw_number.clone();
+    let raw_numeric = RawNumberInput::new(
+        Style::default()
+            .flex_row()
+            .align(Align::Center)
+            .size(190.0, 38.0)
+            .padding_all(4.0),
+        &raw_number_text,
+        raw_number.get(),
+        move |next| set_raw_number.set(next),
+    )
+    .bounds(Some(0.0), Some(20.0))
+    .step(1.0)
+    .colors(
+        theme.text_primary,
+        theme.text_primary,
+        theme.typography.body,
+    )
+    .background(theme.surface_hover);
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
@@ -550,6 +580,16 @@ pub fn ComponentsPanel(
                 label("Raw input & action building blocks"),
                 Box::new(raw_input_group),
                 Box::new(RawView::new(row(theme.spacing_small)).child(Box::new(raw_toggle)).child(Box::new(raw_split))),
+            ]))
+            .child(card(vec![
+                label("Bounded number input"),
+                Box::new(themed_number),
+                Box::new(RawText::new(
+                    format!("Value: {:.1}", number.get()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                Box::new(raw_numeric),
             ])),
     )
 }

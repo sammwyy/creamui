@@ -43,15 +43,22 @@ fn draw_text_decorations(
         return;
     }
     let (width, _) = crate::text_metrics::measure_family(text, font_size, rect.width, family, bold);
+    let width = width.min(rect.width.max(0.0));
+    let thickness = (font_size * 0.06).max(1.0).min(rect.height.max(0.0));
+    if width <= 0.0 || thickness <= 0.0 {
+        return;
+    }
     let x = match align {
         TextAlign::Start => rect.x,
         TextAlign::Center => rect.x + (rect.width - width) / 2.0,
         TextAlign::End => rect.x + rect.width - width,
     };
     let center_y = rect.y + rect.height / 2.0;
-    let thickness = (font_size * 0.06).max(1.0);
     if underline {
-        let y = center_y + font_size * 0.32;
+        let y = (center_y + font_size * 0.32).clamp(
+            rect.y + thickness / 2.0,
+            rect.y + rect.height - thickness / 2.0,
+        );
         painter.fill_rect(
             Rect {
                 x,
@@ -64,7 +71,10 @@ fn draw_text_decorations(
         );
     }
     if strikethrough {
-        let y = center_y - font_size * 0.02;
+        let y = (center_y - font_size * 0.02).clamp(
+            rect.y + thickness / 2.0,
+            rect.y + rect.height - thickness / 2.0,
+        );
         painter.fill_rect(
             Rect {
                 x,

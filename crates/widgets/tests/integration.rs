@@ -138,6 +138,35 @@ fn themed_controls_with_manual_sizes_keep_paint_inside_their_bounds() {
     });
 }
 
+#[test]
+fn narrow_typography_keeps_rules_and_quote_bar_inside_its_bounds() {
+    let rect = Rect {
+        x: 10.0,
+        y: 20.0,
+        width: 2.0,
+        height: 20.0,
+    };
+    let mut painter = RecordingPainter::default();
+    RawText::new("A long underlined label", Color::rgb(10, 20, 30), 14.0)
+        .underline(true)
+        .text_align(TextAlign::Center)
+        .paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+    let mut painter = RecordingPainter::default();
+    creamui_widgets::RawQuote::new(Style::default(), Color::rgb(10, 20, 30), 3.0)
+        .paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let mut painter = RecordingPainter::default();
+        creamui_widgets::Quote::new("An example")
+            .width(2.0)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    });
+}
+
 fn assert_paint_inside(painter: &RecordingPainter, bounds: Rect) {
     for (painted, _) in &painter.filled_rects {
         assert!(

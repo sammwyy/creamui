@@ -3,10 +3,10 @@ use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, ChatMessage,
     Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd,
-    NumberInput, Pagination, RawAlert, RawAttachment, RawCalendar, RawChatMessage, RawCollapsible,
-    RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd,
-    RawNumberInput, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton,
-    StatusBar, StepState, Stepper, Tag, ToggleButton,
+    NumberInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawChatMessage,
+    RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawInputGroup,
+    RawKbd, RawNumberInput, RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
+    Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
 };
 
 #[component]
@@ -31,6 +31,7 @@ pub fn ComponentsPanel(
     raw_number_text: TextController,
     month: Signal<DateTime>,
     date: Signal<Option<DateTime>>,
+    rating: Signal<f32>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -354,6 +355,14 @@ pub fn ComponentsPanel(
         today: theme.accent,
     })
     .background(theme.surface_hover);
+    let set_rating = rating.clone();
+    let themed_rating = Rating::new(rating.get(), 5, move |next| set_rating.set(next)).half_steps();
+    let raw_rating = RawRating::new(Style::default().size(140.0, 28.0), rating.get(), 5, {
+        let set_rating = rating.clone();
+        move |next| set_rating.set(next)
+    })
+    .step(0.5)
+    .colors(theme.success, theme.border);
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -638,6 +647,16 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw calendar"),
                 Box::new(raw_calendar),
+            ]))
+            .child(card(vec![
+                label("Ratings"),
+                Box::new(themed_rating),
+                Box::new(RawText::new(
+                    format!("{:.1} / 5", rating.get()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                Box::new(raw_rating),
             ])),
     )
 }

@@ -27,6 +27,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Choice | `Radio`, `RadioGroup`, `SegmentedControl`, `ListBox` | Single-choice buttons, groups, segments, and option list. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Date and time | `DateTimePicker`, `DateInput`, `TimeInput` | Date/time editing and input wrappers. | `RawDateTimePicker` |
 | Calendar | `Calendar` | Standalone month grid with controlled selection and disabled dates. | `RawCalendar` |
+| Rating | `Rating` | Keyboard and pointer rating with optional half steps or read-only display. | `RawRating` |
 | Color and files | `ColorPicker`, `FilePicker`, `FilePrompt` | Color selection, native/browser file selection, and path prompt fallback. | `RawColorPicker`, `RawFilePicker`; no dedicated raw prompt |
 | Tabs | `Tabs`, `Tab` | Tab strip and individual selectable tab. | `RawTabs`, `RawTab` |
 | Navigation | `Pagination` | Controlled page links, gaps, and previous/next controls. | `RawPagination` |

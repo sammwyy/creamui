@@ -111,6 +111,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_raw_number = Signal::new(3.0f64);
     let components_month = Signal::new(DateTime::new(2026, 3, 1, 0, 0));
     let components_date = Signal::new(Some(DateTime::new(2026, 3, 15, 0, 0)));
+    let components_rating = Signal::new(3.5f32);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -308,6 +309,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_number_text: components_raw_number_text.clone(),
                     month: components_month.clone(),
                     date: components_date.clone(),
+                    rating: components_rating.clone(),
                 }),
             };
 

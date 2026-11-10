@@ -62,10 +62,10 @@ pub use raw::{
     RawButton, RawCalendar, RawCanvas, RawChatMessage, RawCheckbox, RawCollapsible, RawColorPicker,
     RawContextMenu, RawDateTimePicker, RawDescriptionList, RawDropdownButton, RawEmptyState,
     RawField, RawFilePicker, RawForm, RawInputGroup, RawKbd, RawLink, RawListView, RawMarquee,
-    RawNumberInput, RawPagination, RawPre, RawQuote, RawScrollView, RawScrollbar, RawSidebar,
-    RawSkeleton, RawSlider, RawSpinner, RawSplitView, RawStatusBar, RawStepper, RawSwitch, RawTab,
-    RawTable, RawTabs, RawTag, RawText, RawTextArea, RawTextInput, RawTranslate, RawView,
-    RawVirtualList, RawVirtualTable, SplitAxis, SplitState, StepState, TabIndicatorSide,
+    RawNumberInput, RawPagination, RawPre, RawQuote, RawRating, RawScrollView, RawScrollbar,
+    RawSidebar, RawSkeleton, RawSlider, RawSpinner, RawSplitView, RawStatusBar, RawStepper,
+    RawSwitch, RawTab, RawTable, RawTabs, RawTag, RawText, RawTextArea, RawTextInput, RawTranslate,
+    RawView, RawVirtualList, RawVirtualTable, SplitAxis, SplitState, StepState, TabIndicatorSide,
     TableColumn, TextSelection, VirtualListState,
 };
 pub use themed::{
@@ -77,7 +77,7 @@ pub use themed::{
     DialogMessage, DialogPlacement, DropdownButton, EmptyState, Field, FilePicker, FilePrompt,
     Form, Heading, InputGroup, Kbd, Link, ListBox, ListView, MenuBar, MenuColors, MenuItem,
     MenuPopup, ModalActions, NumberInput, Overlay, Pagination, Popover, Pre, ProgressBar,
-    ProgressRing, Quote, Radio, RadioGroup, ScrollView, SegmentedControl, Select, Sidebar,
+    ProgressRing, Quote, Radio, RadioGroup, Rating, ScrollView, SegmentedControl, Select, Sidebar,
     SidebarItem, SidebarNode, SidebarSeparator, Skeleton, Slider, Spinner, StatusBar, Stepper,
     Switch, Tab, TabColors, TabSizing, Table, Tabs, Tag, Text, TextArea, TextInput, TextSize,
     TimeInput, ToggleButton, TreeNode, TreeView, TypingIndicator, VirtualList, VirtualTable,

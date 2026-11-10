@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawRating` and `Rating` with read-only and interactive stars, half-step
+  selection, keyboard increments, and pointer hit testing.
 - Add `RawCalendar` and `Calendar` with controlled month and day selection,
   disabled dates, week-start configuration, keyboard day navigation, and
   today highlighting.

@@ -93,7 +93,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `Rating` | Choose a rating by keyboard or pointer, including read-only display. | `RawRating` handles bounded values and focus/pointer hit regions. | `Rating` themes stars; interactive/read-only and half-step. |
 | `Chart` | Plot application-provided series without embedding a web view. | `RawPlot` draws axes/series with explicit scales, clipping, and hit tests. | `Chart` themes grid/legend; line/bar/area first, other types later. |
 | `Diff` | Review supplied patch hunks without editing source. | `RawDiff` virtualizes lines/hunks with gutter, selection, and conflict markers. | `Diff` themes insert/delete/neutral lines; unified/side-by-side. |
 | `CodeEditor` | Edit source with line numbers, highlighting, and large-file navigation. | `RawCodeEditor` builds on text editing with revisioned document, gutter, IME, and undo. | `CodeEditor` themes tokens/selection; read-only/editable and wrap/no-wrap. |

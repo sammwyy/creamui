@@ -103,6 +103,7 @@ mod marquee;
 mod navigation;
 mod number;
 mod pickers;
+mod rating;
 mod scroll;
 mod spinner;
 mod split;
@@ -126,6 +127,7 @@ pub use marquee::*;
 pub use navigation::*;
 pub use number::*;
 pub use pickers::*;
+pub use rating::*;
 pub use scroll::*;
 pub use spinner::*;
 pub use split::*;
@@ -172,6 +174,7 @@ impl_direct_styled!(
     RawPagination,
     RawPre,
     RawQuote,
+    RawRating,
     RawScrollView,
     RawScrollbar,
     RawSidebar,

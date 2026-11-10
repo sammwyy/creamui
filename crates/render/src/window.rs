@@ -1051,6 +1051,18 @@ impl Pipeline {
         }
     }
 
+    /// The platform dropped the window's pixels (restored from minimized,
+    /// shown again after `hide()`): forget the last presented frame so the next
+    /// one is a full repaint instead of a diff that would leave the rest blank.
+    fn invalidate_surface(&self) {
+        let mut frame = self.frame.borrow_mut();
+        if let Some(list) = frame.presented.take() {
+            frame.recorder.recycle(list);
+        }
+        drop(frame);
+        self.invalidate_paint();
+    }
+
     fn physical_size(&self) -> (Size, u32, u32, f64) {
         let logical = self.surface.peek();
         let scale = self.scale_factor.peek();
@@ -2034,6 +2046,11 @@ impl WindowHandle {
             window.set_visible(true);
             window.set_minimized(false);
             window.focus();
+            // Hidden or minimized windows lose their pixels on some platforms
+            // (Windows): the unchanged frame would otherwise never be presented.
+            if let Some(pipeline) = self.pipeline.upgrade() {
+                pipeline.invalidate_surface();
+            }
             window.request_redraw();
         }
     }
@@ -2379,6 +2396,9 @@ struct WindowState {
     backend: RenderBackend,
     transparent: bool,
     suspended: bool,
+    /// The platform reported a zero-sized surface (Windows: minimized). Its
+    /// pixels are discarded meanwhile, so the next real size repaints whole.
+    zero_sized: bool,
     pointer_pos: Point,
     last_click: Option<(Instant, Point)>,
     modifiers: PlatformModifiers,
@@ -3186,7 +3206,11 @@ impl WindowState {
             WindowEvent::Resized(new_size) => {
                 self.poll_decorations();
                 if new_size.width == 0 || new_size.height == 0 {
+                    self.zero_sized = true;
                     return;
+                }
+                if std::mem::take(&mut self.zero_sized) {
+                    self.pipeline.invalidate_surface();
                 }
                 let scale = self.pipeline.scale_factor.peek();
                 self.queue_viewport(Size {
@@ -4181,6 +4205,7 @@ impl AppHandler {
             backend: spec.options.backend,
             transparent: spec.options.transparent,
             suspended: false,
+            zero_sized: false,
             pointer_pos: Point::default(),
             last_click: None,
             modifiers: PlatformModifiers::default(),
@@ -5047,6 +5072,7 @@ mod tests {
                 backend: RenderBackend::Cpu,
                 transparent: false,
                 suspended: false,
+                zero_sized: false,
                 pointer_pos: Point::default(),
                 last_click: None,
                 modifiers: PlatformModifiers::default(),
@@ -7791,6 +7817,73 @@ mod tests {
         assert_eq!(hook_sizes.borrow().last().unwrap().width, 160.0);
         let frame = harness.state.pipeline.frame.borrow();
         assert_eq!(frame.presented.as_ref().unwrap().width, 160);
+    }
+
+    #[test]
+    fn restoring_from_zero_size_presents_a_full_frame() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(SmallHoverRoot {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        let size = harness
+            .state
+            .pipeline
+            .frame
+            .borrow()
+            .presented
+            .as_ref()
+            .map(|l| (l.width, l.height));
+        let (width, height) = size.expect("the harness presents a first frame");
+        // A hover leaves a partial last frame, so only a fresh full frame passes below.
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        {
+            let frame = harness.state.pipeline.frame.borrow();
+            assert!(frame.last_report.damaged_pixels < frame.last_report.frame_pixels);
+        }
+        // Minimize: zero-sized surface, then restore at the same size.
+        harness.send(WindowEvent::Resized(creamui_platform::PhysicalSize {
+            width: 0,
+            height: 0,
+        }));
+        harness.send(WindowEvent::Resized(creamui_platform::PhysicalSize {
+            width,
+            height,
+        }));
+        harness.send(WindowEvent::RedrawRequested);
+        let frame = harness.state.pipeline.frame.borrow();
+        let report = &frame.last_report;
+        assert_eq!(
+            report.damaged_pixels, report.frame_pixels,
+            "an unchanged frame must still repaint whole after a restore: {report:?}"
+        );
+    }
+
+    #[test]
+    fn an_invalidated_surface_presents_a_full_frame() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(SmallHoverRoot {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        // What `WindowHandle::show()` does after a `hide()` (tray "open").
+        harness.state.pipeline.invalidate_surface();
+        harness.send(WindowEvent::RedrawRequested);
+        let frame = harness.state.pipeline.frame.borrow();
+        let report = &frame.last_report;
+        assert_eq!(
+            report.damaged_pixels, report.frame_pixels,
+            "showing a hidden window must repaint it whole: {report:?}"
+        );
     }
 
     #[test]

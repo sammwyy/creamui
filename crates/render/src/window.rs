@@ -858,6 +858,8 @@ struct Pipeline {
     pending_root: RefCell<Option<BoxedWidget>>,
     needs_layout: Cell<bool>,
     needs_paint: Cell<bool>,
+    /// A programmatic resize is pending; the next redraw rereads the window size.
+    size_requested: Cell<bool>,
     dump_frame_path: Option<String>,
 }
 
@@ -1016,6 +1018,16 @@ impl Pipeline {
         if let Some(window) = self.window.borrow().as_ref() {
             window.request_redraw();
         }
+    }
+
+    /// winit on Wayland applies the size at once and sends no `Resized`, so
+    /// the next redraw rereads the window size instead of waiting for one.
+    fn request_inner_size(&self, size: LogicalSize) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.request_inner_size(size);
+        }
+        self.size_requested.set(true);
+        self.request_redraw();
     }
 
     /// Rebuilds the widget tree from `build_ui`. Runs inside the window's
@@ -1858,12 +1870,12 @@ impl WindowHandle {
         }
     }
 
-    /// Requests a new logical-pixel window size. The actual resize (and any
-    /// resulting `Resized` event) happens asynchronously, same as a user
-    /// dragging the window border.
+    /// Requests a new logical-pixel window size. Some platforms apply it
+    /// later with a `Resized` event, others (Wayland) at once; the next frame
+    /// is laid out for the new size either way.
     pub fn resize(&self, width: u32, height: u32) {
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.request_inner_size(LogicalSize::new(width as f64, height as f64));
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.request_inner_size(LogicalSize::new(width as f64, height as f64));
         }
     }
 
@@ -3814,6 +3826,12 @@ impl WindowState {
             self.pipeline.invalidate_layout();
         }
         self.refresh_safe_area();
+        if self.pipeline.size_requested.take() {
+            let viewport = self.viewport_from_window();
+            if viewport.width > 0.0 && viewport.height > 0.0 {
+                self.queue_viewport(viewport);
+            }
+        }
         self.flush_pending_viewport();
         self.pipeline.update();
         let ready = self
@@ -4827,6 +4845,7 @@ fn build_window_spec(
         pending_root: RefCell::new(None),
         needs_layout: Cell::new(true),
         needs_paint: Cell::new(true),
+        size_requested: Cell::new(false),
         dump_frame_path,
     });
     let effect = create_effect({
@@ -4928,7 +4947,13 @@ mod tests {
         }
         fn request_redraw(&self) {}
         fn close(&self) {}
-        fn request_inner_size(&self, _: LogicalSize) {}
+        // Applies at once without a `Resized`, like winit on Wayland.
+        fn request_inner_size(&self, size: LogicalSize) {
+            *self.size.lock().unwrap() = Some(creamui_platform::PhysicalSize {
+                width: size.width as u32,
+                height: size.height as u32,
+            });
+        }
         fn set_min_inner_size(&self, size: Option<LogicalSize>) {
             self.minimum.lock().unwrap().push(size);
         }
@@ -7791,6 +7816,36 @@ mod tests {
         assert_eq!(hook_sizes.borrow().last().unwrap().width, 160.0);
         let frame = harness.state.pipeline.frame.borrow();
         assert_eq!(frame.presented.as_ref().unwrap().width, 160);
+    }
+
+    #[test]
+    fn a_programmatic_resize_without_a_resized_event_lays_out_the_new_size() {
+        let sizes = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let sizes = sizes.clone();
+            move |size| {
+                sizes.borrow_mut().push(size);
+                Box::new(BlankWidget)
+            }
+        });
+        let window = Arc::new(InteractiveTestWindow::default());
+        *harness.state.pipeline.window.borrow_mut() = Some(window);
+        // Wayland: the size applies at once and no `Resized` follows.
+        harness
+            .state
+            .pipeline
+            .request_inner_size(LogicalSize::new(250.0, 84.0));
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(
+            sizes.borrow().last().copied(),
+            Some(Size {
+                width: 250.0,
+                height: 84.0
+            })
+        );
+        let frame = harness.state.pipeline.frame.borrow();
+        let presented = frame.presented.as_ref().unwrap();
+        assert_eq!((presented.width, presented.height), (250, 84));
     }
 
     #[test]

@@ -3,10 +3,11 @@ use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
     ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup,
-    Kbd, NumberInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel,
-    RawChatMessage, RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField,
-    RawInputGroup, RawKbd, RawNumberInput, RawRating, RawSkeleton, RawStatusBar, RawStepper,
-    RawTag, RawTextInput, Skeleton, StatusBar, StepState, Stepper, Tag, ToggleButton,
+    Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
+    RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
+    RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
+    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton, StatusBar,
+    StepState, Stepper, Tag, ToggleButton,
 };
 
 #[component]
@@ -33,6 +34,9 @@ pub fn ComponentsPanel(
     date: Signal<Option<DateTime>>,
     rating: Signal<f32>,
     carousel: Signal<usize>,
+    otp: OtpController,
+    raw_otp: OtpController,
+    otp_updates: Signal<usize>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -400,6 +404,19 @@ pub fn ComponentsPanel(
             .padding(theme.spacing_small),
         ));
     }
+    let record_otp_update = otp_updates.clone();
+    let themed_otp = OtpInput::new(&otp, move |_| record_otp_update.update(|count| *count += 1));
+    let record_raw_update = otp_updates.clone();
+    let raw_otp_input = RawOtpInput::new(Style::default().size(160.0, 42.0), &raw_otp, move |_| {
+        record_raw_update.update(|count| *count += 1)
+    })
+    .colors(OtpColors {
+        text: theme.text_primary,
+        surface: theme.surface_hover,
+        border: theme.border,
+        focus: theme.accent,
+        error: theme.danger,
+    });
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -700,6 +717,17 @@ pub fn ComponentsPanel(
                 Box::new(themed_carousel),
                 label("Raw carousel"),
                 Box::new(raw_carousel),
+            ]))
+            .child(card(vec![
+                label("Verification code"),
+                Box::new(themed_otp),
+                Box::new(RawText::new(
+                    format!("Entered: {}  |  edits: {}", otp.value(), otp_updates.get()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw code cells"),
+                Box::new(raw_otp_input),
             ])),
     )
 }

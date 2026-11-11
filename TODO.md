@@ -60,7 +60,6 @@ one can be extended. Variants are design suggestions, not promised features.
 |---|---|---|---|
 | `Toast` | Queue transient nonmodal notifications with timeout and dismissal. | `RawToast` plus a host/controller handle stacking, timers, focus, and close actions. | `Toast` uses success/error/info variants, action and progress options. |
 | `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
-| `OtpInput` | Enter a fixed-length one-time code with predictable paste and focus. | `RawOtpInput` owns cell navigation, paste distribution, and controlled value. | `OtpInput` themes focus/error states; grouped or uniform cells. |
 
 - Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
   modes to `Skeleton`. Both currently render without animation.
@@ -72,6 +71,8 @@ one can be extended. Variants are design suggestions, not promised features.
   button currently delegates menu presentation to its callback.
 - Add range selection, multi-month layout, and localized month/weekday labels
   to `Calendar`.
+- Add grouped digit spacing and platform-native mobile numeric keyboard hints
+  to `OtpInput`.
 
 ### Priority: workspace and data
 

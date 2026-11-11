@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawOtpInput`/`OtpInput` with a controlled digit sequence, paste
+  distribution, cursor navigation, masked/error states, and a per-cell
+  themed focus treatment.
 - Add `RawCarousel` and `Carousel` with controlled slides, keyboard navigation,
   swipe gestures, previous/next actions, indicators, and optional looping.
 - Add `RawRating` and `Rating` with read-only and interactive stars, half-step

@@ -24,6 +24,7 @@ mod nav;
 mod panels;
 mod prelude;
 
+use creamui_widgets::OtpController;
 use panels::*;
 use prelude::*;
 
@@ -113,6 +114,9 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_date = Signal::new(Some(DateTime::new(2026, 3, 15, 0, 0)));
     let components_rating = Signal::new(3.5f32);
     let components_carousel = Signal::new(0usize);
+    let components_otp = OtpController::new(6, "12");
+    let components_raw_otp = OtpController::new(4, "");
+    let components_otp_updates = Signal::new(0usize);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -312,6 +316,9 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     date: components_date.clone(),
                     rating: components_rating.clone(),
                     carousel: components_carousel.clone(),
+                    otp: components_otp.clone(),
+                    raw_otp: components_raw_otp.clone(),
+                    otp_updates: components_otp_updates.clone(),
                 }),
             };
 

@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawQuestionnaire`/`Questionnaire` with required-answer validation,
+  branching steps, controlled history, and themed form composition.
 - Add raw/themed grouped toolbars with keyboard action navigation and
   responsive overflow menus.
 - Add `RawSheet`/`Sheet` edge panels with modal and nonmodal layouts,

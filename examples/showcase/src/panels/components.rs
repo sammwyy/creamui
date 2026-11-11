@@ -4,14 +4,14 @@ use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
     ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, DropdownButton,
     EmptyState, Field, Form, GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors,
-    OtpController, OtpInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel,
-    RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList, RawDropdownButton,
-    RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
-    RawToast, RawToolbar, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar,
-    StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar,
-    ToolbarCommand, ToolbarController, Tooltip, TooltipController, TooltipPosition,
-    VirtualListState,
+    OtpController, OtpInput, Pagination, Questionnaire, QuestionnaireController, Rating, RawAlert,
+    RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDataTable,
+    RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawGridLayout, RawInputGroup,
+    RawKbd, RawNumberInput, RawOtpInput, RawQuestionnaire, RawRating, RawResizablePanels,
+    RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip,
+    ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag,
+    ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar, ToolbarCommand,
+    ToolbarController, Tooltip, TooltipController, TooltipPosition, VirtualListState,
 };
 
 #[component]
@@ -59,6 +59,7 @@ pub fn ComponentsPanel(
     toolbar: ToolbarController,
     raw_toolbar: ToolbarController,
     toolbar_actions: Signal<usize>,
+    questionnaire: QuestionnaireController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -673,6 +674,85 @@ pub fn ComponentsPanel(
     .group(vec![action("Raw edit")])
     .group(vec![action("Raw inspect")])
     .menu_above(true);
+    let basic = questionnaire.clone();
+    let advanced = questionnaire.clone();
+    let details = questionnaire.clone();
+    let themed_questionnaire = Questionnaire::new(&questionnaire)
+        .question(
+            0,
+            Box::new(
+                RawView::new(row(theme.spacing_small))
+                    .child(Box::new(Button::secondary(
+                        ButtonSize::Sm,
+                        "Basic",
+                        move || {
+                            basic.set_answer("Plan", "basic");
+                        },
+                    )))
+                    .child(Box::new(Button::secondary(
+                        ButtonSize::Sm,
+                        "Advanced",
+                        move || {
+                            advanced.set_answer("Plan", "advanced");
+                        },
+                    ))),
+            ),
+        )
+        .question(
+            1,
+            Box::new(Button::secondary(
+                ButtonSize::Sm,
+                "Provide details",
+                move || {
+                    details.set_answer("Details", "Ready");
+                },
+            )),
+        )
+        .question(
+            2,
+            Box::new(RawText::new(
+                format!(
+                    "Selected plan: {}",
+                    questionnaire.answer("Plan").unwrap_or_default()
+                ),
+                theme.text_primary,
+                theme.typography.body,
+            )),
+        );
+    let mut raw_questionnaire = RawQuestionnaire::new(
+        Style::default().flex_column().gap(theme.spacing_small),
+        &questionnaire,
+    )
+    .step_color(theme.text_primary)
+    .navigation(
+        Box::new(RawText::new(
+            "Back",
+            theme.text_secondary,
+            theme.typography.caption,
+        )),
+        Box::new(RawText::new(
+            "Continue",
+            theme.accent,
+            theme.typography.caption,
+        )),
+    );
+    for index in 0..3 {
+        raw_questionnaire = raw_questionnaire.question(
+            index,
+            Box::new(RawText::new(
+                format!("Raw step {}", index + 1),
+                theme.text_secondary,
+                theme.typography.caption,
+            )),
+        );
+    }
+    if let Some(error) = questionnaire.error() {
+        raw_questionnaire = raw_questionnaire.error(Box::new(RawText::new(
+            error,
+            theme.danger,
+            theme.typography.caption,
+        )));
+    }
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -1089,6 +1169,17 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw toolbar with overflow"),
                 Box::new(raw_toolbar_view),
+            ]))
+            .child(card(vec![
+                label("Questionnaire"),
+                Box::new(themed_questionnaire),
+                Box::new(RawText::new(
+                    format!("Complete: {}", questionnaire.is_complete()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw questionnaire"),
+                Box::new(raw_questionnaire),
             ])),
     )
 }

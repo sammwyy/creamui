@@ -496,8 +496,14 @@ impl Widget for TypingIndicator {
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let time = painter.animation_time();
-        let dot = (rect.height * 0.5).max(3.0);
-        let gap = ((rect.width - dot * 3.0) / 2.0).max(2.0);
+        let dot = (rect.height * 0.5)
+            .max(3.0)
+            .min(rect.width / 3.0)
+            .min(rect.height);
+        if dot <= 0.0 {
+            return;
+        }
+        let gap = (rect.width - dot * 3.0) / 2.0;
         for i in 0..3 {
             let phase = (time * 2.6 - i as f32 * 0.3).rem_euclid(1.8);
             let lift = if phase < 0.6 {
@@ -506,7 +512,8 @@ impl Widget for TypingIndicator {
                 0.0
             };
             let cx = rect.x + dot / 2.0 + i as f32 * (dot + gap);
-            let cy = rect.y + rect.height / 2.0 - lift * rect.height * 0.3;
+            let cy = rect.y + rect.height / 2.0
+                - lift * (rect.height * 0.3).min((rect.height - dot) / 2.0);
             painter.fill_rect(
                 Rect {
                     x: cx - dot / 2.0,

@@ -101,7 +101,7 @@ pub fn SectionHeader(title: String, subtitle: String) -> BoxedWidget {
     };
     Box::new(jsx! {
         <RawView style={column(4.0)}>
-            <Heading size={TextSize::Xl} style={heading_style}>{title}</Heading>
+            <Heading size={if use_screen_class() == ScreenClass::Compact { TextSize::Lg } else { TextSize::Xl }} style={heading_style}>{title}</Heading>
             <Text color={theme.text_secondary} align={TextAlign::Start} style={label_style()}>{subtitle}</Text>
         </RawView>
     })

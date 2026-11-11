@@ -42,7 +42,7 @@ impl Widget for RawQuote {
             Rect {
                 x: rect.x,
                 y: rect.y,
-                width: self.bar_width,
+                width: self.bar_width.max(0.0).min(rect.width.max(0.0)),
                 height: rect.height,
             },
             self.bar_color,

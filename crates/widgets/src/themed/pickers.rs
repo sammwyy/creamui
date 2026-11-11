@@ -669,21 +669,32 @@ impl Widget for ColorPicker {
             self.theme.typography.body,
             TextAlign::Start,
         );
-        painter.fill_text(
-            Rect {
-                x: rect.x + rect.width - 23.,
-                y: rect.y,
-                width: 16.,
-                height: rect.height,
+        let cx = rect.x + rect.width - 17.;
+        let cy = rect.y + rect.height / 2.;
+        let direction = if self.controller.is_open() { -1. } else { 1. };
+        painter.stroke_line(
+            Point {
+                x: cx - 4.,
+                y: cy - 2. * direction,
             },
-            if self.controller.is_open() {
-                "⌃"
-            } else {
-                "⌄"
+            Point {
+                x: cx,
+                y: cy + 2. * direction,
             },
             self.theme.text_secondary,
-            15.,
-            TextAlign::Center,
+            1.5,
+        );
+        painter.stroke_line(
+            Point {
+                x: cx,
+                y: cy + 2. * direction,
+            },
+            Point {
+                x: cx + 4.,
+                y: cy - 2. * direction,
+            },
+            self.theme.text_secondary,
+            1.5,
         );
     }
     fn children(&mut self) -> Vec<BoxedWidget> {

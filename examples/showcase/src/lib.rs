@@ -50,6 +50,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let notes_wrapped = TextController::new(
         "This one sets wrap={true}: long lines break onto a new row instead of scrolling past the edge.",
     );
+    notes.set_cursor(0);
+    notes_wrapped.set_cursor(0);
     let picker_date_time = DateTimeController::new(DateTime::new(2026, 9, 8, 14, 30));
     let picker_color = Signal::new(Color::rgb(181, 139, 255));
     let picker_color_popup = ColorPickerController::default();

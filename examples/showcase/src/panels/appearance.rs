@@ -41,6 +41,10 @@ fn swatch(color: Color, active: bool, on_click: impl Fn() + 'static) -> BoxedWid
 #[component]
 pub fn AppearancePanel(mode: Signal<ThemeMode>, accent_index: Signal<usize>) -> BoxedWidget {
     let theme = use_theme();
+    let choice_style = Style {
+        flex_wrap: creamui_core::layout::FlexWrap::Wrap,
+        ..row(theme.spacing_small)
+    };
     let selected_mode = mode.get();
     let selected_accent = accent_index.get();
 
@@ -89,11 +93,11 @@ pub fn AppearancePanel(mode: Signal<ThemeMode>, accent_index: Signal<usize>) -> 
             <Card gap={theme.spacing_large}>
                 <Card gap={theme.spacing_small}>
                     <FieldLabel text={"Mode".to_owned()} />
-                    <RawView style={row(theme.spacing_medium)} children={mode_pills} />
+                    <RawView style={choice_style.clone()} children={mode_pills} />
                 </Card>
                 <Card gap={theme.spacing_small}>
                     <FieldLabel text={"Accent color".to_owned()} />
-                    <RawView style={row(theme.spacing_medium)} children={swatches} />
+                    <RawView style={choice_style} children={swatches} />
                 </Card>
                 <Text align={TextAlign::Start} color={theme.text_disabled} style={label_style()}>{summary}</Text>
             </Card>

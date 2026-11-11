@@ -260,8 +260,11 @@ impl RawSwitch {
         } else {
             base
         };
-        let d = (rect.height - self.thumb_inset * 2.0).max(0.0);
-        let travel = (rect.width - d - self.thumb_inset * 2.0).max(0.0);
+        let inset = self
+            .thumb_inset
+            .min(rect.width.min(rect.height).max(0.0) / 2.0);
+        let d = (rect.height.min(rect.width) - inset * 2.0).max(0.0);
+        let travel = (rect.width - d - inset * 2.0).max(0.0);
         painter.fill_rect(
             rect,
             track_color,
@@ -269,8 +272,8 @@ impl RawSwitch {
         );
         painter.fill_rect(
             Rect {
-                x: rect.x + self.thumb_inset + travel * progress,
-                y: rect.y + self.thumb_inset,
+                x: rect.x + inset + travel * progress,
+                y: rect.y + (rect.height - d) / 2.0,
                 width: d,
                 height: d,
             },
@@ -442,36 +445,42 @@ impl Widget for RawSlider {
     }
 
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        let track_y = rect.y + (rect.height - self.track_height) / 2.0;
-        let usable_width = (rect.width - self.handle_size).max(0.0);
-        let handle_center_x = rect.x + self.handle_size / 2.0 + usable_width * self.value;
+        let track_height = self.track_height.min(rect.height.max(0.0));
+        let handle_size = self.handle_size.min(rect.width.min(rect.height).max(0.0));
+        let track_y = rect.y + (rect.height - track_height) / 2.0;
+        let usable_width = (rect.width - handle_size).max(0.0);
+        let handle_center_x = rect.x + handle_size / 2.0 + usable_width * self.value;
 
         painter.fill_rect(
             Rect {
                 x: rect.x,
                 y: track_y,
                 width: rect.width,
-                height: self.track_height,
+                height: track_height,
             },
             self.track_color,
-            self.track_radius.unwrap_or(self.track_height / 2.0),
+            self.track_radius
+                .unwrap_or(track_height / 2.0)
+                .min(track_height / 2.0),
         );
         painter.fill_rect(
             Rect {
                 x: rect.x,
                 y: track_y,
                 width: (handle_center_x - rect.x).max(0.0),
-                height: self.track_height,
+                height: track_height,
             },
             self.fill_color,
-            self.track_radius.unwrap_or(self.track_height / 2.0),
+            self.track_radius
+                .unwrap_or(track_height / 2.0)
+                .min(track_height / 2.0),
         );
         painter.fill_rect(
             Rect {
-                x: handle_center_x - self.handle_size / 2.0,
-                y: rect.y + (rect.height - self.handle_size) / 2.0,
-                width: self.handle_size,
-                height: self.handle_size,
+                x: handle_center_x - handle_size / 2.0,
+                y: rect.y + (rect.height - handle_size) / 2.0,
+                width: handle_size,
+                height: handle_size,
             },
             if !self.disabled && painter.pressed(rect) {
                 self.pressed_handle_color
@@ -482,7 +491,9 @@ impl Widget for RawSlider {
             } else {
                 self.handle_color
             },
-            self.handle_radius.unwrap_or(self.handle_size / 2.0),
+            self.handle_radius
+                .unwrap_or(handle_size / 2.0)
+                .min(handle_size / 2.0),
         );
     }
 
@@ -493,8 +504,13 @@ impl Widget for RawSlider {
         let on_change = self.on_change.clone();
         let handle_size = self.handle_size;
         Some(Rc::new(move |local: Point, rect: Rect| {
-            let usable_width = (rect.width - handle_size).max(1.0);
-            let fraction = ((local.x - handle_size / 2.0) / usable_width).clamp(0.0, 1.0);
+            let handle_size = handle_size.min(rect.width.min(rect.height).max(0.0));
+            let usable_width = rect.width - handle_size;
+            let fraction = if usable_width > 0.0 {
+                ((local.x - handle_size / 2.0) / usable_width).clamp(0.0, 1.0)
+            } else {
+                (local.x / rect.width.max(1.0)).clamp(0.0, 1.0)
+            };
             on_change(fraction);
         }))
     }

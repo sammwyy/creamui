@@ -56,6 +56,187 @@ use creamui_widgets::{
 };
 
 #[test]
+fn compact_raw_controls_keep_all_paint_inside_their_bounds() {
+    let rect = Rect {
+        x: 10.0,
+        y: 20.0,
+        width: 12.0,
+        height: 10.0,
+    };
+    for checked in [false, true] {
+        let switch = RawSwitch::new(
+            checked,
+            Color::rgb(10, 20, 30),
+            Color::rgb(40, 50, 60),
+            Color::rgb(70, 80, 90),
+            || {},
+        )
+        .thumb_inset(3.0);
+        let mut painter = RecordingPainter::default();
+        switch.paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    }
+    let slider = RawSlider::new(
+        Style::default(),
+        1.0,
+        Color::rgb(10, 20, 30),
+        Color::rgb(40, 50, 60),
+        Color::rgb(70, 80, 90),
+        |_| {},
+    )
+    .handle(24.0, 12.0)
+    .track(14.0, 7.0);
+    let mut painter = RecordingPainter::default();
+    slider.paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+}
+
+#[test]
+fn compact_themed_feedback_keeps_animated_dots_inside_its_bounds() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
+        let indicator = creamui_widgets::TypingIndicator::new();
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 18.0,
+            height: 10.0,
+        };
+        for time in [0.0, 0.2, 0.4, 0.6, 1.0] {
+            let mut painter = RecordingPainter {
+                time,
+                ..Default::default()
+            };
+            indicator.paint(&mut painter, rect);
+            assert_paint_inside(&painter, rect);
+        }
+    });
+}
+
+#[test]
+fn themed_controls_with_manual_sizes_keep_paint_inside_their_bounds() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let rect = Rect {
+            x: 10.0,
+            y: 20.0,
+            width: 12.0,
+            height: 10.0,
+        };
+        let mut painter = RecordingPainter::default();
+        Slider::new(1.0, |_| {})
+            .width(rect.width)
+            .height(rect.height)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+        let mut painter = RecordingPainter::default();
+        creamui_widgets::Switch::new(true, || {})
+            .width(rect.width)
+            .height(rect.height)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    });
+}
+
+#[test]
+fn button_states_keep_readable_labels_without_font_dependent_glyphs() {
+    creamui_reactive::with_context_scope(|| {
+        let theme = Theme::dark();
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+        for state in [
+            creamui_widgets::ButtonState::Loading,
+            creamui_widgets::ButtonState::Success,
+        ] {
+            let mut painter = RecordingPainter::default();
+            render_frame(
+                Box::new(Button::state(
+                    creamui_widgets::ButtonSize::Md,
+                    "Saved",
+                    state,
+                    || {},
+                )),
+                Size {
+                    width: 120.0,
+                    height: 36.0,
+                },
+                &mut painter,
+            );
+            assert!(painter.texts.iter().any(|text| text == "Saved"));
+            if state == creamui_widgets::ButtonState::Loading {
+                assert!(painter.text_colors.contains(&theme.text_secondary));
+            }
+        }
+    });
+}
+
+#[test]
+fn color_picker_chevron_does_not_depend_on_font_glyphs() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let picker = ColorPicker::controlled(
+            Color::rgb(10, 20, 30),
+            &ColorPickerController::default(),
+            |_| {},
+        );
+        let mut painter = RecordingPainter::default();
+        picker.paint(
+            &mut painter,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 220.0,
+                height: 38.0,
+            },
+        );
+        assert_eq!(painter.texts, ["#0A141E"]);
+        assert!(!painter.lines.is_empty());
+    });
+}
+
+#[test]
+fn narrow_typography_keeps_rules_and_quote_bar_inside_its_bounds() {
+    let rect = Rect {
+        x: 10.0,
+        y: 20.0,
+        width: 2.0,
+        height: 20.0,
+    };
+    let mut painter = RecordingPainter::default();
+    RawText::new("A long underlined label", Color::rgb(10, 20, 30), 14.0)
+        .underline(true)
+        .text_align(TextAlign::Center)
+        .paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+    let mut painter = RecordingPainter::default();
+    creamui_widgets::RawQuote::new(Style::default(), Color::rgb(10, 20, 30), 3.0)
+        .paint(&mut painter, rect);
+    assert_paint_inside(&painter, rect);
+
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));
+        let mut painter = RecordingPainter::default();
+        creamui_widgets::Quote::new("An example")
+            .width(2.0)
+            .paint(&mut painter, rect);
+        assert_paint_inside(&painter, rect);
+    });
+}
+
+fn assert_paint_inside(painter: &RecordingPainter, bounds: Rect) {
+    for (painted, _) in &painter.filled_rects {
+        assert!(
+            painted.x >= bounds.x && painted.y >= bounds.y,
+            "{painted:?}"
+        );
+        assert!(
+            painted.x + painted.width <= bounds.x + bounds.width
+                && painted.y + painted.height <= bounds.y + bounds.height,
+            "{painted:?}"
+        );
+    }
+}
+
+#[test]
 fn themed_file_picker_paints_its_box_and_preserves_common_overrides() {
     creamui_reactive::with_context_scope(|| {
         let theme = Theme::light();
@@ -219,10 +400,13 @@ fn file_prompt_isolates_background_input_and_cancels_without_a_callback() {
 struct RecordingPainter {
     hovered: bool,
     pressed: bool,
+    time: f32,
     filled_rects: Vec<(Rect, Color)>,
     stroked_rects: Vec<(Rect, Color)>,
     texts: Vec<String>,
+    text_colors: Vec<Color>,
     text_rects: Vec<Rect>,
+    lines: Vec<(Point, Point)>,
 }
 
 #[derive(Default)]
@@ -253,6 +437,9 @@ impl Painter for StatePainter {
 }
 
 impl Painter for RecordingPainter {
+    fn animation_time(&mut self) -> f32 {
+        self.time
+    }
     fn hovered(&self, _: Rect) -> bool {
         self.hovered
     }
@@ -271,12 +458,16 @@ impl Painter for RecordingPainter {
         &mut self,
         rect: Rect,
         text: &str,
-        _color: Color,
+        color: Color,
         _font_size: f32,
         _align: TextAlign,
     ) {
         self.texts.push(text.to_string());
+        self.text_colors.push(color);
         self.text_rects.push(rect);
+    }
+    fn stroke_line(&mut self, from: Point, to: Point, _: Color, _: f32) {
+        self.lines.push((from, to));
     }
 }
 
@@ -597,6 +788,51 @@ fn tab_sizing_supports_content_equal_and_fill_widths() {
     let fill = tab_styles(&labels, TabSizing::Fill, 36.0, 10.0);
     assert_eq!(fill[0].flex_grow, 1.0);
     assert_eq!(fill[0].flex_basis, Dimension::Length(0.0));
+}
+
+#[test]
+fn equal_tabs_keep_labels_on_one_line_inside_their_buttons() {
+    creamui_reactive::with_context_scope(|| {
+        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
+        let labels = ["Overview", "Activity", "Settings"];
+        let colors = TabColors::dark();
+        let tabs = tab_styles(&labels, TabSizing::Equal, 34.0, 12.0)
+            .into_iter()
+            .zip(labels)
+            .fold(
+                Tabs::new(colors, creamui_widgets::layout::row(colors.gap)),
+                |tabs, (style, label)| {
+                    tabs.child(Box::new(creamui_widgets::Tab::new(
+                        colors,
+                        style,
+                        label,
+                        false,
+                        || {},
+                    )))
+                },
+            );
+        let mut painter = RecordingPainter::default();
+        render_frame(
+            Box::new(tabs),
+            Size {
+                width: 320.0,
+                height: 42.0,
+            },
+            &mut painter,
+        );
+        assert_eq!(painter.texts, labels);
+        for (label, rect) in labels.iter().zip(&painter.text_rects) {
+            let Dimension::Length(label_width) = tab_styles(&[label], TabSizing::Equal, 34.0, 0.0)
+                [0]
+            .size
+            .width
+            else {
+                panic!("equal tabs must have a fixed width");
+            };
+            assert!(rect.height <= 34.0, "{rect:?}");
+            assert!(rect.width >= label_width, "{rect:?} < {label_width}");
+        }
+    });
 }
 
 #[test]

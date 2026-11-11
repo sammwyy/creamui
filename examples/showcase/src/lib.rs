@@ -27,7 +27,7 @@ mod prelude;
 use creamui_core::{Styled, Widget};
 use creamui_widgets::{
     DataTableController, GridCell, GridController, OtpController, RawSheet, Sheet, SheetEdge,
-    SplitState, ToastController, ToastHost, TooltipController, VirtualListState,
+    SplitState, ToastController, ToastHost, ToolbarController, TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;
@@ -145,6 +145,9 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_raw_sheet_open = Signal::new(false);
     let components_sheet_scroll = ScrollController::new(0.0);
     let components_raw_sheet_scroll = ScrollController::new(0.0);
+    let components_toolbar = ToolbarController::new();
+    let components_raw_toolbar = ToolbarController::new();
+    let components_toolbar_actions = Signal::new(0usize);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -364,6 +367,9 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_table_virtual: components_raw_table_virtual.clone(),
                     sheet_open: components_sheet_open.clone(),
                     raw_sheet_open: components_raw_sheet_open.clone(),
+                    toolbar: components_toolbar.clone(),
+                    raw_toolbar: components_raw_toolbar.clone(),
+                    toolbar_actions: components_toolbar_actions.clone(),
                 }),
             };
 

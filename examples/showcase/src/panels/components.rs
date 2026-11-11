@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use creamui_core::Styled;
+use creamui_core::{Styled, Widget};
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
     ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, DropdownButton,
@@ -8,9 +8,10 @@ use creamui_widgets::{
     RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList, RawDropdownButton,
     RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
     RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
-    RawToast, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState,
-    Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Tooltip,
-    TooltipController, TooltipPosition, VirtualListState,
+    RawToast, RawToolbar, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar,
+    StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar,
+    ToolbarCommand, ToolbarController, Tooltip, TooltipController, TooltipPosition,
+    VirtualListState,
 };
 
 #[component]
@@ -55,6 +56,9 @@ pub fn ComponentsPanel(
     raw_table_virtual: VirtualListState,
     sheet_open: Signal<bool>,
     raw_sheet_open: Signal<bool>,
+    toolbar: ToolbarController,
+    raw_toolbar: ToolbarController,
+    toolbar_actions: Signal<usize>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -607,6 +611,68 @@ pub fn ComponentsPanel(
     let reorder_column = data_table.clone();
     let open_sheet = sheet_open.clone();
     let open_raw_sheet = raw_sheet_open.clone();
+    let action = |label: &str| {
+        let count = toolbar_actions.clone();
+        ToolbarCommand::new(
+            90.0,
+            Style::default(),
+            Box::new(RawText::new(
+                label,
+                theme.text_primary,
+                theme.typography.caption,
+            )),
+            move || count.update(|value| *value += 1),
+        )
+    };
+    let count = toolbar_actions.clone();
+    let themed_toolbar = Toolbar::new(&toolbar)
+        .action("Save", move || count.update(|value| *value += 1))
+        .action("Undo", {
+            let count = toolbar_actions.clone();
+            move || count.update(|value| *value += 1)
+        })
+        .separator()
+        .action("Preview", {
+            let count = toolbar_actions.clone();
+            move || count.update(|value| *value += 1)
+        })
+        .action("Export", {
+            let count = toolbar_actions.clone();
+            move || count.update(|value| *value += 1)
+        })
+        .separator()
+        .action("Docs", {
+            let count = toolbar_actions.clone();
+            move || count.update(|value| *value += 1)
+        })
+        .action("Help", {
+            let count = toolbar_actions.clone();
+            move || count.update(|value| *value += 1)
+        })
+        .floating();
+    let raw_toolbar_view = RawToolbar::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Length(180.0),
+                height: Dimension::Length(36.0),
+            },
+            ..Default::default()
+        },
+        &raw_toolbar,
+    )
+    .overflow_trigger(
+        Box::new(RawText::new("More", theme.accent, theme.typography.caption)),
+        48.0,
+    )
+    .menu_style(
+        RawView::new(Style::default().padding_all(theme.spacing_small))
+            .background(theme.surface_elevated)
+            .border(theme.border, 1.0)
+            .style(),
+    )
+    .group(vec![action("Raw edit")])
+    .group(vec![action("Raw inspect")])
+    .menu_above(true);
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -1012,6 +1078,17 @@ pub fn ComponentsPanel(
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "Open sheet", move || open_sheet.set(true))))
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "Raw bottom", move || open_raw_sheet.set(true)))),
                 ),
+            ]))
+            .child(card(vec![
+                label("Toolbars"),
+                Box::new(themed_toolbar),
+                Box::new(RawText::new(
+                    format!("Actions: {}", toolbar_actions.get()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw toolbar with overflow"),
+                Box::new(raw_toolbar_view),
             ])),
     )
 }

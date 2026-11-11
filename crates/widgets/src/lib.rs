@@ -67,10 +67,10 @@ pub use raw::{
     RawPagination, RawPre, RawQuote, RawRating, RawResizablePanels, RawScrollView, RawScrollbar,
     RawSheet, RawSidebar, RawSkeleton, RawSlider, RawSpinner, RawSplitView, RawStatusBar,
     RawStepper, RawSwitch, RawTab, RawTable, RawTabs, RawTag, RawText, RawTextArea, RawTextInput,
-    RawToast, RawToastHost, RawTooltip, RawTranslate, RawView, RawVirtualList, RawVirtualTable,
-    SheetEdge, SortDirection, SplitAxis, SplitState, StepState, TabIndicatorSide, TableColumn,
-    TextSelection, ToastController, ToastEntry, ToastStatus, TooltipController, TooltipPosition,
-    VirtualListState,
+    RawToast, RawToastHost, RawToolbar, RawTooltip, RawTranslate, RawView, RawVirtualList,
+    RawVirtualTable, SheetEdge, SortDirection, SplitAxis, SplitState, StepState, TabIndicatorSide,
+    TableColumn, TextSelection, ToastController, ToastEntry, ToastStatus, ToolbarCommand,
+    ToolbarController, TooltipController, TooltipPosition, VirtualListState,
 };
 pub use themed::{
     nested_sidebar, tab_styles, Accordion, Alert, AlertDialog, AlertVariant, AppTitlebar,
@@ -85,6 +85,6 @@ pub use themed::{
     ResizablePanels, ScrollView, SegmentedControl, Select, Sheet, Sidebar, SidebarItem,
     SidebarNode, SidebarSeparator, Skeleton, Slider, Spinner, StatusBar, Stepper, Switch, Tab,
     TabColors, TabSizing, Table, Tabs, Tag, Text, TextArea, TextInput, TextSize, TimeInput, Toast,
-    ToastHost, ToggleButton, Tooltip, TreeNode, TreeView, TypingIndicator, VirtualList,
+    ToastHost, ToggleButton, Toolbar, Tooltip, TreeNode, TreeView, TypingIndicator, VirtualList,
     VirtualTable, VirtualTreeView,
 };

@@ -4,6 +4,7 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move the draggable dashboard grid into the opt-in `creamui-grid-layout` crate.
 - Move chart and diff viewer widgets from `creamui-widgets` into opt-in
   `creamui-chart` and `creamui-diff-viewer` crates.
 - Add virtualized `RawDiff`/`Diff` with unified/side-by-side views,

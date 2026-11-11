@@ -1,11 +1,17 @@
 use super::*;
-use crate::layout::StyleExt;
 use crate::raw::{GridController, RawGridLayout};
+use creamui_widgets::layout::StyleExt;
 
 pub struct GridLayout {
     inner: RawGridLayout,
 }
-impl_styled_inner!(GridLayout);
+
+impl Styled for GridLayout {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        let merged = self.inner.style().merged_over(style);
+        self.inner.set_style(merged);
+    }
+}
 
 impl GridLayout {
     pub fn new(controller: &GridController, columns: usize) -> Self {

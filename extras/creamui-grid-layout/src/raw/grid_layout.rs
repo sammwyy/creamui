@@ -258,6 +258,12 @@ impl Widget for RawGridLayout {
     }
 }
 
+impl Styled for RawGridLayout {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

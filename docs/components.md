@@ -54,7 +54,6 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Window | `AppTitlebar`, `CaptionButtonView` | Custom titlebar and window caption actions. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Workspace | `StatusBar`, `Stepper` | Slotted status content and controlled workflow stages. | `RawStatusBar`, `RawStepper` |
 | Resizable layout | `ResizablePanels` | Nested panes with persistent drag/keyboard splits and size limits. | `RawResizablePanels`, `SplitState` |
-| Dashboard layout | `GridLayout` | Controlled card coordinates, spans, drag/keyboard movement, and collision rejection. | `RawGridLayout`, `GridController` |
 
 The raw-only building blocks `RawCanvas`, `RawMarquee`, `RawSplitView`, `RawTranslate`, and `RawView` cover custom painting, moving text, resizable splits, translations, and containers. `Block`, `Flex`, and `Grid` live in `creamui_widgets::layout`; `Image` is exported by the separate `creamui-image` crate. `RawScrollbar` is a lower-level part of scrolling. Controllers and models such as `TabController`, `TextController`, `TreeController`, `SplitState`, and `VirtualListState` are support APIs rather than additional visual components.
 
@@ -66,6 +65,7 @@ Specialized components live in independent crates. Applications that only use `c
 |---|---|---|
 | `creamui-chart` | `Chart` | `RawPlot`, `PlotController`, `PlotSeries` |
 | `creamui-diff-viewer` | `Diff` | `RawDiff`, `DiffController`, `DiffHunk` |
+| `creamui-grid-layout` | `GridLayout` | `RawGridLayout`, `GridController`, `GridCell` |
 
 Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
 

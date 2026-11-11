@@ -46,8 +46,6 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Overlays | `Sheet` | Scrollable edge panels with optional modal backdrop and focus return. | `RawSheet` |
 | Workspace actions | `Toolbar` | Grouped keyboard-navigable commands with responsive overflow. | `RawToolbar`, `ToolbarController` |
 | Guided forms | `Questionnaire` | Validated multi-step questions with branching and back navigation. | `RawQuestionnaire`, `QuestionnaireController` |
-| Charts | `Chart` | Clipped line, area, and bar series with axes, legend, and point hit testing. | `RawPlot`, `PlotController` |
-| Code review | `Diff` | Virtualized patch hunks with unified/split views, line selection, and conflict markers. | `RawDiff`, `DiffController` |
 | Content | `Tag`, `Attachment`, `ChatMessage` | Selectable labels, attachment progress/errors, and sender/body/action layouts. | `RawTag`, `RawAttachment`, `RawChatMessage` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
@@ -59,6 +57,22 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Dashboard layout | `GridLayout` | Controlled card coordinates, spans, drag/keyboard movement, and collision rejection. | `RawGridLayout`, `GridController` |
 
 The raw-only building blocks `RawCanvas`, `RawMarquee`, `RawSplitView`, `RawTranslate`, and `RawView` cover custom painting, moving text, resizable splits, translations, and containers. `Block`, `Flex`, and `Grid` live in `creamui_widgets::layout`; `Image` is exported by the separate `creamui-image` crate. `RawScrollbar` is a lower-level part of scrolling. Controllers and models such as `TabController`, `TextController`, `TreeController`, `SplitState`, and `VirtualListState` are support APIs rather than additional visual components.
+
+## Optional components
+
+Specialized components live in independent crates. Applications that only use `creamui-widgets` do not compile their implementations.
+
+| Crate | Themed API | Raw API |
+|---|---|---|
+| `creamui-chart` | `Chart` | `RawPlot`, `PlotController`, `PlotSeries` |
+| `creamui-diff-viewer` | `Diff` | `RawDiff`, `DiffController`, `DiffHunk` |
+
+Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
+
+```toml
+[dependencies]
+creamui-diff-viewer = "0.3"
+```
 
 ## Style support
 

@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move chart and diff viewer widgets from `creamui-widgets` into opt-in
+  `creamui-chart` and `creamui-diff-viewer` crates.
 - Add virtualized `RawDiff`/`Diff` with unified/side-by-side views,
   line selection, numbered gutters, and conflict highlighting.
 - Add `RawPlot`/`Chart` with clipped line, area, and bar series,

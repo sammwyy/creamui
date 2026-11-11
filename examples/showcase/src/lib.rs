@@ -24,11 +24,13 @@ mod nav;
 mod panels;
 mod prelude;
 
+use creamui_chart::PlotController;
 use creamui_core::{Styled, Widget};
+use creamui_diff_viewer::DiffController;
 use creamui_widgets::{
-    DataTableController, DiffController, GridCell, GridController, OtpController, PlotController,
-    QuestionStep, QuestionnaireController, RawSheet, Sheet, SheetEdge, SplitState, ToastController,
-    ToastHost, ToolbarController, TooltipController, VirtualListState,
+    DataTableController, GridCell, GridController, OtpController, QuestionStep,
+    QuestionnaireController, RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost,
+    ToolbarController, TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;

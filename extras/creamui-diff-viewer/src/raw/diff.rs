@@ -1,7 +1,7 @@
 use super::*;
-use crate::{RawVirtualList, ScrollController, VirtualListState};
 use creamui_core::layout::Dimension;
 use creamui_reactive::Signal;
+use creamui_widgets::{RawVirtualList, ScrollController, VirtualListState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffKind {
@@ -440,6 +440,13 @@ impl Widget for RawDiff {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         self.inner.children()
+    }
+}
+
+impl Styled for RawDiff {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.inner.set_style(style.clone());
+        self.style = style;
     }
 }
 

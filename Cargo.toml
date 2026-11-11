@@ -12,6 +12,8 @@ members = [
     "crates/appearance",
     "crates/fonts",
     "crates/widgets",
+    "extras/creamui-chart",
+    "extras/creamui-diff-viewer",
     "crates/image",
     "crates/platform",
     "crates/render",
@@ -68,6 +70,8 @@ creamui-theme-watch = { version = "0.3.0", path = "crates/theme-watch" }
 creamui-appearance = { version = "0.3.0", path = "crates/appearance", default-features = false }
 creamui-fonts = { version = "0.3.0", path = "crates/fonts" }
 creamui-widgets = { version = "0.3.0", path = "crates/widgets" }
+creamui-chart = { version = "0.3.0", path = "extras/creamui-chart" }
+creamui-diff-viewer = { version = "0.3.0", path = "extras/creamui-diff-viewer" }
 creamui-image = { version = "0.3.0", path = "crates/image" }
 creamui-platform = { version = "0.3.0", path = "crates/platform" }
 creamui-render = { version = "0.3.0", path = "crates/render" }

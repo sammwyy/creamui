@@ -99,7 +99,6 @@ mod context_menu;
 mod controls;
 mod data_table;
 mod dataview;
-mod diff;
 mod disclosure;
 mod foundation;
 mod grid_layout;
@@ -108,7 +107,6 @@ mod navigation;
 mod number;
 mod otp;
 mod pickers;
-mod plot;
 mod questionnaire;
 mod rating;
 mod resizable;
@@ -135,7 +133,6 @@ pub use context_menu::*;
 pub use controls::*;
 pub use data_table::*;
 pub use dataview::*;
-pub use diff::*;
 pub use disclosure::*;
 pub use foundation::*;
 pub use grid_layout::*;
@@ -144,7 +141,6 @@ pub use navigation::*;
 pub use number::*;
 pub use otp::*;
 pub use pickers::*;
-pub use plot::*;
 pub use questionnaire::*;
 pub use rating::*;
 pub use resizable::*;
@@ -185,7 +181,6 @@ impl_direct_styled!(
     RawColorPicker,
     RawDateTimePicker,
     RawDescriptionList,
-    RawDiff,
     RawDropdownButton,
     RawEmptyState,
     RawField,
@@ -200,7 +195,6 @@ impl_direct_styled!(
     RawNumberInput,
     RawOtpInput,
     RawPagination,
-    RawPlot,
     RawPre,
     RawQuestionnaire,
     RawQuote,

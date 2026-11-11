@@ -1,7 +1,7 @@
 use super::*;
-use crate::layout::StyleExt;
 use crate::raw::{DiffColors, DiffController, DiffHunk, DiffView, RawDiff};
-use crate::{ScrollController, VirtualListState};
+use creamui_widgets::layout::StyleExt;
+use creamui_widgets::{ScrollController, VirtualListState};
 
 pub struct Diff {
     pub style: creamui_core::Style,

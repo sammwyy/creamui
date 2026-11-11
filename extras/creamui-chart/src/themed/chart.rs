@@ -1,6 +1,6 @@
 use super::*;
-use crate::layout::{Align, StyleExt};
 use crate::raw::{PlotController, PlotSeries, RawPlot};
+use creamui_widgets::layout::{Align, StyleExt};
 
 pub struct Chart {
     pub style: creamui_core::Style,

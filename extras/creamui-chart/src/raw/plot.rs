@@ -463,6 +463,12 @@ impl Widget for RawPlot {
     }
 }
 
+impl Styled for RawPlot {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

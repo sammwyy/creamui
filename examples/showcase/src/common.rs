@@ -32,6 +32,8 @@ pub enum ShowcasePage {
     Workspace,
     Tags,
     InputGroups,
+    Actions,
+    NumberInput,
     Calendar,
     Rating,
     Carousel,
@@ -59,7 +61,7 @@ pub struct NavPage {
     pub group: NavGroup,
 }
 
-pub const NAV_PAGES: [NavPage; 39] = [
+pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Appearance,
         label: "Appearance",
@@ -223,6 +225,18 @@ pub const NAV_PAGES: [NavPage; 39] = [
         group: NavGroup::Components,
     },
     NavPage {
+        page: ShowcasePage::Actions,
+        label: "Actions",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::NumberInput,
+        label: "Number input",
+        symbol: Symbol::Sliders,
+        group: NavGroup::Components,
+    },
+    NavPage {
         page: ShowcasePage::Calendar,
         label: "Calendar",
         symbol: Symbol::Grid,
@@ -308,8 +322,10 @@ mod tests {
 
     #[test]
     fn navigation_entries_match_page_indices_and_group_order() {
+        let mut labels = std::collections::HashSet::new();
         for (index, entry) in NAV_PAGES.iter().enumerate() {
             assert_eq!(entry.page as usize, index);
+            assert!(labels.insert(entry.label));
             assert_eq!(
                 entry.group,
                 if index < 4 {

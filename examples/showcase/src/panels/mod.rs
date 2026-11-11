@@ -1,5 +1,5 @@
-//! One module per sidebar section — see `NAV_PAGES` in `common.rs` for
-//! the display order these map to.
+//! Feature and component pages — see `NAV_PAGES` in `common.rs` for
+//! their display order.
 
 mod appearance;
 mod button;

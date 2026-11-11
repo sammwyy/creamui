@@ -115,189 +115,213 @@ pub fn ComponentsPanel(
             theme.typography.caption,
         ))
     };
-    let sections = accordion.get();
-    let set_sections = accordion.clone();
-    let themed_accordion = Accordion::new(move |index, open| {
-        set_sections.update(|items| items[index] = open);
-    })
-    .item(
-        "Account settings",
-        Box::new(RawText::new(
-            "Update the details associated with this account.",
-            theme.text_secondary,
-            theme.typography.body,
-        )),
-        sections[0],
-    )
-    .item(
-        "Security",
-        Box::new(RawText::new(
-            "Review devices and active sessions.",
-            theme.text_secondary,
-            theme.typography.body,
-        )),
-        sections[1],
-    );
-    let set_expanded = expanded.clone();
-    let disclosure = Collapsible::new("Advanced options", expanded.get(), move |next| {
-        set_expanded.set(next)
-    })
-    .content(Box::new(RawText::new(
-        "The content follows the trigger when it opens.",
-        theme.text_secondary,
-        theme.typography.body,
-    )));
-    let set_visible = visible.clone();
-    let alert = if visible.get() {
-        Box::new(
-            Alert::new(
-                AlertStatus::Info,
-                "Changes saved",
-                "Your settings are available across devices.",
+    let themed_accordion = || {
+        let sections = accordion.get();
+        let set_sections = accordion.clone();
+        Accordion::new(move |index, open| set_sections.update(|items| items[index] = open))
+            .item(
+                "Account settings",
+                Box::new(RawText::new(
+                    "Update the details associated with this account.",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )),
+                sections[0],
             )
-            .dismiss(move || set_visible.set(false)),
-        ) as BoxedWidget
-    } else {
-        let show = visible.clone();
-        Box::new(Button::secondary(ButtonSize::Sm, "Show alert", move || {
-            show.set(true)
-        }))
+            .item(
+                "Security",
+                Box::new(RawText::new(
+                    "Review devices and active sessions.",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )),
+                sections[1],
+            )
     };
-    let field = Field::new(
-        "Display name",
-        Box::new(TextInput::controlled(&input).placeholder("Enter a name")),
-        true,
-    )
-    .hint("Visible to other members of your workspace.");
-    let set_submissions = submissions.clone();
-    let form = Form::new()
-        .field(Box::new(field))
-        .submit("Save changes", move || {
-            set_submissions.update(|count| *count += 1)
-        });
-    let set_page = page.clone();
-    let mut pagination = Pagination::new(page.get(), 12, move |next| set_page.set(next));
-    if use_screen_class() == ScreenClass::Compact {
-        pagination = pagination.compact();
-    }
-    let raw_alert = RawAlert::new(
-        Style::default()
-            .flex_row()
-            .gap(theme.spacing_small)
-            .padding_all(theme.spacing_medium),
-        AlertStatus::Success,
-    )
-    .background(theme.surface_hover)
-    .corner_radius(theme.radius_medium)
-    .title(Box::new(RawText::new(
-        "Raw alert",
-        theme.success,
-        theme.typography.body,
-    )))
-    .message(Box::new(RawText::new(
-        "Custom colors and layout.",
-        theme.text_primary,
-        theme.typography.body,
-    )));
-    let raw_disclosure = RawCollapsible::new(Style::default().flex_column(), expanded.get(), {
+    let disclosure = || {
         let set_expanded = expanded.clone();
-        move |next| set_expanded.set(next)
-    })
-    .trigger(Box::new(RawText::new(
-        "Raw trigger: toggle details",
-        theme.accent,
-        theme.typography.body,
-    )))
-    .content(Box::new(RawText::new(
-        "A custom-styled content slot.",
-        theme.text_secondary,
-        theme.typography.body,
-    )));
-    let raw_field = RawField::new(
-        Style::default().flex_column().gap(theme.spacing_small),
-        Box::new(RawText::new(
-            "Raw field label",
-            theme.text_primary,
-            theme.typography.body,
-        )),
-        Box::new(RawText::new(
-            "Your own control goes here",
+        Collapsible::new("Advanced options", expanded.get(), move |next| {
+            set_expanded.set(next)
+        })
+        .content(Box::new(RawText::new(
+            "The content follows the trigger when it opens.",
             theme.text_secondary,
             theme.typography.body,
-        )),
-    )
-    .hint(Box::new(RawText::new(
-        "Custom hint slot",
-        theme.text_secondary,
-        theme.typography.caption,
-    )));
-    let raw_empty = RawEmptyState::new(
-        Style::default()
-            .flex_column()
-            .gap(theme.spacing_small)
-            .padding_all(theme.spacing_small),
-        Box::new(RawText::new(
-            "Nothing selected",
-            theme.text_primary,
-            theme.typography.body,
-        )),
-    )
-    .description(Box::new(RawText::new(
-        "The raw layout accepts any slots.",
-        theme.text_secondary,
-        theme.typography.caption,
-    )));
-    let set_step = step.clone();
-    let mut stepper = Stepper::new(move |next| set_step.set(next))
-        .step(
-            "Draft",
-            if step.get() == 0 {
-                StepState::Active
-            } else {
-                StepState::Completed
-            },
-        )
-        .step(
-            "Review",
-            if step.get() == 1 {
-                StepState::Active
-            } else {
-                StepState::Upcoming
-            },
-        )
-        .step(
-            "Publish",
-            if step.get() == 2 {
-                StepState::Active
-            } else {
-                StepState::Upcoming
-            },
-        );
-    if use_screen_class() == ScreenClass::Compact {
-        stepper = stepper.vertical();
-    }
-    let detail = DescriptionList::new()
-        .horizontal(100.0)
-        .entry("Owner", "Design team")
-        .entry("Status", "In progress")
-        .entry("Updated", "Today");
-    let status = StatusBar::new()
-        .start(Box::new(RawText::new(
-            "Ready",
-            theme.text_primary,
-            theme.typography.caption,
         )))
-        .center(Box::new(RawText::new(
-            "UTF-8",
-            theme.text_secondary,
-            theme.typography.caption,
-        )))
-        .end(Box::new(RawText::new(
-            "Online",
+    };
+    let alert = || {
+        let set_visible = visible.clone();
+        if visible.get() {
+            Box::new(
+                Alert::new(
+                    AlertStatus::Info,
+                    "Changes saved",
+                    "Your settings are available across devices.",
+                )
+                .dismiss(move || set_visible.set(false)),
+            ) as BoxedWidget
+        } else {
+            let show = visible.clone();
+            Box::new(Button::secondary(ButtonSize::Sm, "Show alert", move || {
+                show.set(true)
+            }))
+        }
+    };
+    let form = || {
+        let field = Field::new(
+            "Display name",
+            Box::new(TextInput::controlled(&input).placeholder("Enter a name")),
+            true,
+        )
+        .hint("Visible to other members of your workspace.");
+        let set_submissions = submissions.clone();
+        Form::new()
+            .field(Box::new(field))
+            .submit("Save changes", move || {
+                set_submissions.update(|count| *count += 1)
+            })
+    };
+    let pagination = || {
+        let set_page = page.clone();
+        let mut pagination = Pagination::new(page.get(), 12, move |next| set_page.set(next));
+        if use_screen_class() == ScreenClass::Compact {
+            pagination = pagination.compact();
+        }
+        pagination
+    };
+    let raw_alert = || {
+        RawAlert::new(
+            Style::default()
+                .flex_row()
+                .gap(theme.spacing_small)
+                .padding_all(theme.spacing_medium),
+            AlertStatus::Success,
+        )
+        .background(theme.surface_hover)
+        .corner_radius(theme.radius_medium)
+        .title(Box::new(RawText::new(
+            "Raw alert",
             theme.success,
+            theme.typography.body,
+        )))
+        .message(Box::new(RawText::new(
+            "Custom colors and layout.",
+            theme.text_primary,
+            theme.typography.body,
+        )))
+    };
+    let raw_disclosure = || {
+        RawCollapsible::new(Style::default().flex_column(), expanded.get(), {
+            let set_expanded = expanded.clone();
+            move |next| set_expanded.set(next)
+        })
+        .trigger(Box::new(RawText::new(
+            "Raw trigger: toggle details",
+            theme.accent,
+            theme.typography.body,
+        )))
+        .content(Box::new(RawText::new(
+            "A custom-styled content slot.",
+            theme.text_secondary,
+            theme.typography.body,
+        )))
+    };
+    let raw_field = || {
+        RawField::new(
+            Style::default().flex_column().gap(theme.spacing_small),
+            Box::new(RawText::new(
+                "Raw field label",
+                theme.text_primary,
+                theme.typography.body,
+            )),
+            Box::new(RawText::new(
+                "Your own control goes here",
+                theme.text_secondary,
+                theme.typography.body,
+            )),
+        )
+        .hint(Box::new(RawText::new(
+            "Custom hint slot",
+            theme.text_secondary,
             theme.typography.caption,
-        )));
-    let raw_details =
+        )))
+    };
+    let raw_empty = || {
+        RawEmptyState::new(
+            Style::default()
+                .flex_column()
+                .gap(theme.spacing_small)
+                .padding_all(theme.spacing_small),
+            Box::new(RawText::new(
+                "Nothing selected",
+                theme.text_primary,
+                theme.typography.body,
+            )),
+        )
+        .description(Box::new(RawText::new(
+            "The raw layout accepts any slots.",
+            theme.text_secondary,
+            theme.typography.caption,
+        )))
+    };
+    let stepper = || {
+        let set_step = step.clone();
+        let mut stepper = Stepper::new(move |next| set_step.set(next))
+            .step(
+                "Draft",
+                if step.get() == 0 {
+                    StepState::Active
+                } else {
+                    StepState::Completed
+                },
+            )
+            .step(
+                "Review",
+                if step.get() == 1 {
+                    StepState::Active
+                } else {
+                    StepState::Upcoming
+                },
+            )
+            .step(
+                "Publish",
+                if step.get() == 2 {
+                    StepState::Active
+                } else {
+                    StepState::Upcoming
+                },
+            );
+        if use_screen_class() == ScreenClass::Compact {
+            stepper = stepper.vertical();
+        }
+        stepper
+    };
+    let detail = || {
+        DescriptionList::new()
+            .horizontal(100.0)
+            .entry("Owner", "Design team")
+            .entry("Status", "In progress")
+            .entry("Updated", "Today")
+    };
+    let status = || {
+        StatusBar::new()
+            .start(Box::new(RawText::new(
+                "Ready",
+                theme.text_primary,
+                theme.typography.caption,
+            )))
+            .center(Box::new(RawText::new(
+                "UTF-8",
+                theme.text_secondary,
+                theme.typography.caption,
+            )))
+            .end(Box::new(RawText::new(
+                "Online",
+                theme.success,
+                theme.typography.caption,
+            )))
+    };
+    let raw_details = || {
         RawDescriptionList::new(Style::default().flex_column().gap(theme.spacing_small))
             .term_width(96.0)
             .entry(
@@ -311,208 +335,238 @@ pub fn ComponentsPanel(
                     theme.text_primary,
                     theme.typography.body,
                 )),
-            );
-    let raw_status =
+            )
+    };
+    let raw_status = || {
         RawStatusBar::new(Style::default().flex_row().padding_all(theme.spacing_small))
             .background(theme.surface_hover)
             .start(Box::new(RawText::new(
                 "Raw status",
                 theme.text_primary,
                 theme.typography.caption,
-            )));
-    let raw_stepper = RawStepper::new(Style::default().flex_row().gap(theme.spacing_small), {
-        let set_step = step.clone();
-        move |next| set_step.set(next)
-    })
-    .step(
-        Box::new(RawText::new(
-            "Raw step",
-            theme.accent,
-            theme.typography.body,
-        )),
-        StepState::Active,
-    );
-    let set_tag = tag.clone();
-    let set_tag_visible = tag_visible.clone();
-    let themed_tag: BoxedWidget = if tag_visible.get() {
-        Box::new(
-            Tag::new("Selectable tag")
-                .selected(tag.get(), move |next| set_tag.set(next))
-                .removable(move || set_tag_visible.set(false)),
-        )
-    } else {
-        let show_tag = tag_visible.clone();
-        Box::new(Button::secondary(
-            ButtonSize::Sm,
-            "Restore tag",
-            move || show_tag.set(true),
-        ))
+            )))
     };
-    let raw_tag = RawTag::new(
-        Style::default()
-            .flex_row()
-            .padding_xy(theme.spacing_small, 4.0),
-        Box::new(RawText::new(
-            "Raw tag",
-            theme.text_primary,
-            theme.typography.caption,
-        )),
-    )
-    .background(theme.surface_hover);
-    let set_month = month.clone();
-    let select_date = date.clone();
-    let on_month = month.clone();
-    let themed_calendar = Calendar::new(
-        month.get(),
-        date.get(),
-        move |next| {
-            set_month.set(DateTime::new(next.year, next.month, 1, 0, 0));
-            select_date.set(Some(next));
-        },
-        move |next| on_month.set(next),
-    )
-    .today(DateTime::new(2026, 3, 15, 0, 0))
-    .week_start(1);
-    let raw_calendar = RawCalendar::new(
-        Style::default().flex_column(),
-        month.get(),
-        date.get(),
-        {
-            let set_date = date.clone();
-            move |next| set_date.set(Some(next))
-        },
-        {
-            let set_month = month.clone();
-            move |next| set_month.set(next)
-        },
-    )
-    .colors(CalendarColors {
-        text: theme.text_primary,
-        muted: theme.text_secondary,
-        selected: theme.accent,
-        selected_text: theme.selection_text,
-        today: theme.accent,
-    })
-    .background(theme.surface_hover);
-    let set_rating = rating.clone();
-    let themed_rating = Rating::new(rating.get(), 5, move |next| set_rating.set(next)).half_steps();
-    let raw_rating = RawRating::new(Style::default().size(140.0, 28.0), rating.get(), 5, {
+    let raw_stepper = || {
+        RawStepper::new(Style::default().flex_row().gap(theme.spacing_small), {
+            let set_step = step.clone();
+            move |next| set_step.set(next)
+        })
+        .step(
+            Box::new(RawText::new(
+                "Raw step",
+                theme.accent,
+                theme.typography.body,
+            )),
+            StepState::Active,
+        )
+    };
+    let themed_tag = || {
+        let set_tag = tag.clone();
+        let set_tag_visible = tag_visible.clone();
+        if tag_visible.get() {
+            Box::new(
+                Tag::new("Selectable tag")
+                    .selected(tag.get(), move |next| set_tag.set(next))
+                    .removable(move || set_tag_visible.set(false)),
+            ) as BoxedWidget
+        } else {
+            let show_tag = tag_visible.clone();
+            Box::new(Button::secondary(
+                ButtonSize::Sm,
+                "Restore tag",
+                move || show_tag.set(true),
+            ))
+        }
+    };
+    let raw_tag = || {
+        RawTag::new(
+            Style::default()
+                .flex_row()
+                .padding_xy(theme.spacing_small, 4.0),
+            Box::new(RawText::new(
+                "Raw tag",
+                theme.text_primary,
+                theme.typography.caption,
+            )),
+        )
+        .background(theme.surface_hover)
+    };
+    let themed_calendar = || {
+        let set_month = month.clone();
+        let select_date = date.clone();
+        let on_month = month.clone();
+        Calendar::new(
+            month.get(),
+            date.get(),
+            move |next| {
+                set_month.set(DateTime::new(next.year, next.month, 1, 0, 0));
+                select_date.set(Some(next));
+            },
+            move |next| on_month.set(next),
+        )
+        .today(DateTime::new(2026, 3, 15, 0, 0))
+        .week_start(1)
+    };
+    let raw_calendar = || {
+        RawCalendar::new(
+            Style::default().flex_column(),
+            month.get(),
+            date.get(),
+            {
+                let set_date = date.clone();
+                move |next| set_date.set(Some(next))
+            },
+            {
+                let set_month = month.clone();
+                move |next| set_month.set(next)
+            },
+        )
+        .colors(CalendarColors {
+            text: theme.text_primary,
+            muted: theme.text_secondary,
+            selected: theme.accent,
+            selected_text: theme.selection_text,
+            today: theme.accent,
+        })
+        .background(theme.surface_hover)
+    };
+    let themed_rating = || {
         let set_rating = rating.clone();
-        move |next| set_rating.set(next)
-    })
-    .step(0.5)
-    .colors(theme.success, theme.border);
-    let select_slide = carousel.clone();
-    let mut themed_carousel = Carousel::new(carousel.get(), move |index| select_slide.set(index));
-    let raw_select_slide = carousel.clone();
-    let mut raw_carousel = RawCarousel::new(
-        Style::default().flex_column().gap(theme.spacing_small),
-        carousel.get(),
-        move |index| raw_select_slide.set(index),
-    )
-    .indicators(theme.border, theme.success)
-    .looping(true);
-    for (index, name) in ["Overview", "Details", "Activity"].iter().enumerate() {
-        themed_carousel = themed_carousel.slide(Box::new(
-            RawView::new(Style {
-                size: creamui_core::layout::Size {
-                    width: Dimension::Percent(1.0),
-                    height: Dimension::Auto,
-                },
-                ..Style::default().padding_all(theme.spacing_medium)
-            })
-            .background(theme.surface_hover)
-            .corner_radius(theme.radius_small)
-            .child(Box::new(RawText::new(
-                format!("Slide {}: {}", index + 1, name),
-                theme.text_primary,
-                theme.typography.body,
-            ))),
-        ));
-        raw_carousel = raw_carousel.slide(Box::new(
-            RawText::new(
-                format!("Raw slide {}", index + 1),
-                theme.text_primary,
-                theme.typography.body,
-            )
-            .padding(theme.spacing_small),
-        ));
-    }
-    let record_otp_update = otp_updates.clone();
-    let themed_otp = OtpInput::new(&otp, move |_| record_otp_update.update(|count| *count += 1));
-    let record_raw_update = otp_updates.clone();
-    let raw_otp_input = RawOtpInput::new(Style::default().size(160.0, 42.0), &raw_otp, move |_| {
-        record_raw_update.update(|count| *count += 1)
-    })
-    .colors(OtpColors {
-        text: theme.text_primary,
-        surface: theme.surface_hover,
-        border: theme.border,
-        focus: theme.accent,
-        error: theme.danger,
-    });
+        Rating::new(rating.get(), 5, move |next| set_rating.set(next)).half_steps()
+    };
+    let raw_rating = || {
+        RawRating::new(Style::default().size(140.0, 28.0), rating.get(), 5, {
+            let set_rating = rating.clone();
+            move |next| set_rating.set(next)
+        })
+        .step(0.5)
+        .colors(theme.success, theme.border)
+    };
+    let carousel_views = || {
+        let select_slide = carousel.clone();
+        let mut themed_carousel =
+            Carousel::new(carousel.get(), move |index| select_slide.set(index));
+        let raw_select_slide = carousel.clone();
+        let mut raw_carousel = RawCarousel::new(
+            Style::default().flex_column().gap(theme.spacing_small),
+            carousel.get(),
+            move |index| raw_select_slide.set(index),
+        )
+        .indicators(theme.border, theme.success)
+        .looping(true);
+        for (index, name) in ["Overview", "Details", "Activity"].iter().enumerate() {
+            themed_carousel = themed_carousel.slide(Box::new(
+                RawView::new(Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Percent(1.0),
+                        height: Dimension::Auto,
+                    },
+                    ..Style::default().padding_all(theme.spacing_medium)
+                })
+                .background(theme.surface_hover)
+                .corner_radius(theme.radius_small)
+                .child(Box::new(RawText::new(
+                    format!("Slide {}: {}", index + 1, name),
+                    theme.text_primary,
+                    theme.typography.body,
+                ))),
+            ));
+            raw_carousel = raw_carousel.slide(Box::new(
+                RawText::new(
+                    format!("Raw slide {}", index + 1),
+                    theme.text_primary,
+                    theme.typography.body,
+                )
+                .padding(theme.spacing_small),
+            ));
+        }
+        (themed_carousel, raw_carousel)
+    };
+    let themed_otp = || {
+        let record_otp_update = otp_updates.clone();
+        OtpInput::new(&otp, move |_| record_otp_update.update(|count| *count += 1))
+    };
+    let raw_otp_input = || {
+        let record_raw_update = otp_updates.clone();
+        RawOtpInput::new(Style::default().size(160.0, 42.0), &raw_otp, move |_| {
+            record_raw_update.update(|count| *count += 1)
+        })
+        .colors(OtpColors {
+            text: theme.text_primary,
+            surface: theme.surface_hover,
+            border: theme.border,
+            focus: theme.accent,
+            error: theme.danger,
+        })
+    };
     let show_toast = toasts.clone();
     let undo_count = action_count.clone();
     let show_undo_toast = toasts.clone();
-    let raw_toast: BoxedWidget = if raw_toast_visible.get() {
-        let dismiss = raw_toast_visible.clone();
-        Box::new(
-            RawToast::new(
-                Style::default()
-                    .flex_row()
-                    .gap(theme.spacing_medium)
-                    .padding_all(theme.spacing_small),
-                Box::new(RawText::new(
-                    "Raw notification",
-                    theme.text_primary,
-                    theme.typography.body,
-                )),
-            )
-            .background(theme.surface_hover)
-            .dismiss(
-                Box::new(RawText::new(
-                    "x",
-                    theme.text_secondary,
-                    theme.typography.body,
-                )),
-                move || dismiss.set(false),
+    let raw_toast = || {
+        if raw_toast_visible.get() {
+            let dismiss = raw_toast_visible.clone();
+            Box::new(
+                RawToast::new(
+                    Style::default()
+                        .flex_row()
+                        .gap(theme.spacing_medium)
+                        .padding_all(theme.spacing_small),
+                    Box::new(RawText::new(
+                        "Raw notification",
+                        theme.text_primary,
+                        theme.typography.body,
+                    )),
+                )
+                .background(theme.surface_hover)
+                .dismiss(
+                    Box::new(RawText::new(
+                        "x",
+                        theme.text_secondary,
+                        theme.typography.body,
+                    )),
+                    move || dismiss.set(false),
+                ),
+            ) as BoxedWidget
+        } else {
+            let restore = raw_toast_visible.clone();
+            Box::new(Button::secondary(
+                ButtonSize::Sm,
+                "Restore raw toast",
+                move || restore.set(true),
+            ))
+        }
+    };
+    let themed_tooltip = || {
+        Tooltip::new(
+            &tooltip,
+            Box::new(Button::secondary(ButtonSize::Sm, "Hover or focus", || {})),
+            "A hint about this control",
+        )
+        .position(TooltipPosition::Bottom)
+        .shortcut("Shortcut: Ctrl + K")
+    };
+    let raw_tooltip_view = || {
+        RawTooltip::new(
+            Style::default().flex_column().align(Align::Start),
+            &raw_tooltip,
+            Box::new(
+                RawText::new("Raw help target", theme.text_primary, theme.typography.body)
+                    .padding(theme.spacing_small),
+            ),
+            Box::new(
+                RawView::new(Style::default().padding_all(theme.spacing_small))
+                    .background(theme.surface_hover)
+                    .border(theme.border, 1.0)
+                    .child(Box::new(RawText::new(
+                        "Custom tooltip content",
+                        theme.text_primary,
+                        theme.typography.caption,
+                    ))),
             ),
         )
-    } else {
-        let restore = raw_toast_visible.clone();
-        Box::new(Button::secondary(
-            ButtonSize::Sm,
-            "Restore raw toast",
-            move || restore.set(true),
-        ))
+        .position(TooltipPosition::Right)
+        .popup_size(180.0, 42.0)
     };
-    let themed_tooltip = Tooltip::new(
-        &tooltip,
-        Box::new(Button::secondary(ButtonSize::Sm, "Hover or focus", || {})),
-        "A hint about this control",
-    )
-    .position(TooltipPosition::Bottom)
-    .shortcut("Shortcut: Ctrl + K");
-    let raw_tooltip_view = RawTooltip::new(
-        Style::default().flex_column().align(Align::Start),
-        &raw_tooltip,
-        Box::new(
-            RawText::new("Raw help target", theme.text_primary, theme.typography.body)
-                .padding(theme.spacing_small),
-        ),
-        Box::new(
-            RawView::new(Style::default().padding_all(theme.spacing_small))
-                .background(theme.surface_hover)
-                .border(theme.border, 1.0)
-                .child(Box::new(RawText::new(
-                    "Custom tooltip content",
-                    theme.text_primary,
-                    theme.typography.caption,
-                ))),
-        ),
-    )
-    .position(TooltipPosition::Right)
-    .popup_size(180.0, 42.0);
     let pane = |text: &str| -> BoxedWidget {
         Box::new(
             RawView::new(
@@ -533,90 +587,105 @@ pub fn ComponentsPanel(
             ))),
         )
     };
-    let themed_panels = ResizablePanels::new(SplitAxis::Horizontal, panels)
-        .pane(pane("Files"), 52.0, Some(230.0))
-        .pane(pane("Editor"), 85.0, None)
-        .pane(pane("Preview"), 54.0, None);
-    let collapse_raw = raw_panels.clone();
-    let raw_panels_view = RawResizablePanels::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Length(80.0),
+    let themed_panels = || {
+        ResizablePanels::new(SplitAxis::Horizontal, panels.clone())
+            .pane(pane("Files"), 52.0, Some(230.0))
+            .pane(pane("Editor"), 85.0, None)
+            .pane(pane("Preview"), 54.0, None)
+    };
+    let raw_panels_view = || {
+        RawResizablePanels::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Length(80.0),
+                },
+                ..Default::default()
             },
-            ..Default::default()
-        },
-        SplitAxis::Horizontal,
-        vec![raw_panels],
-    )
-    .divider(6.0, theme.accent)
-    .pane(pane("Raw left"), 0.0, None)
-    .pane(pane("Raw right"), 48.0, None);
-    let themed_grid = GridLayout::new(&grid, 2)
-        .row_height(70.0)
-        .item("summary", "Summary")
-        .item("activity", "Activity")
-        .item("metrics", "Metrics");
-    let raw_grid_view = RawGridLayout::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Auto,
+            SplitAxis::Horizontal,
+            vec![raw_panels.clone()],
+        )
+        .divider(6.0, theme.accent)
+        .pane(pane("Raw left"), 0.0, None)
+        .pane(pane("Raw right"), 48.0, None)
+    };
+    let themed_grid = || {
+        GridLayout::new(&grid, 2)
+            .row_height(70.0)
+            .item("summary", "Summary")
+            .item("activity", "Activity")
+            .item("metrics", "Metrics")
+    };
+    let raw_grid_view = || {
+        RawGridLayout::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Auto,
+                },
+                ..Default::default()
             },
-            ..Default::default()
-        },
-        &raw_grid,
-        2,
-    )
-    .row_height(52.0)
-    .item("left", pane("Raw left"))
-    .item("right", pane("Raw right"));
-    let table_columns = vec![
-        TableColumn::new("Name", 88.0),
-        TableColumn::new("State", 72.0),
-        TableColumn::new("Count", 58.0),
-    ];
-    let table_rows = vec![
-        vec!["Alpha".into(), "ready".into(), "12".into()],
-        vec!["Beta".into(), "waiting".into(), "4".into()],
-        vec!["Gamma".into(), "ready".into(), "8".into()],
-        vec!["Delta".into(), "waiting".into(), "21".into()],
-        vec!["Epsilon".into(), "ready".into(), "3".into()],
-        vec!["Zeta".into(), "ready".into(), "17".into()],
-        vec!["Eta".into(), "waiting".into(), "5".into()],
-        vec!["Theta".into(), "ready".into(), "9".into()],
-    ];
-    let themed_data_table = DataTable::new(
-        table_columns.clone(),
-        table_rows.clone(),
-        &data_table,
-        table_scroll,
-        table_virtual,
-        135.0,
-    )
-    .dense();
-    let raw_data_table = RawDataTable::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Length(110.0),
+            &raw_grid,
+            2,
+        )
+        .row_height(52.0)
+        .item("left", pane("Raw left"))
+        .item("right", pane("Raw right"))
+    };
+    let table_columns = || {
+        vec![
+            TableColumn::new("Name", 88.0),
+            TableColumn::new("State", 72.0),
+            TableColumn::new("Count", 58.0),
+        ]
+    };
+    let table_rows = || {
+        vec![
+            vec!["Alpha".into(), "ready".into(), "12".into()],
+            vec!["Beta".into(), "waiting".into(), "4".into()],
+            vec!["Gamma".into(), "ready".into(), "8".into()],
+            vec!["Delta".into(), "waiting".into(), "21".into()],
+            vec!["Epsilon".into(), "ready".into(), "3".into()],
+            vec!["Zeta".into(), "ready".into(), "17".into()],
+            vec!["Eta".into(), "waiting".into(), "5".into()],
+            vec!["Theta".into(), "ready".into(), "9".into()],
+        ]
+    };
+    let themed_data_table = || {
+        DataTable::new(
+            table_columns(),
+            table_rows(),
+            &data_table,
+            table_scroll.clone(),
+            table_virtual.clone(),
+            135.0,
+        )
+        .dense()
+    };
+    let raw_data_table = || {
+        RawDataTable::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Length(110.0),
+                },
+                ..Default::default()
             },
-            ..Default::default()
-        },
-        raw_table_scroll,
-        table_columns,
-        table_rows,
-        &data_table,
-        raw_table_virtual,
-        80.0,
-    )
-    .customize(|table| {
-        table.header_background = Some(theme.surface_elevated);
-        table.header_text_color = theme.text_primary;
-        table.cell_text_color = theme.text_primary;
-        table.selected_row_background = Some(theme.accent_hover);
-        table.alt_row_background = Some(theme.surface_hover);
-    });
+            raw_table_scroll.clone(),
+            table_columns(),
+            table_rows(),
+            &data_table,
+            raw_table_virtual.clone(),
+            80.0,
+        )
+        .customize(|table| {
+            table.header_background = Some(theme.surface_elevated);
+            table.header_text_color = theme.text_primary;
+            table.cell_text_color = theme.text_primary;
+            table.selected_row_background = Some(theme.accent_hover);
+            table.alt_row_background = Some(theme.surface_hover);
+        })
+    };
     let ready_filter = data_table.clone();
     let clear_filter = data_table.clone();
     let toggle_column = data_table.clone();
@@ -636,309 +705,346 @@ pub fn ComponentsPanel(
             move || count.update(|value| *value += 1),
         )
     };
-    let count = toolbar_actions.clone();
-    let themed_toolbar = Toolbar::new(&toolbar)
-        .action("Save", move || count.update(|value| *value += 1))
-        .action("Undo", {
-            let count = toolbar_actions.clone();
-            move || count.update(|value| *value += 1)
-        })
-        .separator()
-        .action("Preview", {
-            let count = toolbar_actions.clone();
-            move || count.update(|value| *value += 1)
-        })
-        .action("Export", {
-            let count = toolbar_actions.clone();
-            move || count.update(|value| *value += 1)
-        })
-        .separator()
-        .action("Docs", {
-            let count = toolbar_actions.clone();
-            move || count.update(|value| *value += 1)
-        })
-        .action("Help", {
-            let count = toolbar_actions.clone();
-            move || count.update(|value| *value += 1)
-        })
-        .floating();
-    let raw_toolbar_view = RawToolbar::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Length(180.0),
-                height: Dimension::Length(36.0),
-            },
-            ..Default::default()
-        },
-        &raw_toolbar,
-    )
-    .overflow_trigger(
-        Box::new(RawText::new("More", theme.accent, theme.typography.caption)),
-        48.0,
-    )
-    .menu_style(
-        RawView::new(Style::default().padding_all(theme.spacing_small))
-            .background(theme.surface_elevated)
-            .border(theme.border, 1.0)
-            .style(),
-    )
-    .group(vec![action("Raw edit")])
-    .group(vec![action("Raw inspect")])
-    .menu_above(true);
-    let chart_view = Chart::new(
-        &chart,
-        vec![
-            PlotSeries::new(
-                "Traffic",
-                PlotKind::Area,
-                theme.accent,
-                vec![
-                    (0.0, 8.0),
-                    (1.0, 15.0),
-                    (2.0, 12.0),
-                    (3.0, 23.0),
-                    (4.0, 17.0),
-                ],
-            ),
-            PlotSeries::new(
-                "Revenue",
-                PlotKind::Line,
-                theme.success,
-                vec![
-                    (0.0, 4.0),
-                    (1.0, 10.0),
-                    (2.0, 18.0),
-                    (3.0, 16.0),
-                    (4.0, 26.0),
-                ],
-            ),
-            PlotSeries::new(
-                "Orders",
-                PlotKind::Bar,
-                theme.warning,
-                vec![(0.0, 3.0), (1.0, 6.0), (2.0, 9.0), (3.0, 11.0), (4.0, 13.0)],
-            ),
-        ],
-    )
-    .height(165.0);
-    let raw_plot_view = RawPlot::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Length(110.0),
-            },
-            ..Default::default()
-        },
-        &raw_plot,
-        vec![PlotSeries::new(
-            "Raw bars",
-            PlotKind::Bar,
-            theme.accent,
-            vec![(0.0, 3.0), (1.0, 6.0), (2.0, 4.0), (3.0, 8.0)],
-        )],
-    )
-    .scales(PlotScale::new(0.0, 3.0), PlotScale::new(0.0, 10.0));
-    let diff_hunks = vec![
-        DiffHunk::new("@@ -1,5 +1,5 @@")
-            .line(DiffLine::new(
-                DiffKind::Context,
-                Some(1),
-                Some(1),
-                "fn render() {",
-            ))
-            .line(DiffLine::new(
-                DiffKind::Deletion,
-                Some(2),
-                None,
-                "  let x = 1;",
-            ))
-            .line(DiffLine::new(
-                DiffKind::Addition,
-                None,
-                Some(2),
-                "  let x = 2;",
-            ))
-            .line(DiffLine::new(
-                DiffKind::Context,
-                Some(3),
-                Some(3),
-                "  apply(x);",
-            ))
-            .line(DiffLine::new(
-                DiffKind::Conflict,
-                Some(4),
-                Some(4),
-                "<<<< ours",
-            ))
-            .line(DiffLine::new(DiffKind::Context, Some(5), Some(5), "}")),
-        DiffHunk::new("@@ -8,1 +8,2 @@")
-            .line(DiffLine::new(
-                DiffKind::Addition,
-                None,
-                Some(8),
-                "let ready = true;",
-            ))
-            .line(DiffLine::new(
-                DiffKind::Addition,
-                None,
-                Some(9),
-                "let done = true;",
-            )),
-    ];
-    let themed_diff = Diff::new(&diff, diff_state, diff_scroll, 138.0, &diff_hunks);
-    let raw_diff_view = RawDiff::new(
-        Style {
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Length(90.0),
-            },
-            ..Default::default()
-        },
-        &raw_diff,
-        raw_diff_state,
-        raw_diff_scroll,
-        90.0,
-        &diff_hunks,
-    )
-    .colors(DiffColors {
-        context: theme.surface,
-        addition: theme.success.mix(theme.surface, 0.87),
-        deletion: theme.danger.mix(theme.surface, 0.87),
-        conflict: theme.warning.mix(theme.surface, 0.84),
-        selected: theme.accent.mix(theme.surface, 0.65),
-        header: theme.surface_elevated,
-        text: theme.text_primary,
-        gutter: theme.text_secondary,
-    });
-    let raw_shortcut = RawKbd::new(
-        Style::default().padding_all(4.0),
-        ["Mod".to_owned(), "P".to_owned()],
-    )
-    .text_style(theme.text_primary, theme.typography.caption)
-    .background(theme.surface_hover);
-    let set_pressed = pressed.clone();
-    let toggle = ToggleButton::new("Pin selection", pressed.get(), move |next| {
-        set_pressed.set(next)
-    });
-    let set_action_count = action_count.clone();
-    let toggle_menu = menu_open.clone();
-    let dropdown = DropdownButton::new(
-        "Save",
-        move || set_action_count.update(|count| *count += 1),
-        move || toggle_menu.update(|open| *open = !*open),
-    );
-    let menu_content: BoxedWidget = if menu_open.get() {
-        Box::new(
-            RawView::new(Style::default().padding_all(theme.spacing_medium))
-                .background(theme.surface_hover)
-                .child(Box::new(RawText::new(
-                    "Save as…     Export…",
-                    theme.text_primary,
-                    theme.typography.body,
-                ))),
-        )
-    } else {
-        Box::new(RawView::new(Style::default()))
+    let themed_toolbar = || {
+        let count = toolbar_actions.clone();
+        Toolbar::new(&toolbar)
+            .action("Save", move || count.update(|value| *value += 1))
+            .action("Undo", {
+                let count = toolbar_actions.clone();
+                move || count.update(|value| *value += 1)
+            })
+            .separator()
+            .action("Preview", {
+                let count = toolbar_actions.clone();
+                move || count.update(|value| *value += 1)
+            })
+            .action("Export", {
+                let count = toolbar_actions.clone();
+                move || count.update(|value| *value += 1)
+            })
+            .separator()
+            .action("Docs", {
+                let count = toolbar_actions.clone();
+                move || count.update(|value| *value += 1)
+            })
+            .action("Help", {
+                let count = toolbar_actions.clone();
+                move || count.update(|value| *value += 1)
+            })
+            .floating()
     };
-    let raw_group_value = raw_group.get();
-    let set_raw_group = raw_group.clone();
-    let raw_input = RawTextInput::new(
-        Style::default().size(140.0, 34.0),
-        raw_group_value,
-        theme.typography.body,
-        theme.text_primary,
-        move |next| set_raw_group.set(next),
-    )
-    .background(theme.surface_elevated);
-    let raw_input_group = RawInputGroup::new(
-        Style::default()
-            .flex_row()
-            .align(Align::Center)
-            .padding_all(2.0),
-        Box::new(raw_input),
-    )
-    .leading(Box::new(RawText::new(
-        "€",
-        theme.text_secondary,
-        theme.typography.body,
-    )))
-    .trailing(Box::new(RawText::new(
-        "EUR",
-        theme.text_secondary,
-        theme.typography.body,
-    )))
-    .border(theme.border, 1.0)
-    .corner_radius(theme.input_radius);
-    let set_pressed_raw = pressed.clone();
-    let raw_toggle = creamui_widgets::RawButton::new(
-        Style::default().padding_all(theme.spacing_small),
-        move || set_pressed_raw.update(|active| *active = !*active),
-    )
-    .pressed_state(pressed.get())
-    .background(if pressed.get() {
-        theme.accent
-    } else {
-        theme.surface_hover
-    })
-    .child(Box::new(RawText::new(
-        "Raw toggle",
-        if pressed.get() {
-            theme.selection_text
+    let raw_toolbar_view = || {
+        RawToolbar::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Length(180.0),
+                    height: Dimension::Length(36.0),
+                },
+                ..Default::default()
+            },
+            &raw_toolbar,
+        )
+        .overflow_trigger(
+            Box::new(RawText::new("More", theme.accent, theme.typography.caption)),
+            48.0,
+        )
+        .menu_style(
+            RawView::new(Style::default().padding_all(theme.spacing_small))
+                .background(theme.surface_elevated)
+                .border(theme.border, 1.0)
+                .style(),
+        )
+        .group(vec![action("Raw edit")])
+        .group(vec![action("Raw inspect")])
+        .menu_above(true)
+    };
+    let chart_view = || {
+        Chart::new(
+            &chart,
+            vec![
+                PlotSeries::new(
+                    "Traffic",
+                    PlotKind::Area,
+                    theme.accent,
+                    vec![
+                        (0.0, 8.0),
+                        (1.0, 15.0),
+                        (2.0, 12.0),
+                        (3.0, 23.0),
+                        (4.0, 17.0),
+                    ],
+                ),
+                PlotSeries::new(
+                    "Revenue",
+                    PlotKind::Line,
+                    theme.success,
+                    vec![
+                        (0.0, 4.0),
+                        (1.0, 10.0),
+                        (2.0, 18.0),
+                        (3.0, 16.0),
+                        (4.0, 26.0),
+                    ],
+                ),
+                PlotSeries::new(
+                    "Orders",
+                    PlotKind::Bar,
+                    theme.warning,
+                    vec![(0.0, 3.0), (1.0, 6.0), (2.0, 9.0), (3.0, 11.0), (4.0, 13.0)],
+                ),
+            ],
+        )
+        .height(165.0)
+    };
+    let raw_plot_view = || {
+        RawPlot::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Length(110.0),
+                },
+                ..Default::default()
+            },
+            &raw_plot,
+            vec![PlotSeries::new(
+                "Raw bars",
+                PlotKind::Bar,
+                theme.accent,
+                vec![(0.0, 3.0), (1.0, 6.0), (2.0, 4.0), (3.0, 8.0)],
+            )],
+        )
+        .scales(PlotScale::new(0.0, 3.0), PlotScale::new(0.0, 10.0))
+    };
+    let diff_hunks = || {
+        vec![
+            DiffHunk::new("@@ -1,5 +1,5 @@")
+                .line(DiffLine::new(
+                    DiffKind::Context,
+                    Some(1),
+                    Some(1),
+                    "fn render() {",
+                ))
+                .line(DiffLine::new(
+                    DiffKind::Deletion,
+                    Some(2),
+                    None,
+                    "  let x = 1;",
+                ))
+                .line(DiffLine::new(
+                    DiffKind::Addition,
+                    None,
+                    Some(2),
+                    "  let x = 2;",
+                ))
+                .line(DiffLine::new(
+                    DiffKind::Context,
+                    Some(3),
+                    Some(3),
+                    "  apply(x);",
+                ))
+                .line(DiffLine::new(
+                    DiffKind::Conflict,
+                    Some(4),
+                    Some(4),
+                    "<<<< ours",
+                ))
+                .line(DiffLine::new(DiffKind::Context, Some(5), Some(5), "}")),
+            DiffHunk::new("@@ -8,1 +8,2 @@")
+                .line(DiffLine::new(
+                    DiffKind::Addition,
+                    None,
+                    Some(8),
+                    "let ready = true;",
+                ))
+                .line(DiffLine::new(
+                    DiffKind::Addition,
+                    None,
+                    Some(9),
+                    "let done = true;",
+                )),
+        ]
+    };
+    let themed_diff = || {
+        Diff::new(
+            &diff,
+            diff_state.clone(),
+            diff_scroll.clone(),
+            138.0,
+            &diff_hunks(),
+        )
+    };
+    let raw_diff_view = || {
+        RawDiff::new(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Length(90.0),
+                },
+                ..Default::default()
+            },
+            &raw_diff,
+            raw_diff_state.clone(),
+            raw_diff_scroll.clone(),
+            90.0,
+            &diff_hunks(),
+        )
+        .colors(DiffColors {
+            context: theme.surface,
+            addition: theme.success.mix(theme.surface, 0.87),
+            deletion: theme.danger.mix(theme.surface, 0.87),
+            conflict: theme.warning.mix(theme.surface, 0.84),
+            selected: theme.accent.mix(theme.surface, 0.65),
+            header: theme.surface_elevated,
+            text: theme.text_primary,
+            gutter: theme.text_secondary,
+        })
+    };
+    let raw_shortcut = || {
+        RawKbd::new(
+            Style::default().padding_all(4.0),
+            ["Mod".to_owned(), "P".to_owned()],
+        )
+        .text_style(theme.text_primary, theme.typography.caption)
+        .background(theme.surface_hover)
+    };
+    let toggle = || {
+        let set_pressed = pressed.clone();
+        ToggleButton::new("Pin selection", pressed.get(), move |next| {
+            set_pressed.set(next)
+        })
+    };
+    let dropdown = || {
+        let set_action_count = action_count.clone();
+        let toggle_menu = menu_open.clone();
+        DropdownButton::new(
+            "Save",
+            move || set_action_count.update(|count| *count += 1),
+            move || toggle_menu.update(|open| *open = !*open),
+        )
+    };
+    let menu_content = || {
+        if menu_open.get() {
+            Box::new(
+                RawView::new(Style::default().padding_all(theme.spacing_medium))
+                    .background(theme.surface_hover)
+                    .child(Box::new(RawText::new(
+                        "Save as…     Export…",
+                        theme.text_primary,
+                        theme.typography.body,
+                    ))),
+            )
         } else {
-            theme.text_primary
-        },
-        theme.typography.body,
-    )));
-    let raw_split = RawDropdownButton::new(
-        Style::default().flex_row().gap(2.0),
-        Box::new(RawText::new(
-            "Raw action",
-            theme.text_primary,
+            Box::new(RawView::new(Style::default()))
+        }
+    };
+    let raw_input_group = || {
+        let raw_group_value = raw_group.get();
+        let set_raw_group = raw_group.clone();
+        let raw_input = RawTextInput::new(
+            Style::default().size(140.0, 34.0),
+            raw_group_value,
             theme.typography.body,
-        )),
-        Box::new(RawText::new("…", theme.text_primary, theme.typography.body)),
-        {
-            let count = action_count.clone();
-            move || count.update(|value| *value += 1)
-        },
-        {
-            let open = menu_open.clone();
-            move || open.update(|value| *value = !*value)
-        },
-    )
-    .button_styles(
-        creamui_core::Style::new()
-            .background(theme.surface_hover)
-            .padding(theme.spacing_small),
-        creamui_core::Style::new()
-            .background(theme.surface_hover)
-            .padding(theme.spacing_small),
-    );
-    let set_number = number.clone();
-    let themed_number =
+            theme.text_primary,
+            move |next| set_raw_group.set(next),
+        )
+        .background(theme.surface_elevated);
+        RawInputGroup::new(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .padding_all(2.0),
+            Box::new(raw_input),
+        )
+        .leading(Box::new(RawText::new(
+            "€",
+            theme.text_secondary,
+            theme.typography.body,
+        )))
+        .trailing(Box::new(RawText::new(
+            "EUR",
+            theme.text_secondary,
+            theme.typography.body,
+        )))
+        .border(theme.border, 1.0)
+        .corner_radius(theme.input_radius)
+    };
+    let raw_toggle = || {
+        let set_pressed_raw = pressed.clone();
+        creamui_widgets::RawButton::new(
+            Style::default().padding_all(theme.spacing_small),
+            move || set_pressed_raw.update(|active| *active = !*active),
+        )
+        .pressed_state(pressed.get())
+        .background(if pressed.get() {
+            theme.accent
+        } else {
+            theme.surface_hover
+        })
+        .child(Box::new(RawText::new(
+            "Raw toggle",
+            if pressed.get() {
+                theme.selection_text
+            } else {
+                theme.text_primary
+            },
+            theme.typography.body,
+        )))
+    };
+    let raw_split = || {
+        RawDropdownButton::new(
+            Style::default().flex_row().gap(2.0),
+            Box::new(RawText::new(
+                "Raw action",
+                theme.text_primary,
+                theme.typography.body,
+            )),
+            Box::new(RawText::new("…", theme.text_primary, theme.typography.body)),
+            {
+                let count = action_count.clone();
+                move || count.update(|value| *value += 1)
+            },
+            {
+                let open = menu_open.clone();
+                move || open.update(|value| *value = !*value)
+            },
+        )
+        .button_styles(
+            creamui_core::Style::new()
+                .background(theme.surface_hover)
+                .padding(theme.spacing_small),
+            creamui_core::Style::new()
+                .background(theme.surface_hover)
+                .padding(theme.spacing_small),
+        )
+    };
+    let themed_number = || {
+        let set_number = number.clone();
         NumberInput::new(&number_text, number.get(), move |next| set_number.set(next))
             .bounds(Some(0.0), Some(10.0))
             .step(0.5)
-            .precision(1);
-    let set_raw_number = raw_number.clone();
-    let raw_numeric = RawNumberInput::new(
-        Style::default()
-            .flex_row()
-            .align(Align::Center)
-            .size(190.0, 38.0)
-            .padding_all(4.0),
-        &raw_number_text,
-        raw_number.get(),
-        move |next| set_raw_number.set(next),
-    )
-    .bounds(Some(0.0), Some(20.0))
-    .step(1.0)
-    .colors(
-        theme.text_primary,
-        theme.text_primary,
-        theme.typography.body,
-    )
-    .background(theme.surface_hover);
+            .precision(1)
+    };
+    let raw_numeric = || {
+        let set_raw_number = raw_number.clone();
+        RawNumberInput::new(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .size(190.0, 38.0)
+                .padding_all(4.0),
+            &raw_number_text,
+            raw_number.get(),
+            move |next| set_raw_number.set(next),
+        )
+        .bounds(Some(0.0), Some(20.0))
+        .step(1.0)
+        .colors(
+            theme.text_primary,
+            theme.text_primary,
+            theme.typography.body,
+        )
+        .background(theme.surface_hover)
+    };
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
@@ -946,12 +1052,12 @@ pub fn ComponentsPanel(
             })
             .child(page_card(section, ShowcasePage::Disclosure, || card(vec![
                 label("Accordion & collapsible"),
-                Box::new(themed_accordion),
-                Box::new(disclosure),
+                Box::new(themed_accordion()),
+                Box::new(disclosure()),
             ])))
             .child(page_card(section, ShowcasePage::States, || card(vec![
                 label("Inline alerts"),
-                alert,
+                alert(),
                 Box::new(Alert::styled(
                     AlertStatus::Warning,
                     AlertVariant::Solid,
@@ -977,7 +1083,7 @@ pub fn ComponentsPanel(
             ])))
             .child(page_card(section, ShowcasePage::Forms, || card(vec![
                 label("Fields & form"),
-                Box::new(form),
+                Box::new(form()),
                 Box::new(RawText::new(
                     format!("Submitted {} times", submissions.get()),
                     theme.text_secondary,
@@ -986,7 +1092,7 @@ pub fn ComponentsPanel(
             ])))
             .child(page_card(section, ShowcasePage::Pagination, || card(vec![
                 label("Pagination"),
-                Box::new(pagination),
+                Box::new(pagination()),
                 Box::new(RawText::new(
                     format!("Page {} of 12", page.get()),
                     theme.text_secondary,
@@ -995,50 +1101,53 @@ pub fn ComponentsPanel(
             ])))
             .child(page_card(section, ShowcasePage::States, || card(vec![
                 label("Raw feedback"),
-                Box::new(raw_alert),
-                Box::new(raw_empty),
+                Box::new(raw_alert()),
+                Box::new(raw_empty()),
             ])))
             .child(page_card(section, ShowcasePage::Disclosure, || card(vec![
                 label("Raw disclosure"),
-                Box::new(raw_disclosure),
+                Box::new(raw_disclosure()),
             ])))
             .child(page_card(section, ShowcasePage::Forms, || card(vec![
                 label("Raw field"),
-                Box::new(raw_field),
+                Box::new(raw_field()),
             ])))
             .child(page_card(section, ShowcasePage::Workspace, || card(vec![
                 label("Workspace & data"),
-                Box::new(stepper),
-                Box::new(detail),
-                Box::new(status),
+                Box::new(stepper()),
+                Box::new(detail()),
+                Box::new(status()),
             ])))
             .child(page_card(section, ShowcasePage::Workspace, || card(vec![
                 label("Raw workspace building blocks"),
-                Box::new(raw_stepper),
-                Box::new(raw_details),
-                Box::new(raw_status),
+                Box::new(raw_stepper()),
+                Box::new(raw_details()),
+                Box::new(raw_status()),
             ])))
             .child(page_card(section, ShowcasePage::Tags, || card(vec![
                 label("Shortcuts & tags"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(Kbd::new(["Mod".to_owned(), "K".to_owned()])))
-                        .child(themed_tag),
+                        .child(themed_tag()),
                 ),
             ])))
             .child(page_card(section, ShowcasePage::Tags, || card(vec![
                 label("Raw content building blocks"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
-                        .child(Box::new(raw_shortcut))
-                        .child(Box::new(raw_tag)),
+                        .child(Box::new(raw_shortcut()))
+                        .child(Box::new(raw_tag())),
                 ),
             ])))
             .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
-                label("Grouped inputs & split actions"),
+                label("Themed input group"),
                 Box::new(InputGroup::controlled(&group_input).prefix("$").suffix("USD")),
-                Box::new(RawView::new(row(theme.spacing_medium)).child(Box::new(toggle)).child(Box::new(dropdown))),
-                menu_content,
+            ])))
+            .child(page_card(section, ShowcasePage::Actions, || card(vec![
+                label("Split and toggle actions"),
+                Box::new(RawView::new(row(theme.spacing_medium)).child(Box::new(toggle())).child(Box::new(dropdown()))),
+                menu_content(),
                 Box::new(RawText::new(
                     format!("Primary action: {} activations", action_count.get()),
                     theme.text_secondary,
@@ -1046,57 +1155,63 @@ pub fn ComponentsPanel(
                 )),
             ])))
             .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
-                label("Raw input & action building blocks"),
-                Box::new(raw_input_group),
-                Box::new(RawView::new(row(theme.spacing_small)).child(Box::new(raw_toggle)).child(Box::new(raw_split))),
+                label("Raw input group"),
+                Box::new(raw_input_group()),
             ])))
-            .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
+            .child(page_card(section, ShowcasePage::Actions, || card(vec![
+                label("Raw actions"),
+                Box::new(RawView::new(row(theme.spacing_small)).child(Box::new(raw_toggle())).child(Box::new(raw_split()))),
+            ])))
+            .child(page_card(section, ShowcasePage::NumberInput, || card(vec![
                 label("Bounded number input"),
-                Box::new(themed_number),
+                Box::new(themed_number()),
                 Box::new(RawText::new(
                     format!("Value: {:.1}", number.get()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
-                Box::new(raw_numeric),
+                Box::new(raw_numeric()),
             ])))
             .child(page_card(section, ShowcasePage::Calendar, || card(vec![
                 label("Calendar"),
-                Box::new(themed_calendar),
+                Box::new(themed_calendar()),
                 Box::new(RawText::new(
                     date.get().map(|selected| format!("{:04}-{:02}-{:02}", selected.year, selected.month, selected.day)).unwrap_or_else(|| "None".to_owned()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
                 label("Raw calendar"),
-                Box::new(raw_calendar),
+                Box::new(raw_calendar()),
             ])))
             .child(page_card(section, ShowcasePage::Rating, || card(vec![
                 label("Ratings"),
-                Box::new(themed_rating),
+                Box::new(themed_rating()),
                 Box::new(RawText::new(
                     format!("{:.1} / 5", rating.get()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
-                Box::new(raw_rating),
+                Box::new(raw_rating()),
             ])))
-            .child(page_card(section, ShowcasePage::Carousel, || card(vec![
+            .child(page_card(section, ShowcasePage::Carousel, || {
+                let (themed_carousel, raw_carousel) = carousel_views();
+                card(vec![
                 label("Carousel"),
                 Box::new(themed_carousel),
                 label("Raw carousel"),
                 Box::new(raw_carousel),
-            ])))
+                ])
+            }))
             .child(page_card(section, ShowcasePage::Verification, || card(vec![
                 label("Verification code"),
-                Box::new(themed_otp),
+                Box::new(themed_otp()),
                 Box::new(RawText::new(
                     format!("Entered: {}  |  edits: {}", otp.value(), otp_updates.get()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
                 label("Raw code cells"),
-                Box::new(raw_otp_input),
+                Box::new(raw_otp_input()),
             ])))
             .child(page_card(section, ShowcasePage::Notifications, || card(vec![
                 label("Toast notifications"),
@@ -1130,27 +1245,30 @@ pub fn ComponentsPanel(
                             },
                         ))),
                 ),
-                raw_toast,
+                raw_toast(),
             ])))
             .child(page_card(section, ShowcasePage::Tooltip, || card(vec![
                 label("Tooltip"),
-                Box::new(themed_tooltip),
-                Box::new(raw_tooltip_view),
+                Box::new(themed_tooltip()),
+                Box::new(raw_tooltip_view()),
             ])))
             .child(page_card(section, ShowcasePage::Panels, || card(vec![
                 label("Resizable panels"),
-                Box::new(themed_panels),
+                Box::new(themed_panels()),
                 label("Raw split panels"),
-                Box::new(raw_panels_view),
+                Box::new(raw_panels_view()),
                 Box::new(Button::secondary(
                     ButtonSize::Sm,
                     "Collapse / restore",
-                    move || collapse_raw.toggle_collapsed(),
+                    {
+                        let collapse_raw = raw_panels.clone();
+                        move || collapse_raw.toggle_collapsed()
+                    },
                 )),
             ])))
             .child(page_card(section, ShowcasePage::Panels, || card(vec![
                 label("Grid layout"),
-                Box::new(themed_grid),
+                Box::new(themed_grid()),
                 Box::new(RawText::new(
                     format!(
                         "Positions: {}",
@@ -1160,7 +1278,7 @@ pub fn ComponentsPanel(
                     theme.typography.caption,
                 )),
                 label("Raw grid"),
-                Box::new(raw_grid_view),
+                Box::new(raw_grid_view()),
             ])))
             .child(page_card(section, ShowcasePage::DataTable, || card(vec![
                 label("Data table"),
@@ -1175,14 +1293,14 @@ pub fn ComponentsPanel(
                             reorder_column.reorder_column(0, 1);
                         }))),
                 ),
-                Box::new(themed_data_table),
+                Box::new(themed_data_table()),
                 Box::new(RawText::new(
                     format!("Filter: {} | Selected: {:?}", data_table.filter(), data_table.selected()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
                 label("Raw virtual data table"),
-                Box::new(raw_data_table),
+                Box::new(raw_data_table()),
             ])))
             .child(page_card(section, ShowcasePage::Sheets, || card(vec![
                 label("Sheets"),
@@ -1194,31 +1312,51 @@ pub fn ComponentsPanel(
             ])))
             .child(page_card(section, ShowcasePage::Toolbar, || card(vec![
                 label("Toolbars"),
-                Box::new(themed_toolbar),
+                Box::new(themed_toolbar()),
                 Box::new(RawText::new(
                     format!("Actions: {}", toolbar_actions.get()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
                 label("Raw toolbar with overflow"),
-                Box::new(raw_toolbar_view),
+                Box::new(raw_toolbar_view()),
             ])))
             .child(page_card(section, ShowcasePage::Chart, || card(vec![
                 label("Chart"),
-                Box::new(chart_view),
+                Box::new(chart_view()),
                 label("Raw plot"),
-                Box::new(raw_plot_view),
+                Box::new(raw_plot_view()),
             ])))
             .child(page_card(section, ShowcasePage::Diff, || card(vec![
                 label("Diff"),
-                Box::new(themed_diff),
+                Box::new(themed_diff()),
                 Box::new(RawText::new(
                     format!("Selected line: {:?}", diff.selected()),
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
                 label("Raw virtual diff"),
-                Box::new(raw_diff_view),
+                Box::new(raw_diff_view()),
             ]))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_visible_cards_are_built() {
+        let mut built = 0;
+        let _ = page_card(ShowcasePage::Disclosure, ShowcasePage::Chart, || {
+            built += 1;
+            Box::new(RawView::new(Style::default()))
+        });
+        assert_eq!(built, 0);
+        let _ = page_card(ShowcasePage::Chart, ShowcasePage::Chart, || {
+            built += 1;
+            Box::new(RawView::new(Style::default()))
+        });
+        assert_eq!(built, 1);
+    }
 }

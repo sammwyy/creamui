@@ -88,10 +88,10 @@ pub fn HooksPanel(counter: Signal<i32>, enabled: Signal<bool>) -> BoxedWidget {
                     RawView::new(row(theme.spacing_small))
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "−", move || {
                             decrease.update(|value| *value -= 1)
-                        })))
+                        }).disabled(!enabled.get())))
                         .child(Box::new(Button::new("+", move || {
                             increase.update(|value| *value += 1)
-                        })))
+                        }).disabled(!enabled.get())))
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "Toggle", move || {
                             toggle.update(|value| *value = !*value)
                         }))),
@@ -108,6 +108,7 @@ pub fn EventsPanel(
 ) -> BoxedWidget {
     let theme = use_theme();
     let count = clicks.clone();
+    let pointer_count = clicks.clone();
     let position = last_event.clone();
     let keyboard = last_event.clone();
     let focus = last_event.clone();
@@ -116,6 +117,7 @@ pub fn EventsPanel(
         move || count.update(|value| *value += 1),
     )
     .with_click_position(move |point| {
+        pointer_count.update(|value| *value += 1);
         position.set(format!("Pointer click at {:.0}, {:.0}", point.x, point.y))
     })
     .background(theme.surface_hover)

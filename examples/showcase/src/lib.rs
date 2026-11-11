@@ -1,8 +1,7 @@
-//! A component showcase: a sidebar switches between a live theme editor
-//! ("Appearance") and a gallery view for every themed control CreamUI ships
-//! with — inputs, selection controls, feedback, navigation, and overlays.
+//! A showcase with feature demos above a gallery of raw and themed
+//! components — inputs, selection controls, feedback, navigation, and overlays.
 //!
-//! Each sidebar section lives in its own file under `panels/`; `common.rs`
+//! Related sidebar pages live under `panels/`; `common.rs`
 //! holds the shared design tokens/layout helpers, `nav.rs` the sidebar rail
 //! itself, and `prelude.rs` the one import every one of those files starts
 //! with.
@@ -359,7 +358,27 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                 }),
                 ShowcasePage::Grid => GridPanel(),
                 ShowcasePage::Flex => FlexPanel(),
-                _ => ComponentsPanel(ComponentsPanelProps {
+                ShowcasePage::Disclosure
+                | ShowcasePage::States
+                | ShowcasePage::Forms
+                | ShowcasePage::Pagination
+                | ShowcasePage::Workspace
+                | ShowcasePage::Tags
+                | ShowcasePage::InputGroups
+                | ShowcasePage::Actions
+                | ShowcasePage::NumberInput
+                | ShowcasePage::Calendar
+                | ShowcasePage::Rating
+                | ShowcasePage::Carousel
+                | ShowcasePage::Verification
+                | ShowcasePage::Notifications
+                | ShowcasePage::Tooltip
+                | ShowcasePage::Panels
+                | ShowcasePage::DataTable
+                | ShowcasePage::Sheets
+                | ShowcasePage::Toolbar
+                | ShowcasePage::Chart
+                | ShowcasePage::Diff => ComponentsPanel(ComponentsPanelProps {
                     section: active_section.get(),
                     expanded: components_expanded.clone(),
                     accordion: components_accordion.clone(),

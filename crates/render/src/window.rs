@@ -3757,6 +3757,9 @@ impl WindowState {
                 self.poll_decorations();
                 self.redraw();
             }
+            // Mapped on X11 (startup, restore): the server dropped the pixels,
+            // and its Expose can't be told apart from a redraw we queued.
+            WindowEvent::Occluded(false) => self.pipeline.invalidate_surface(),
             _ => {}
         }
     }
@@ -7743,6 +7746,28 @@ mod tests {
                 paint_calls: self.paint_calls.clone(),
             })]
         }
+    }
+
+    #[test]
+    fn becoming_visible_forces_a_full_frame() {
+        let paint_calls = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let paint_calls = paint_calls.clone();
+            move |_| {
+                Box::new(SmallHoverRoot {
+                    paint_calls: paint_calls.clone(),
+                })
+            }
+        });
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+        harness.send(WindowEvent::Occluded(true));
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+        harness.send(WindowEvent::Occluded(false));
+        assert!(harness.state.pipeline.frame.borrow().presented.is_none());
+        let before = paint_calls.get();
+        harness.send(WindowEvent::RedrawRequested);
+        assert!(paint_calls.get() > before);
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
     }
 
     #[test]

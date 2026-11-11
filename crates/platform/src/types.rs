@@ -518,6 +518,9 @@ pub enum WindowEvent {
     DecorationsChanged(WindowDecorations),
     CloseRequested,
     Resized(PhysicalSize),
+    /// X11 VisibilityNotify: `false` when the window became visible (mapped),
+    /// whose pixels the server dropped. Not sent on other platforms.
+    Occluded(bool),
     ScaleFactorChanged {
         scale_factor: f64,
     },

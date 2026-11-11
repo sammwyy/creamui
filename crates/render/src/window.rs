@@ -1742,6 +1742,8 @@ pub struct WindowHandle {
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
+    /// Resolved desktop ID, inherited by popups opened from this window.
+    app_id: Option<String>,
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_device: Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)>,
 }
@@ -4021,6 +4023,13 @@ impl AppHandler {
             return;
         }
         let t0 = Instant::now();
+        // Popups are separate windows on some backends (winit): keep them in
+        // the parent's app so docks don't list them as an unknown one.
+        let app_id = spec.options.app_id.clone().or_else(|| {
+            spec.popup
+                .as_ref()
+                .and_then(|popup| popup.parent.app_id.clone())
+        });
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
             size: LogicalSize::new(spec.options.width as f64, spec.options.height as f64),
@@ -4032,7 +4041,7 @@ impl AppHandler {
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
             role: spec.options.role,
-            app_id: spec.options.app_id.clone(),
+            app_id: app_id.clone(),
         };
 
         let popup_parent = spec.popup.as_ref().and_then(|popup| {
@@ -4155,6 +4164,7 @@ impl AppHandler {
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
+            app_id,
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_device,
         });
@@ -5111,6 +5121,7 @@ mod tests {
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
+                app_id: None,
                 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
                 gpu_device: None,
             }

@@ -63,6 +63,7 @@ mod surfaces;
 mod text;
 mod titlebar;
 mod toast;
+mod tooltip;
 mod typography;
 mod workspace;
 
@@ -93,5 +94,6 @@ pub use surfaces::*;
 pub use text::*;
 pub use titlebar::*;
 pub use toast::*;
+pub use tooltip::*;
 pub use typography::*;
 pub use workspace::*;

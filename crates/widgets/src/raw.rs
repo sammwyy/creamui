@@ -111,6 +111,7 @@ mod spinner;
 mod split;
 mod text_input;
 mod toast;
+mod tooltip;
 mod typography;
 mod virtualize;
 mod workspace;
@@ -138,6 +139,7 @@ pub use spinner::*;
 pub use split::*;
 pub use text_input::*;
 pub use toast::*;
+pub use tooltip::*;
 pub use typography::*;
 pub use virtualize::*;
 pub use workspace::*;
@@ -201,6 +203,7 @@ impl_direct_styled!(
     RawTextInput,
     RawToast,
     RawToastHost,
+    RawTooltip,
     RawView,
     RawVirtualList,
 );

@@ -6,8 +6,9 @@ use creamui_widgets::{
     Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
     RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
     RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, Skeleton,
-    StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton,
+    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawTooltip,
+    Skeleton, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus,
+    ToggleButton, Tooltip, TooltipController, TooltipPosition,
 };
 
 #[component]
@@ -39,6 +40,8 @@ pub fn ComponentsPanel(
     otp_updates: Signal<usize>,
     toasts: ToastController,
     raw_toast_visible: Signal<bool>,
+    tooltip: TooltipController,
+    raw_tooltip: TooltipController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -454,6 +457,33 @@ pub fn ComponentsPanel(
             move || restore.set(true),
         ))
     };
+    let themed_tooltip = Tooltip::new(
+        &tooltip,
+        Box::new(Button::secondary(ButtonSize::Sm, "Hover or focus", || {})),
+        "A hint about this control",
+    )
+    .position(TooltipPosition::Bottom)
+    .shortcut("Shortcut: Ctrl + K");
+    let raw_tooltip_view = RawTooltip::new(
+        Style::default().flex_column().align(Align::Start),
+        &raw_tooltip,
+        Box::new(
+            RawText::new("Raw help target", theme.text_primary, theme.typography.body)
+                .padding(theme.spacing_small),
+        ),
+        Box::new(
+            RawView::new(Style::default().padding_all(theme.spacing_small))
+                .background(theme.surface_hover)
+                .border(theme.border, 1.0)
+                .child(Box::new(RawText::new(
+                    "Custom tooltip content",
+                    theme.text_primary,
+                    theme.typography.caption,
+                ))),
+        ),
+    )
+    .position(TooltipPosition::Right)
+    .popup_size(180.0, 42.0);
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -799,6 +829,11 @@ pub fn ComponentsPanel(
                         ))),
                 ),
                 raw_toast,
+            ]))
+            .child(card(vec![
+                label("Tooltip"),
+                Box::new(themed_tooltip),
+                Box::new(raw_tooltip_view),
             ])),
     )
 }

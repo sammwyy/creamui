@@ -58,7 +58,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
 
 - Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
   modes to `Skeleton`. Both currently render without animation.

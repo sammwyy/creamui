@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawTooltip`/`Tooltip` with delayed hover, keyboard focus, viewport-aware
+  positioning, and optional shortcut text.
 - Add queued `RawToast`/`Toast` notifications with a slotted host,
   auto-dismissal on native and browser, action callbacks, and themed status
   tones.

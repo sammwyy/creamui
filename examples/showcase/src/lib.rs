@@ -24,7 +24,7 @@ mod nav;
 mod panels;
 mod prelude;
 
-use creamui_widgets::{OtpController, ToastController, ToastHost};
+use creamui_widgets::{OtpController, ToastController, ToastHost, TooltipController};
 use panels::*;
 use prelude::*;
 
@@ -119,6 +119,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_otp_updates = Signal::new(0usize);
     let components_toasts = ToastController::new();
     let components_raw_toast_visible = Signal::new(true);
+    let components_tooltip = TooltipController::default();
+    let components_raw_tooltip = TooltipController::default();
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -148,6 +150,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         }),
         Box::new(move |viewport: Size| -> BoxedWidget {
             creamui_reactive::provide_context(picker_file_prompt.clone());
+            components_tooltip.set_viewport(viewport);
+            components_raw_tooltip.set_viewport(viewport);
             // Browser event loops return from `run`, so the build closure owns
             // the theme effect for the lifetime of the window.
             let _theme_sync = &theme_sync;
@@ -323,6 +327,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     otp_updates: components_otp_updates.clone(),
                     toasts: components_toasts.clone(),
                     raw_toast_visible: components_raw_toast_visible.clone(),
+                    tooltip: components_tooltip.clone(),
+                    raw_tooltip: components_raw_tooltip.clone(),
                 }),
             };
 

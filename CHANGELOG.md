@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move multi-pane resizable layouts to the opt-in
+  `creamui-resizable-panels` crate; keep `RawSplitView` as a shared primitive.
 - Move the draggable dashboard grid into the opt-in `creamui-grid-layout` crate.
 - Move chart and diff viewer widgets from `creamui-widgets` into opt-in
   `creamui-chart` and `creamui-diff-viewer` crates.

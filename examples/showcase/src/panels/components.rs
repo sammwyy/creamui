@@ -5,6 +5,7 @@ use creamui_diff_viewer::{
     Diff, DiffColors, DiffController, DiffHunk, DiffKind, DiffLine, RawDiff,
 };
 use creamui_grid_layout::{GridController, GridLayout, RawGridLayout};
+use creamui_resizable_panels::{RawResizablePanels, ResizablePanels};
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
     ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, DropdownButton,
@@ -12,11 +13,10 @@ use creamui_widgets::{
     Pagination, Questionnaire, QuestionnaireController, Rating, RawAlert, RawAttachment,
     RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList,
     RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawQuestionnaire, RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag,
-    RawTextInput, RawToast, RawToolbar, RawTooltip, ResizablePanels, Skeleton, SplitAxis,
-    SplitState, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus,
-    ToggleButton, Toolbar, ToolbarCommand, ToolbarController, Tooltip, TooltipController,
-    TooltipPosition, VirtualListState,
+    RawQuestionnaire, RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
+    RawToast, RawToolbar, RawTooltip, Skeleton, SplitAxis, SplitState, StatusBar, StepState,
+    Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar, ToolbarCommand,
+    ToolbarController, Tooltip, TooltipController, TooltipPosition, VirtualListState,
 };
 
 #[component]

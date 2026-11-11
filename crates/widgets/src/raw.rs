@@ -108,7 +108,6 @@ mod otp;
 mod pickers;
 mod questionnaire;
 mod rating;
-mod resizable;
 mod scroll;
 mod sheet;
 mod spinner;
@@ -141,7 +140,6 @@ pub use otp::*;
 pub use pickers::*;
 pub use questionnaire::*;
 pub use rating::*;
-pub use resizable::*;
 pub use scroll::*;
 pub use sheet::*;
 pub use spinner::*;
@@ -196,7 +194,6 @@ impl_direct_styled!(
     RawQuestionnaire,
     RawQuote,
     RawRating,
-    RawResizablePanels,
     RawScrollView,
     RawScrollbar,
     RawSheet,

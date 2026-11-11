@@ -1,6 +1,6 @@
 use super::*;
-use crate::raw::{RawSplitView, SplitAxis, SplitState};
 use creamui_core::layout::Dimension;
+use creamui_widgets::{RawSplitView, SplitAxis, SplitState};
 
 pub struct RawResizablePanels {
     pub style: creamui_core::Style,
@@ -87,6 +87,12 @@ impl Widget for RawResizablePanels {
             };
         }
         vec![tail]
+    }
+}
+
+impl Styled for RawResizablePanels {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
     }
 }
 

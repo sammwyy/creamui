@@ -1,10 +1,16 @@
 use super::*;
-use crate::raw::{RawResizablePanels, SplitAxis, SplitState};
+use crate::raw::RawResizablePanels;
 
 pub struct ResizablePanels {
     inner: RawResizablePanels,
 }
-impl_styled_inner!(ResizablePanels);
+
+impl Styled for ResizablePanels {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        let merged = self.inner.style().merged_over(style);
+        self.inner.set_style(merged);
+    }
+}
 
 impl ResizablePanels {
     pub fn new(axis: SplitAxis, states: Vec<SplitState>) -> Self {

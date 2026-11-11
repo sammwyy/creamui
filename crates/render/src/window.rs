@@ -383,6 +383,11 @@ pub struct WindowOptions {
     /// Whether the layout viewport stops at the system bars or draws
     /// underneath them. See [`SystemBars`].
     pub system_bars: SystemBars,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`), e.g.
+    /// `"org.example.App"`. Match the `.desktop` file name so docks show the
+    /// app's name and icon; Flatpak requires it to equal the app ID. `None`
+    /// keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowOptions {
@@ -402,6 +407,7 @@ impl Default for WindowOptions {
             backend: RenderBackend::default(),
             theme: Theme::default(),
             system_bars: SystemBars::Inset,
+            app_id: None,
         }
     }
 }
@@ -4026,6 +4032,7 @@ impl AppHandler {
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
             role: spec.options.role,
+            app_id: spec.options.app_id.clone(),
         };
 
         let popup_parent = spec.popup.as_ref().and_then(|popup| {

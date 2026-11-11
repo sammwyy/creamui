@@ -58,7 +58,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `Toast` | Queue transient nonmodal notifications with timeout and dismissal. | `RawToast` plus a host/controller handle stacking, timers, focus, and close actions. | `Toast` uses success/error/info variants, action and progress options. |
 | `Tooltip` | Show brief help on hover or keyboard focus. | `RawTooltip` handles trigger, delay, pointer/focus lifecycle, and viewport-aware placement. | `Tooltip` uses theme surface and optional shortcut text; top/bottom/side positions. |
 
 - Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
@@ -73,6 +72,8 @@ one can be extended. Variants are design suggestions, not promised features.
   to `Calendar`.
 - Add grouped digit spacing and platform-native mobile numeric keyboard hints
   to `OtpInput`.
+- Add a visible timeout progress indicator and pause-on-hover behavior to
+  `Toast`.
 
 ### Priority: workspace and data
 

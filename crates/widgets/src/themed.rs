@@ -62,6 +62,7 @@ mod selection;
 mod surfaces;
 mod text;
 mod titlebar;
+mod toast;
 mod typography;
 mod workspace;
 
@@ -91,5 +92,6 @@ pub use selection::*;
 pub use surfaces::*;
 pub use text::*;
 pub use titlebar::*;
+pub use toast::*;
 pub use typography::*;
 pub use workspace::*;

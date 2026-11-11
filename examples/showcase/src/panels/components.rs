@@ -6,8 +6,8 @@ use creamui_widgets::{
     Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
     RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
     RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, Skeleton, StatusBar,
-    StepState, Stepper, Tag, ToggleButton,
+    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, Skeleton,
+    StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton,
 };
 
 #[component]
@@ -37,6 +37,8 @@ pub fn ComponentsPanel(
     otp: OtpController,
     raw_otp: OtpController,
     otp_updates: Signal<usize>,
+    toasts: ToastController,
+    raw_toast_visible: Signal<bool>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -417,6 +419,41 @@ pub fn ComponentsPanel(
         focus: theme.accent,
         error: theme.danger,
     });
+    let show_toast = toasts.clone();
+    let undo_count = action_count.clone();
+    let show_undo_toast = toasts.clone();
+    let raw_toast: BoxedWidget = if raw_toast_visible.get() {
+        let dismiss = raw_toast_visible.clone();
+        Box::new(
+            RawToast::new(
+                Style::default()
+                    .flex_row()
+                    .gap(theme.spacing_medium)
+                    .padding_all(theme.spacing_small),
+                Box::new(RawText::new(
+                    "Raw notification",
+                    theme.text_primary,
+                    theme.typography.body,
+                )),
+            )
+            .background(theme.surface_hover)
+            .dismiss(
+                Box::new(RawText::new(
+                    "x",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )),
+                move || dismiss.set(false),
+            ),
+        )
+    } else {
+        let restore = raw_toast_visible.clone();
+        Box::new(Button::secondary(
+            ButtonSize::Sm,
+            "Restore raw toast",
+            move || restore.set(true),
+        ))
+    };
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -728,6 +765,40 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw code cells"),
                 Box::new(raw_otp_input),
+            ]))
+            .child(card(vec![
+                label("Toast notifications"),
+                Box::new(
+                    RawView::new(row(theme.spacing_medium))
+                        .child(Box::new(Button::new(
+                            "Show toast",
+                            move || {
+                                show_toast.push(ToastEntry::new(
+                                    ToastStatus::Success,
+                                    "Saved",
+                                    "Your changes were saved.",
+                                    Some(std::time::Duration::from_secs(3)),
+                                ));
+                            },
+                        )))
+                        .child(Box::new(Button::secondary(
+                            ButtonSize::Sm,
+                            "Show action",
+                            move || {
+                                let count = undo_count.clone();
+                                show_undo_toast.push(
+                                    ToastEntry::new(
+                                        ToastStatus::Info,
+                                        "Changes ready",
+                                        "Undo is available until dismissed.",
+                                        None,
+                                    )
+                                    .action("Undo", move || count.update(|value| *value += 1)),
+                                );
+                            },
+                        ))),
+                ),
+                raw_toast,
             ])),
     )
 }

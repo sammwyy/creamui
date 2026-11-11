@@ -4,6 +4,9 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add queued `RawToast`/`Toast` notifications with a slotted host,
+  auto-dismissal on native and browser, action callbacks, and themed status
+  tones.
 - Add `RawOtpInput`/`OtpInput` with a controlled digit sequence, paste
   distribution, cursor navigation, masked/error states, and a per-cell
   themed focus treatment.

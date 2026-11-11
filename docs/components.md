@@ -40,6 +40,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
 | Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
 | Feedback | `Alert`, `Skeleton`, `EmptyState` | Inline status, loading placeholder, and empty-content layout. | `RawAlert`, `RawSkeleton`, `RawEmptyState` |
+| Notifications | `Toast`, `ToastHost` | Queued, dismissible notifications with optional actions and timeouts. | `RawToast`, `RawToastHost`, `ToastController` |
 | Content | `Tag`, `Attachment`, `ChatMessage` | Selectable labels, attachment progress/errors, and sender/body/action layouts. | `RawTag`, `RawAttachment`, `RawChatMessage` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |

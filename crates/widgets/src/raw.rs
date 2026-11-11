@@ -110,6 +110,7 @@ mod scroll;
 mod spinner;
 mod split;
 mod text_input;
+mod toast;
 mod typography;
 mod virtualize;
 mod workspace;
@@ -136,6 +137,7 @@ pub use scroll::*;
 pub use spinner::*;
 pub use split::*;
 pub use text_input::*;
+pub use toast::*;
 pub use typography::*;
 pub use virtualize::*;
 pub use workspace::*;
@@ -197,6 +199,8 @@ impl_direct_styled!(
     RawText,
     RawTextArea,
     RawTextInput,
+    RawToast,
+    RawToastHost,
     RawView,
     RawVirtualList,
 );

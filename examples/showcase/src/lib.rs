@@ -24,7 +24,7 @@ mod nav;
 mod panels;
 mod prelude;
 
-use creamui_widgets::OtpController;
+use creamui_widgets::{OtpController, ToastController, ToastHost};
 use panels::*;
 use prelude::*;
 
@@ -117,6 +117,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_otp = OtpController::new(6, "12");
     let components_raw_otp = OtpController::new(4, "");
     let components_otp_updates = Signal::new(0usize);
+    let components_toasts = ToastController::new();
+    let components_raw_toast_visible = Signal::new(true);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -319,6 +321,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     otp: components_otp.clone(),
                     raw_otp: components_raw_otp.clone(),
                     otp_updates: components_otp_updates.clone(),
+                    toasts: components_toasts.clone(),
+                    raw_toast_visible: components_raw_toast_visible.clone(),
                 }),
             };
 
@@ -469,6 +473,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             };
             let file_prompt: BoxedWidget =
                 Box::new(creamui_widgets::FilePrompt::new(&picker_file_prompt));
+            let toast_host: BoxedWidget = Box::new(ToastHost::new(&components_toasts));
 
             Box::new(jsx! {
                 <RawView style={root_style} background={theme.surface}>
@@ -480,6 +485,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     {sidebar_drawer}
                     {dialog}
                     {file_prompt}
+                    {toast_host}
                 </RawView>
             })
         }),

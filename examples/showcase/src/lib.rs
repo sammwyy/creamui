@@ -29,7 +29,6 @@ use creamui_core::{Styled, Widget};
 use creamui_data_table::DataTableController;
 use creamui_diff_viewer::DiffController;
 use creamui_grid_layout::{GridCell, GridController};
-use creamui_questionnaire::{QuestionStep, QuestionnaireController};
 use creamui_widgets::{
     OtpController, RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost,
     ToolbarController, TooltipController, VirtualListState,
@@ -153,19 +152,6 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_toolbar = ToolbarController::new();
     let components_raw_toolbar = ToolbarController::new();
     let components_toolbar_actions = Signal::new(0usize);
-    let components_questionnaire = QuestionnaireController::new(vec![
-        QuestionStep::new("Plan").required().branch(|answers| {
-            Some(
-                if answers.get("Plan").map(String::as_str) == Some("advanced") {
-                    1
-                } else {
-                    2
-                },
-            )
-        }),
-        QuestionStep::new("Details").required(),
-        QuestionStep::new("Review"),
-    ]);
     let components_chart = PlotController::new();
     let components_raw_plot = PlotController::new();
     let components_diff = DiffController::new();
@@ -396,7 +382,6 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     toolbar: components_toolbar.clone(),
                     raw_toolbar: components_raw_toolbar.clone(),
                     toolbar_actions: components_toolbar_actions.clone(),
-                    questionnaire: components_questionnaire.clone(),
                     chart: components_chart.clone(),
                     raw_plot: components_raw_plot.clone(),
                     diff: components_diff.clone(),

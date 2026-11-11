@@ -6,18 +6,17 @@ use creamui_diff_viewer::{
     Diff, DiffColors, DiffController, DiffHunk, DiffKind, DiffLine, RawDiff,
 };
 use creamui_grid_layout::{GridController, GridLayout, RawGridLayout};
-use creamui_questionnaire::{Questionnaire, QuestionnaireController, RawQuestionnaire};
 use creamui_resizable_panels::{RawResizablePanels, ResizablePanels};
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup,
-    Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
-    RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
-    RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar,
-    RawTooltip, Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag,
-    ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar, ToolbarCommand,
-    ToolbarController, Tooltip, TooltipController, TooltipPosition, VirtualListState,
+    Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd,
+    NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert, RawAttachment,
+    RawCalendar, RawCarousel, RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState,
+    RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput, RawRating, RawSkeleton,
+    RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip, Skeleton,
+    SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry,
+    ToastStatus, ToggleButton, Toolbar, ToolbarCommand, ToolbarController, Tooltip,
+    TooltipController, TooltipPosition, VirtualListState,
 };
 
 #[component]
@@ -65,7 +64,6 @@ pub fn ComponentsPanel(
     toolbar: ToolbarController,
     raw_toolbar: ToolbarController,
     toolbar_actions: Signal<usize>,
-    questionnaire: QuestionnaireController,
     chart: PlotController,
     raw_plot: PlotController,
     diff: DiffController,
@@ -334,16 +332,6 @@ pub fn ComponentsPanel(
             move || show_tag.set(true),
         ))
     };
-    let content = ChatMessage::new(
-        "Dana",
-        Box::new(RawText::new(
-            "The design is ready for review.",
-            theme.text_primary,
-            theme.typography.body,
-        )),
-        false,
-    )
-    .timestamp("10:42");
     let attachment = Attachment::new("wireframes.png")
         .preview(Box::new(
             RawView::new(Style::default().size(36.0, 36.0))
@@ -688,85 +676,6 @@ pub fn ComponentsPanel(
     .group(vec![action("Raw edit")])
     .group(vec![action("Raw inspect")])
     .menu_above(true);
-    let basic = questionnaire.clone();
-    let advanced = questionnaire.clone();
-    let details = questionnaire.clone();
-    let themed_questionnaire = Questionnaire::new(&questionnaire)
-        .question(
-            0,
-            Box::new(
-                RawView::new(row(theme.spacing_small))
-                    .child(Box::new(Button::secondary(
-                        ButtonSize::Sm,
-                        "Basic",
-                        move || {
-                            basic.set_answer("Plan", "basic");
-                        },
-                    )))
-                    .child(Box::new(Button::secondary(
-                        ButtonSize::Sm,
-                        "Advanced",
-                        move || {
-                            advanced.set_answer("Plan", "advanced");
-                        },
-                    ))),
-            ),
-        )
-        .question(
-            1,
-            Box::new(Button::secondary(
-                ButtonSize::Sm,
-                "Provide details",
-                move || {
-                    details.set_answer("Details", "Ready");
-                },
-            )),
-        )
-        .question(
-            2,
-            Box::new(RawText::new(
-                format!(
-                    "Selected plan: {}",
-                    questionnaire.answer("Plan").unwrap_or_default()
-                ),
-                theme.text_primary,
-                theme.typography.body,
-            )),
-        );
-    let mut raw_questionnaire = RawQuestionnaire::new(
-        Style::default().flex_column().gap(theme.spacing_small),
-        &questionnaire,
-    )
-    .step_color(theme.text_primary)
-    .navigation(
-        Box::new(RawText::new(
-            "Back",
-            theme.text_secondary,
-            theme.typography.caption,
-        )),
-        Box::new(RawText::new(
-            "Continue",
-            theme.accent,
-            theme.typography.caption,
-        )),
-    );
-    for index in 0..3 {
-        raw_questionnaire = raw_questionnaire.question(
-            index,
-            Box::new(RawText::new(
-                format!("Raw step {}", index + 1),
-                theme.text_secondary,
-                theme.typography.caption,
-            )),
-        );
-    }
-    if let Some(error) = questionnaire.error() {
-        raw_questionnaire = raw_questionnaire.error(Box::new(RawText::new(
-            error,
-            theme.danger,
-            theme.typography.caption,
-        )));
-    }
     let chart_view = Chart::new(
         &chart,
         vec![
@@ -905,19 +814,6 @@ pub fn ComponentsPanel(
         theme.danger,
         theme.typography.caption,
     )));
-    let raw_chat = RawChatMessage::new(
-        Style::default().flex_column().gap(theme.spacing_small),
-        Box::new(RawText::new(
-            "Raw sender",
-            theme.text_primary,
-            theme.typography.caption,
-        )),
-        Box::new(RawText::new(
-            "Content remains caller-controlled.",
-            theme.text_secondary,
-            theme.typography.body,
-        )),
-    );
     let raw_shortcut = RawKbd::new(
         Style::default().padding_all(4.0),
         ["Mod".to_owned(), "P".to_owned()],
@@ -1121,14 +1017,13 @@ pub fn ComponentsPanel(
                 Box::new(raw_status),
             ]))
             .child(card(vec![
-                label("Shortcuts, tags & content"),
+                label("Shortcuts, tags & attachments"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(Kbd::new(["Mod".to_owned(), "K".to_owned()])))
                         .child(themed_tag),
                 ),
                 Box::new(attachment),
-                Box::new(content),
             ]))
             .child(card(vec![
                 label("Raw content building blocks"),
@@ -1138,7 +1033,6 @@ pub fn ComponentsPanel(
                         .child(Box::new(raw_tag)),
                 ),
                 Box::new(raw_attachment),
-                Box::new(raw_chat),
             ]))
             .child(card(vec![
                 label("Grouped inputs & split actions"),
@@ -1308,17 +1202,6 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw toolbar with overflow"),
                 Box::new(raw_toolbar_view),
-            ]))
-            .child(card(vec![
-                label("Questionnaire"),
-                Box::new(themed_questionnaire),
-                Box::new(RawText::new(
-                    format!("Complete: {}", questionnaire.is_complete()),
-                    theme.text_secondary,
-                    theme.typography.caption,
-                )),
-                label("Raw questionnaire"),
-                Box::new(raw_questionnaire),
             ]))
             .child(card(vec![
                 label("Chart"),

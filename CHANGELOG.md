@@ -6,7 +6,6 @@ All notable changes to CreamUI will be documented in this file.
 
 - Move advanced sortable/filterable virtual tables into the opt-in
   `creamui-data-table` crate; keep basic tables in `creamui-widgets`.
-- Move guided branching forms to the opt-in `creamui-questionnaire` crate.
 - Move multi-pane resizable layouts to the opt-in
   `creamui-resizable-panels` crate; keep `RawSplitView` as a shared primitive.
 - Move the draggable dashboard grid into the opt-in `creamui-grid-layout` crate.
@@ -16,8 +15,6 @@ All notable changes to CreamUI will be documented in this file.
   line selection, numbered gutters, and conflict highlighting.
 - Add `RawPlot`/`Chart` with clipped line, area, and bar series,
   explicit scales, hit testing, and themed axes and legend.
-- Add `RawQuestionnaire`/`Questionnaire` with required-answer validation,
-  branching steps, controlled history, and themed form composition.
 - Add raw/themed grouped toolbars with keyboard action navigation and
   responsive overflow menus.
 - Add `RawSheet`/`Sheet` edge panels with modal and nonmodal layouts,
@@ -49,9 +46,8 @@ All notable changes to CreamUI will be documented in this file.
 - Add `RawInputGroup`/`InputGroup`, controlled `ToggleButton` with an explicit
   pressed state on `RawButton`, and `RawDropdownButton`/`DropdownButton`
   with independent, keyboard-focusable primary and menu actions.
-- Add `RawKbd`/`Kbd`, `RawTag`/`Tag`, `RawAttachment`/`Attachment`,
-  and `RawChatMessage`/`ChatMessage` for shortcuts, selectable and removable
-  tags, attachment status slots, and message metadata/actions.
+- Add `RawKbd`/`Kbd`, `RawTag`/`Tag`, and `RawAttachment`/`Attachment`
+  for shortcuts, selectable and removable tags, and attachment status slots.
 - Add `RawDescriptionList`/`DescriptionList`, `RawStatusBar`/`StatusBar`,
   and `RawStepper`/`Stepper` for key/value details, slotted status content,
   and controlled workflow stages.

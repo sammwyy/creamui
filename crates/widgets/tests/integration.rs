@@ -114,28 +114,6 @@ fn compact_raw_controls_keep_all_paint_inside_their_bounds() {
 }
 
 #[test]
-fn compact_themed_feedback_keeps_animated_dots_inside_its_bounds() {
-    creamui_reactive::with_context_scope(|| {
-        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
-        let indicator = creamui_widgets::TypingIndicator::new();
-        let rect = Rect {
-            x: 10.0,
-            y: 20.0,
-            width: 18.0,
-            height: 10.0,
-        };
-        for time in [0.0, 0.2, 0.4, 0.6, 1.0] {
-            let mut painter = RecordingPainter {
-                time,
-                ..Default::default()
-            };
-            indicator.paint(&mut painter, rect);
-            assert_paint_inside(&painter, rect);
-        }
-    });
-}
-
-#[test]
 fn themed_controls_with_manual_sizes_keep_paint_inside_their_bounds() {
     creamui_reactive::with_context_scope(|| {
         creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::light()));

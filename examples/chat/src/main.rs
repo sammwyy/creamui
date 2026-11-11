@@ -10,7 +10,7 @@ use creamui_theme::{use_theme, Color, ColorScheme, Theme};
 use creamui_widgets::layout::{column, fixed, full_width, padding, padding_xy, row};
 use creamui_widgets::{
     AutoScrollController, Avatar, Badge, Icon, RawText, ScrollController, ScrollView, Symbol,
-    TextController, TextInput, TextSize, TypingIndicator,
+    TextController, TextInput, TextSize,
 };
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -914,7 +914,7 @@ fn MessageList(conversation: Conversation, scroll: ScrollController) -> BoxedWid
         view = view.child(Box::new(jsx! {
             <RawView style={typing_row_style}>
                 <RawView style={bubble_style} background={theme.surface_hover} corner_radius={theme.card_radius}>
-                    {Box::new(TypingIndicator::new()) as BoxedWidget}
+                    {Box::new(RawText::new("Typing…", theme.text_secondary, 12.0)) as BoxedWidget}
                 </RawView>
             </RawView>
         }));

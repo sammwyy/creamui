@@ -205,72 +205,6 @@ impl Widget for RawAttachment {
     }
 }
 
-pub struct RawChatMessage {
-    pub style: creamui_core::Style,
-    sender: Option<BoxedWidget>,
-    body: Option<BoxedWidget>,
-    timestamp: Option<BoxedWidget>,
-    actions: Vec<BoxedWidget>,
-}
-
-impl RawChatMessage {
-    pub fn new(
-        style: impl Into<creamui_core::Style>,
-        sender: BoxedWidget,
-        body: BoxedWidget,
-    ) -> Self {
-        Self {
-            style: style.into(),
-            sender: Some(sender),
-            body: Some(body),
-            timestamp: None,
-            actions: Vec::new(),
-        }
-    }
-
-    pub fn timestamp(mut self, timestamp: BoxedWidget) -> Self {
-        self.timestamp = Some(timestamp);
-        self
-    }
-
-    pub fn action(mut self, action: BoxedWidget) -> Self {
-        self.actions.push(action);
-        self
-    }
-}
-
-impl Widget for RawChatMessage {
-    fn style(&self) -> creamui_core::Style {
-        let mut style = self.style.clone();
-        style.layout.flex_direction = FlexDirection::Column;
-        style
-    }
-
-    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
-
-    fn children(&mut self) -> Vec<BoxedWidget> {
-        let mut children = Vec::new();
-        let mut header = RawView::new(Style {
-            flex_direction: FlexDirection::Row,
-            gap: creamui_core::layout::Size {
-                width: creamui_core::layout::LengthPercentage::Length(8.0),
-                height: creamui_core::layout::LengthPercentage::Length(0.0),
-            },
-            ..Default::default()
-        });
-        if let Some(sender) = self.sender.take() {
-            header = header.child(sender);
-        }
-        if let Some(timestamp) = self.timestamp.take() {
-            header = header.child(timestamp);
-        }
-        children.push(Box::new(header) as BoxedWidget);
-        children.extend(self.body.take());
-        children.append(&mut self.actions);
-        children
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,16 +252,6 @@ mod tests {
             .action(slot());
         let mut parts = attachment.children();
         assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].children().len(), 2);
-    }
-
-    #[test]
-    fn chat_message_keeps_header_body_and_actions() {
-        let mut message = RawChatMessage::new(Style::default(), slot(), slot())
-            .timestamp(slot())
-            .action(slot());
-        let mut parts = message.children();
-        assert_eq!(parts.len(), 3);
         assert_eq!(parts[0].children().len(), 2);
     }
 }

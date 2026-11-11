@@ -168,7 +168,6 @@ impl_direct_styled!(
     RawCalendar,
     RawCarousel,
     RawCheckbox,
-    RawChatMessage,
     RawCollapsible,
     RawColorPicker,
     RawDateTimePicker,

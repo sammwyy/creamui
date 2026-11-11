@@ -56,9 +56,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 ### Priority: common application UI
 
-| Name | Purpose | Raw plan | Themed plan and variants |
-|---|---|---|---|
-
 - Add motion and compact spacing options to `Collapsible`, and pulse/reduced-motion
   modes to `Skeleton`. Both currently render without animation.
 - Add roving heading focus and bordered/flush layouts to `Accordion`, horizontal
@@ -69,18 +66,8 @@ one can be extended. Variants are design suggestions, not promised features.
   button currently delegates menu presentation to its callback.
 - Add range selection, multi-month layout, and localized month/weekday labels
   to `Calendar`.
-- Add grouped digit spacing and platform-native mobile numeric keyboard hints
-  to `OtpInput`.
 - Add a visible timeout progress indicator and pause-on-hover behavior to
   `Toast`.
-
-### Priority: workspace and data
-
-| Name | Purpose | Raw plan | Themed plan and variants |
-|---|---|---|---|
-| `Dock` | Arrange persistent tab groups and split/edge panels in a workspace. | `RawDock` models drag, drop, nested layouts, and serializable state on raw tabs/splits. | `Dock` themes drop targets, tabs, and panels; optional edge docks. |
-| `HoverCard` | Show richer interactive preview content than a tooltip. | `RawHoverCard` shares anchored positioning with `RawTooltip` but allows focusable content. | `HoverCard` themes preview surface; delayed hover/focus. |
-
 - Add dividers to `DescriptionList`, compact height to `StatusBar`, and
   connectors and custom step icons to `Stepper`.
 
@@ -88,9 +75,10 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `CodeEditor` | Edit source with line numbers, highlighting, and large-file navigation. | `RawCodeEditor` builds on text editing with revisioned document, gutter, IME, and undo. | `CodeEditor` themes tokens/selection; read-only/editable and wrap/no-wrap. |
 | `RichTextView` | Render application-provided Markdown or rich document nodes. | `RawRichTextView` lays out text runs, links, images, and selections safely. | `RichTextView` themes headings/links/code; Markdown as an optional parser. |
 
+- Add grouped digit spacing and platform-native mobile numeric keyboard hints
+  to `OtpInput`.
 - Add stacked shortcut chords to `Kbd` and outlined and size variants to `Tag`.
 
 These are intentionally distinct from existing `ColorPicker`, `TimeInput`,
@@ -98,7 +86,6 @@ These are intentionally distinct from existing `ColorPicker`, `TimeInput`,
 `ProgressBar`/`ProgressRing`, `AppTitlebar`, `RawSplitView`, and
 `RawMarquee`. Reuse those implementations before creating new names.
 Design references: [Calendar](https://gpui-kit.com/component/calendar/),
-[Dock](https://gpui-kit.com/component/dock/),
 [Diff](https://gpui-kit.com/component/diff/),
 [StatusBar](https://gpui-kit.com/component/status-bar/).
 

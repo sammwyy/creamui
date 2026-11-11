@@ -26,7 +26,7 @@ mod prelude;
 
 use creamui_core::{Styled, Widget};
 use creamui_widgets::{
-    DataTableController, GridCell, GridController, OtpController, QuestionStep,
+    DataTableController, GridCell, GridController, OtpController, PlotController, QuestionStep,
     QuestionnaireController, RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost,
     ToolbarController, TooltipController, VirtualListState,
 };
@@ -162,6 +162,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         QuestionStep::new("Details").required(),
         QuestionStep::new("Review"),
     ]);
+    let components_chart = PlotController::new();
+    let components_raw_plot = PlotController::new();
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -385,6 +387,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_toolbar: components_raw_toolbar.clone(),
                     toolbar_actions: components_toolbar_actions.clone(),
                     questionnaire: components_questionnaire.clone(),
+                    chart: components_chart.clone(),
+                    raw_plot: components_raw_plot.clone(),
                 }),
             };
 

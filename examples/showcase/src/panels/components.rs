@@ -2,12 +2,13 @@ use crate::prelude::*;
 use creamui_core::{Styled, Widget};
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, DropdownButton,
-    EmptyState, Field, Form, GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors,
-    OtpController, OtpInput, Pagination, Questionnaire, QuestionnaireController, Rating, RawAlert,
-    RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDataTable,
-    RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawGridLayout, RawInputGroup,
-    RawKbd, RawNumberInput, RawOtpInput, RawQuestionnaire, RawRating, RawResizablePanels,
+    Chart, ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList,
+    DropdownButton, EmptyState, Field, Form, GridController, GridLayout, InputGroup, Kbd,
+    NumberInput, OtpColors, OtpController, OtpInput, Pagination, PlotController, PlotKind,
+    PlotScale, PlotSeries, Questionnaire, QuestionnaireController, Rating, RawAlert, RawAttachment,
+    RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList,
+    RawDropdownButton, RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd,
+    RawNumberInput, RawOtpInput, RawPlot, RawQuestionnaire, RawRating, RawResizablePanels,
     RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip,
     ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag,
     ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar, ToolbarCommand,
@@ -60,6 +61,8 @@ pub fn ComponentsPanel(
     raw_toolbar: ToolbarController,
     toolbar_actions: Signal<usize>,
     questionnaire: QuestionnaireController,
+    chart: PlotController,
+    raw_plot: PlotController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -753,6 +756,59 @@ pub fn ComponentsPanel(
             theme.typography.caption,
         )));
     }
+    let chart_view = Chart::new(
+        &chart,
+        vec![
+            PlotSeries::new(
+                "Traffic",
+                PlotKind::Area,
+                theme.accent,
+                vec![
+                    (0.0, 8.0),
+                    (1.0, 15.0),
+                    (2.0, 12.0),
+                    (3.0, 23.0),
+                    (4.0, 17.0),
+                ],
+            ),
+            PlotSeries::new(
+                "Revenue",
+                PlotKind::Line,
+                theme.success,
+                vec![
+                    (0.0, 4.0),
+                    (1.0, 10.0),
+                    (2.0, 18.0),
+                    (3.0, 16.0),
+                    (4.0, 26.0),
+                ],
+            ),
+            PlotSeries::new(
+                "Orders",
+                PlotKind::Bar,
+                theme.warning,
+                vec![(0.0, 3.0), (1.0, 6.0), (2.0, 9.0), (3.0, 11.0), (4.0, 13.0)],
+            ),
+        ],
+    )
+    .height(165.0);
+    let raw_plot_view = RawPlot::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(110.0),
+            },
+            ..Default::default()
+        },
+        &raw_plot,
+        vec![PlotSeries::new(
+            "Raw bars",
+            PlotKind::Bar,
+            theme.accent,
+            vec![(0.0, 3.0), (1.0, 6.0), (2.0, 4.0), (3.0, 8.0)],
+        )],
+    )
+    .scales(PlotScale::new(0.0, 3.0), PlotScale::new(0.0, 10.0));
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -1180,6 +1236,12 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw questionnaire"),
                 Box::new(raw_questionnaire),
+            ]))
+            .child(card(vec![
+                label("Chart"),
+                Box::new(chart_view),
+                label("Raw plot"),
+                Box::new(raw_plot_view),
             ])),
     )
 }

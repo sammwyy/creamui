@@ -107,6 +107,7 @@ mod navigation;
 mod number;
 mod otp;
 mod pickers;
+mod plot;
 mod questionnaire;
 mod rating;
 mod resizable;
@@ -141,6 +142,7 @@ pub use navigation::*;
 pub use number::*;
 pub use otp::*;
 pub use pickers::*;
+pub use plot::*;
 pub use questionnaire::*;
 pub use rating::*;
 pub use resizable::*;
@@ -195,6 +197,7 @@ impl_direct_styled!(
     RawNumberInput,
     RawOtpInput,
     RawPagination,
+    RawPlot,
     RawPre,
     RawQuestionnaire,
     RawQuote,

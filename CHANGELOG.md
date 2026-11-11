@@ -46,8 +46,8 @@ All notable changes to CreamUI will be documented in this file.
 - Add `RawInputGroup`/`InputGroup`, controlled `ToggleButton` with an explicit
   pressed state on `RawButton`, and `RawDropdownButton`/`DropdownButton`
   with independent, keyboard-focusable primary and menu actions.
-- Add `RawKbd`/`Kbd`, `RawTag`/`Tag`, and `RawAttachment`/`Attachment`
-  for shortcuts, selectable and removable tags, and attachment status slots.
+- Add `RawKbd`/`Kbd` and `RawTag`/`Tag` for shortcuts and
+  selectable and removable tags.
 - Add `RawDescriptionList`/`DescriptionList`, `RawStatusBar`/`StatusBar`,
   and `RawStepper`/`Stepper` for key/value details, slotted status content,
   and controlled workflow stages.

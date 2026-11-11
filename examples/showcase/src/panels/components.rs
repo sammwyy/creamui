@@ -8,15 +8,15 @@ use creamui_diff_viewer::{
 use creamui_grid_layout::{GridController, GridLayout, RawGridLayout};
 use creamui_resizable_panels::{RawResizablePanels, ResizablePanels};
 use creamui_widgets::{
-    Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd,
-    NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert, RawAttachment,
-    RawCalendar, RawCarousel, RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState,
-    RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput, RawRating, RawSkeleton,
-    RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip, Skeleton,
-    SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry,
-    ToastStatus, ToggleButton, Toolbar, ToolbarCommand, ToolbarController, Tooltip,
-    TooltipController, TooltipPosition, VirtualListState,
+    Accordion, Alert, AlertStatus, AlertVariant, Calendar, CalendarColors, Carousel, Collapsible,
+    DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup, Kbd, NumberInput,
+    OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert, RawCalendar, RawCarousel,
+    RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawInputGroup,
+    RawKbd, RawNumberInput, RawOtpInput, RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag,
+    RawTextInput, RawToast, RawToolbar, RawTooltip, Skeleton, SplitAxis, SplitState, StatusBar,
+    StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar,
+    ToolbarCommand, ToolbarController, Tooltip, TooltipController, TooltipPosition,
+    VirtualListState,
 };
 
 #[component]
@@ -332,13 +332,6 @@ pub fn ComponentsPanel(
             move || show_tag.set(true),
         ))
     };
-    let attachment = Attachment::new("wireframes.png")
-        .preview(Box::new(
-            RawView::new(Style::default().size(36.0, 36.0))
-                .background(theme.accent)
-                .corner_radius(theme.radius_small),
-        ))
-        .progress(0.65);
     let raw_tag = RawTag::new(
         Style::default()
             .flex_row()
@@ -801,19 +794,6 @@ pub fn ComponentsPanel(
         text: theme.text_primary,
         gutter: theme.text_secondary,
     });
-    let raw_attachment = RawAttachment::new(
-        Style::default().flex_row().gap(theme.spacing_medium),
-        Box::new(RawText::new(
-            "raw-file.zip",
-            theme.text_primary,
-            theme.typography.body,
-        )),
-    )
-    .error(Box::new(RawText::new(
-        "Upload failed",
-        theme.danger,
-        theme.typography.caption,
-    )));
     let raw_shortcut = RawKbd::new(
         Style::default().padding_all(4.0),
         ["Mod".to_owned(), "P".to_owned()],
@@ -1017,13 +997,12 @@ pub fn ComponentsPanel(
                 Box::new(raw_status),
             ]))
             .child(card(vec![
-                label("Shortcuts, tags & attachments"),
+                label("Shortcuts & tags"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(Kbd::new(["Mod".to_owned(), "K".to_owned()])))
                         .child(themed_tag),
                 ),
-                Box::new(attachment),
             ]))
             .child(card(vec![
                 label("Raw content building blocks"),
@@ -1032,7 +1011,6 @@ pub fn ComponentsPanel(
                         .child(Box::new(raw_shortcut))
                         .child(Box::new(raw_tag)),
                 ),
-                Box::new(raw_attachment),
             ]))
             .child(card(vec![
                 label("Grouped inputs & split actions"),

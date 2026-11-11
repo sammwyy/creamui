@@ -44,7 +44,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Hints | `Tooltip` | Hover- or focus-triggered hints with delayed, viewport-aware placement. | `RawTooltip`, `TooltipController` |
 | Overlays | `Sheet` | Scrollable edge panels with optional modal backdrop and focus return. | `RawSheet` |
 | Workspace actions | `Toolbar` | Grouped keyboard-navigable commands with responsive overflow. | `RawToolbar`, `ToolbarController` |
-| Content | `Tag`, `Attachment` | Selectable labels and attachment progress/errors. | `RawTag`, `RawAttachment` |
+| Content | `Tag` | Selectable, removable labels. | `RawTag` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Menus | `MenuBar`, `MenuPopup`, `MenuItem`, `ContextMenu` | Menus, popup items, and right-click actions. | `RawContextMenu` for context menus; `RawView` for other menus |

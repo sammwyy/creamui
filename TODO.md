@@ -91,8 +91,7 @@ one can be extended. Variants are design suggestions, not promised features.
 | `CodeEditor` | Edit source with line numbers, highlighting, and large-file navigation. | `RawCodeEditor` builds on text editing with revisioned document, gutter, IME, and undo. | `CodeEditor` themes tokens/selection; read-only/editable and wrap/no-wrap. |
 | `RichTextView` | Render application-provided Markdown or rich document nodes. | `RawRichTextView` lays out text runs, links, images, and selections safely. | `RichTextView` themes headings/links/code; Markdown as an optional parser. |
 
-- Add stacked shortcut chords to `Kbd`, outlined and size variants to `Tag`,
-  and compact attachment layout to `Attachment`.
+- Add stacked shortcut chords to `Kbd` and outlined and size variants to `Tag`.
 
 These are intentionally distinct from existing `ColorPicker`, `TimeInput`,
 `Select`/`ComboBox`, `CommandPalette`, `ContextMenu`, `VirtualList`,

@@ -1,5 +1,4 @@
 use super::*;
-use creamui_core::layout::FlexDirection;
 
 pub struct RawKbd {
     pub style: creamui_core::Style,
@@ -130,81 +129,6 @@ impl Widget for RawTag {
     }
 }
 
-pub struct RawAttachment {
-    pub style: creamui_core::Style,
-    preview: Option<BoxedWidget>,
-    name: Option<BoxedWidget>,
-    progress: Option<BoxedWidget>,
-    error: Option<BoxedWidget>,
-    action: Option<BoxedWidget>,
-}
-
-impl RawAttachment {
-    pub fn new(style: impl Into<creamui_core::Style>, name: BoxedWidget) -> Self {
-        Self {
-            style: style.into(),
-            preview: None,
-            name: Some(name),
-            progress: None,
-            error: None,
-            action: None,
-        }
-    }
-
-    pub fn preview(mut self, preview: BoxedWidget) -> Self {
-        self.preview = Some(preview);
-        self
-    }
-
-    pub fn progress(mut self, progress: BoxedWidget) -> Self {
-        self.progress = Some(progress);
-        self
-    }
-
-    pub fn error(mut self, error: BoxedWidget) -> Self {
-        self.error = Some(error);
-        self
-    }
-
-    pub fn action(mut self, action: BoxedWidget) -> Self {
-        self.action = Some(action);
-        self
-    }
-}
-
-impl Widget for RawAttachment {
-    fn style(&self) -> creamui_core::Style {
-        self.style.clone()
-    }
-
-    fn paint(&self, _: &mut dyn Painter, _: Rect) {}
-
-    fn children(&mut self) -> Vec<BoxedWidget> {
-        let mut children = Vec::new();
-        children.extend(self.preview.take());
-        let mut details = RawView::new(Style {
-            flex_direction: FlexDirection::Column,
-            flex_grow: 1.0,
-            min_size: creamui_core::layout::Size {
-                width: creamui_core::layout::Dimension::Length(0.0),
-                height: creamui_core::layout::Dimension::Auto,
-            },
-            ..Default::default()
-        });
-        if let Some(name) = self.name.take() {
-            details = details.child(name);
-        }
-        if let Some(error) = self.error.take() {
-            details = details.child(error);
-        } else if let Some(progress) = self.progress.take() {
-            details = details.child(progress);
-        }
-        children.push(Box::new(details) as BoxedWidget);
-        children.extend(self.action.take());
-        children
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,16 +166,5 @@ mod tests {
         assert!(!removed.get());
         parts[1].on_click().unwrap()();
         assert!(removed.get());
-    }
-
-    #[test]
-    fn attachment_prioritizes_error_over_progress() {
-        let mut attachment = RawAttachment::new(Style::default(), slot())
-            .progress(slot())
-            .error(slot())
-            .action(slot());
-        let mut parts = attachment.children();
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].children().len(), 2);
     }
 }

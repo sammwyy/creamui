@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::{Align, StyleExt};
-use crate::raw::{RawAttachment, RawKbd, RawTag};
+use crate::raw::{RawKbd, RawTag};
 
 pub struct Kbd {
     inner: RawKbd,
@@ -79,58 +79,6 @@ impl Tag {
     }
 }
 
-pub struct Attachment {
-    inner: RawAttachment,
-}
-impl_styled_inner!(Attachment);
-
-impl Attachment {
-    pub fn new(name: impl Into<String>) -> Self {
-        let theme = use_theme();
-        Self {
-            inner: RawAttachment::new(
-                Style::default()
-                    .flex_row()
-                    .align(Align::Center)
-                    .gap(theme.spacing_medium)
-                    .padding_all(theme.spacing_medium),
-                Box::new(RawText::new(
-                    name,
-                    theme.text_primary,
-                    theme.typography.body,
-                )),
-            )
-            .background(theme.surface_elevated)
-            .corner_radius(theme.card_radius),
-        }
-    }
-
-    pub fn preview(mut self, preview: BoxedWidget) -> Self {
-        self.inner = self.inner.preview(preview);
-        self
-    }
-
-    pub fn progress(mut self, value: f32) -> Self {
-        self.inner = self.inner.progress(Box::new(ProgressBar::new(value)));
-        self
-    }
-
-    pub fn error(mut self, text: impl Into<String>) -> Self {
-        let theme = use_theme();
-        self.inner = self.inner.error(Box::new(RawText::new(
-            text,
-            theme.danger,
-            theme.typography.caption,
-        )));
-        self
-    }
-
-    pub fn action(mut self, action: BoxedWidget) -> Self {
-        self.inner = self.inner.action(action);
-        self
-    }
-}
-
 macro_rules! impl_content_widget {
     ($($widget:ident),+ $(,)?) => {
         $(
@@ -151,7 +99,7 @@ macro_rules! impl_content_widget {
     };
 }
 
-impl_content_widget!(Kbd, Tag, Attachment);
+impl_content_widget!(Kbd, Tag);
 
 #[cfg(test)]
 mod tests {
@@ -161,11 +109,8 @@ mod tests {
     fn themed_content_slots_are_mounted() {
         creamui_reactive::with_context_scope(|| {
             creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
-            let slot = || Box::new(RawView::new(Style::default())) as BoxedWidget;
             assert_eq!(Kbd::new(["Mod".into(), "S".into()]).children().len(), 1);
             assert_eq!(Tag::new("Review").removable(|| {}).children().len(), 2);
-            let mut attachment = Attachment::new("notes.txt").progress(0.5).action(slot());
-            assert_eq!(attachment.children().len(), 2);
         });
     }
 }

@@ -163,7 +163,6 @@ macro_rules! impl_direct_styled {
 impl_direct_styled!(
     RawAccordion,
     RawAlert,
-    RawAttachment,
     RawButton,
     RawCalendar,
     RawCarousel,

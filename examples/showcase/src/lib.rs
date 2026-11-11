@@ -25,8 +25,8 @@ mod panels;
 mod prelude;
 
 use creamui_widgets::{
-    GridCell, GridController, OtpController, SplitState, ToastController, ToastHost,
-    TooltipController,
+    DataTableController, GridCell, GridController, OtpController, SplitState, ToastController,
+    ToastHost, TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;
@@ -135,6 +135,11 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         GridCell::new("left", 0, 0),
         GridCell::new("right", 1, 0),
     ]);
+    let components_data_table = DataTableController::new(3);
+    let components_table_scroll = ScrollController::new(0.0);
+    let components_table_virtual = VirtualListState::new(8, 32.0);
+    let components_raw_table_scroll = ScrollController::new(0.0);
+    let components_raw_table_virtual = VirtualListState::new(8, 32.0);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -347,6 +352,11 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_panels: components_raw_panels.clone(),
                     grid: components_grid.clone(),
                     raw_grid: components_raw_grid.clone(),
+                    data_table: components_data_table.clone(),
+                    table_scroll: components_table_scroll.clone(),
+                    table_virtual: components_table_virtual.clone(),
+                    raw_table_scroll: components_raw_table_scroll.clone(),
+                    raw_table_virtual: components_raw_table_virtual.clone(),
                 }),
             };
 

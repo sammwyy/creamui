@@ -183,7 +183,9 @@ pub struct RawTable {
     pub selected_row_background: Option<Color>,
     pub divider_color: Option<Color>,
     pub selected_row: Option<usize>,
+    pub selected_rows: Option<Rc<std::collections::HashSet<usize>>>,
     pub on_row_click: Option<Rc<dyn Fn(usize)>>,
+    pub on_header_click: Option<Rc<dyn Fn(usize)>>,
 }
 
 impl RawTable {
@@ -208,7 +210,9 @@ impl RawTable {
             selected_row_background: None,
             divider_color: None,
             selected_row: None,
+            selected_rows: None,
             on_row_click: None,
+            on_header_click: None,
         }
     }
 
@@ -285,23 +289,48 @@ impl RawTable {
         self
     }
 
+    pub fn on_header_click(mut self, on_click: impl Fn(usize) + 'static) -> Self {
+        self.on_header_click = Some(Rc::new(on_click));
+        self
+    }
+
+    pub fn selected_rows(mut self, rows: std::collections::HashSet<usize>) -> Self {
+        self.selected_rows = Some(Rc::new(rows));
+        self
+    }
+
     fn build_header(&self) -> BoxedWidget {
         let mut header = RawView::new(row_container_style(self.header_height));
         if let Some(color) = self.header_background {
             header = header.background(color);
         }
-        for column in &self.columns {
-            header = header.child(Box::new(
+        for (index, column) in self.columns.iter().enumerate() {
+            let text = Box::new(
                 RawText::new(column.label.clone(), self.header_text_color, 13.0)
-                    .text_align(TextAlign::Start)
-                    .layout(cell_style(column.width, self.cell_padding)),
-            ));
+                    .text_align(TextAlign::Start),
+            );
+            let cell: BoxedWidget = if let Some(callback) = &self.on_header_click {
+                let callback = callback.clone();
+                Box::new(
+                    RawButton::new(cell_style(column.width, self.cell_padding), move || {
+                        callback(index)
+                    })
+                    .child(text),
+                )
+            } else {
+                Box::new(RawView::new(cell_style(column.width, self.cell_padding)).child(text))
+            };
+            header = header.child(cell);
         }
         Box::new(header)
     }
 
     fn build_row(&self, index: usize, cells: &[String]) -> BoxedWidget {
-        let selected = self.selected_row == Some(index);
+        let selected = self.selected_row == Some(index)
+            || self
+                .selected_rows
+                .as_ref()
+                .is_some_and(|rows| rows.contains(&index));
         let background = if selected {
             self.selected_row_background.or(self.row_background)
         } else if index % 2 == 1 {

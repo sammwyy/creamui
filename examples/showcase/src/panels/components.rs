@@ -2,14 +2,15 @@ use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form,
-    GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors, OtpController, OtpInput,
-    Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel, RawChatMessage,
-    RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawGridLayout,
-    RawInputGroup, RawKbd, RawNumberInput, RawOtpInput, RawRating, RawResizablePanels, RawSkeleton,
-    RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawTooltip, ResizablePanels,
-    Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag, ToastController,
-    ToastEntry, ToastStatus, ToggleButton, Tooltip, TooltipController, TooltipPosition,
+    ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, DropdownButton,
+    EmptyState, Field, Form, GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors,
+    OtpController, OtpInput, Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel,
+    RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList, RawDropdownButton,
+    RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
+    RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
+    RawToast, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState,
+    Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Tooltip,
+    TooltipController, TooltipPosition, VirtualListState,
 };
 
 #[component]
@@ -47,6 +48,11 @@ pub fn ComponentsPanel(
     raw_panels: SplitState,
     grid: GridController,
     raw_grid: GridController,
+    data_table: DataTableController,
+    table_scroll: ScrollController,
+    table_virtual: VirtualListState,
+    raw_table_scroll: ScrollController,
+    raw_table_virtual: VirtualListState,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -547,6 +553,56 @@ pub fn ComponentsPanel(
     .row_height(52.0)
     .item("left", pane("Raw left"))
     .item("right", pane("Raw right"));
+    let table_columns = vec![
+        TableColumn::new("Name", 88.0),
+        TableColumn::new("State", 72.0),
+        TableColumn::new("Count", 58.0),
+    ];
+    let table_rows = vec![
+        vec!["Alpha".into(), "ready".into(), "12".into()],
+        vec!["Beta".into(), "waiting".into(), "4".into()],
+        vec!["Gamma".into(), "ready".into(), "8".into()],
+        vec!["Delta".into(), "waiting".into(), "21".into()],
+        vec!["Epsilon".into(), "ready".into(), "3".into()],
+        vec!["Zeta".into(), "ready".into(), "17".into()],
+        vec!["Eta".into(), "waiting".into(), "5".into()],
+        vec!["Theta".into(), "ready".into(), "9".into()],
+    ];
+    let themed_data_table = DataTable::new(
+        table_columns.clone(),
+        table_rows.clone(),
+        &data_table,
+        table_scroll,
+        table_virtual,
+        135.0,
+    )
+    .dense();
+    let raw_data_table = RawDataTable::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(110.0),
+            },
+            ..Default::default()
+        },
+        raw_table_scroll,
+        table_columns,
+        table_rows,
+        &data_table,
+        raw_table_virtual,
+        80.0,
+    )
+    .customize(|table| {
+        table.header_background = Some(theme.surface_elevated);
+        table.header_text_color = theme.text_primary;
+        table.cell_text_color = theme.text_primary;
+        table.selected_row_background = Some(theme.accent_hover);
+        table.alt_row_background = Some(theme.surface_hover);
+    });
+    let ready_filter = data_table.clone();
+    let clear_filter = data_table.clone();
+    let toggle_column = data_table.clone();
+    let reorder_column = data_table.clone();
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -922,6 +978,28 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw grid"),
                 Box::new(raw_grid_view),
+            ]))
+            .child(card(vec![
+                label("Data table"),
+                Box::new(
+                    RawView::new(row(theme.spacing_small))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "Ready", move || ready_filter.set_filter("ready"))))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "All", move || clear_filter.set_filter(""))))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "Count", move || {
+                            toggle_column.set_column_visible(2, !toggle_column.visible_columns().contains(&2));
+                        })))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "Reorder", move || {
+                            reorder_column.reorder_column(0, 1);
+                        }))),
+                ),
+                Box::new(themed_data_table),
+                Box::new(RawText::new(
+                    format!("Filter: {} | Selected: {:?}", data_table.filter(), data_table.selected()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw virtual data table"),
+                Box::new(raw_data_table),
             ])),
     )
 }

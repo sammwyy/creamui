@@ -78,7 +78,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `DataTable` | Add sorting, filtering, selection, and column management to large tables. | Extend `RawTable`/`RawVirtualTable` with controlled column, row, and sort models. | `DataTable` themes headers and selection; dense/comfortable and virtualized. |
 | `Dock` | Arrange persistent tab groups and split/edge panels in a workspace. | `RawDock` models drag, drop, nested layouts, and serializable state on raw tabs/splits. | `Dock` themes drop targets, tabs, and panels; optional edge docks. |
 | `Toolbar` | Arrange commands in a header or editor with overflow handling. | `RawToolbar` owns group ordering, focus navigation, and overflow. | `Toolbar` themes icon/text actions; attached/floating variants. |
 | `Sheet` | Reveal contextual content from an edge, separate from centered dialogs. | `RawSheet` handles overlay placement, focus return, dismissal, and scrolling. | `Sheet` themes panel/backdrop; left/right/bottom and modal/nonmodal. |

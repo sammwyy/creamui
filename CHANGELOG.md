@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add virtualized `RawDataTable`/`DataTable` with controlled sorting,
+  filtering, multi-row selection, and column visibility/order.
 - Add controlled `RawGridLayout`/`GridLayout` dashboard cells with drag and
   keyboard movement, spans, bounds, and collision rejection.
 - Add nested `RawResizablePanels`/`ResizablePanels` with persistent split

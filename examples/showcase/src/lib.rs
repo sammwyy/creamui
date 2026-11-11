@@ -50,7 +50,13 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         .expect("bundled WebP should decode");
     let theme_mode = Signal::new(ThemeMode::Dark);
     let accent_index = Signal::new(0usize);
-    let active_section = Signal::new(0usize);
+    let active_section = Signal::new(ShowcasePage::Appearance);
+    let hooks_counter = Signal::new(0i32);
+    let hooks_enabled = Signal::new(true);
+    let theme_raw_clicks = Signal::new(0usize);
+    let event_clicks = Signal::new(0usize);
+    let event_last = Signal::new("No events yet".to_owned());
+    let event_input = TextController::default();
     let sidebar_open = Signal::new(false);
 
     let plain = TextController::default();
@@ -267,79 +273,94 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             // active branch's signals, so a hidden editor or progress demo
             // cannot invalidate this window or make us lay it out again.
             let panel = match active_section.get() {
-                0 => AppearancePanel(AppearancePanelProps {
+                ShowcasePage::Appearance => AppearancePanel(AppearancePanelProps {
                     mode: theme_mode.clone(),
                     accent_index: accent_index.clone(),
                 }),
-                1 => TypographyPanel(TypographyPanelProps {
+                ShowcasePage::Theming => ThemingPanel(ThemingPanelProps {
+                    mode: theme_mode.clone(),
+                    accent_index: accent_index.clone(),
+                    raw_clicks: theme_raw_clicks.clone(),
+                }),
+                ShowcasePage::Hooks => HooksPanel(HooksPanelProps {
+                    counter: hooks_counter.clone(),
+                    enabled: hooks_enabled.clone(),
+                }),
+                ShowcasePage::Events => EventsPanel(EventsPanelProps {
+                    clicks: event_clicks.clone(),
+                    last_event: event_last.clone(),
+                    input: event_input.clone(),
+                }),
+                ShowcasePage::Typography => TypographyPanel(TypographyPanelProps {
                     link_clicks: typography_link_clicks.clone(),
                 }),
-                2 => InputPanel(InputPanelProps {
+                ShowcasePage::Input => InputPanel(InputPanelProps {
                     plain: plain.clone(),
                     with_placeholder: with_placeholder.clone(),
                     notes: notes.clone(),
                     notes_wrapped: notes_wrapped.clone(),
                 }),
-                3 => PickersPanel(PickersPanelProps {
+                ShowcasePage::Pickers => PickersPanel(PickersPanelProps {
                     date_time: picker_date_time.clone(),
                     color: picker_color.clone(),
                     color_picker: picker_color_popup.clone(),
                     file: picker_file.clone(),
                 }),
-                4 => ImagesPanel(ImagesPanelProps {
+                ShowcasePage::Images => ImagesPanel(ImagesPanelProps {
                     png: image_png.clone(),
                     jpeg: image_jpeg.clone(),
                     webp: image_webp.clone(),
                 }),
-                5 => ButtonPanel(ButtonPanelProps {
+                ShowcasePage::Button => ButtonPanel(ButtonPanelProps {
                     clicks: clicks.clone(),
                 }),
-                6 => SliderPanel(SliderPanelProps {
+                ShowcasePage::Slider => SliderPanel(SliderPanelProps {
                     volume: volume.clone(),
                     brightness: brightness.clone(),
                     zoom: zoom.clone(),
                 }),
-                7 => CheckboxPanel(CheckboxPanelProps {
+                ShowcasePage::Checkbox => CheckboxPanel(CheckboxPanelProps {
                     notifications: notifications.clone(),
                     auto_save: auto_save.clone(),
                     beta_features: beta_features.clone(),
                 }),
-                8 => SelectionPanel(SelectionPanelProps {
+                ShowcasePage::Selection => SelectionPanel(SelectionPanelProps {
                     select: select.clone(),
                     radio: radio.clone(),
                     segment: segment.clone(),
                     list_scroll: list_scroll_demo.clone(),
                     list_selected: list_selected.clone(),
                 }),
-                9 => FeedbackPanel(FeedbackPanelProps {
+                ShowcasePage::Feedback => FeedbackPanel(FeedbackPanelProps {
                     progress: progress.clone(),
                     show_popover: show_popover.clone(),
                     show_alert: show_alert.clone(),
                 }),
-                10 => SidebarPanel(SidebarPanelProps {
+                ShowcasePage::Sidebar => SidebarPanel(SidebarPanelProps {
                     active: sidebar_demo_active.clone(),
                 }),
-                11 => TabsPanel(TabsPanelProps {
+                ShowcasePage::Tabs => TabsPanel(TabsPanelProps {
                     filled: tabs_filled.clone(),
                     pill: tabs_pill.clone(),
                     indicator: tabs_indicator.clone(),
                     content: tabs_content.clone(),
                 }),
-                12 => ScrollPanel(ScrollPanelProps {
+                ShowcasePage::Scroll => ScrollPanel(ScrollPanelProps {
                     themed_scroll: themed_scroll_demo.clone(),
                     custom_scroll: custom_scroll_demo.clone(),
                 }),
-                13 => TreePanel(TreePanelProps {
+                ShowcasePage::Tree => TreePanel(TreePanelProps {
                     tree_scroll: tree_scroll_demo.clone(),
                     tree: tree_demo.clone(),
                 }),
-                14 => TablePanel(TablePanelProps {
+                ShowcasePage::Table => TablePanel(TablePanelProps {
                     table_scroll: table_scroll_demo.clone(),
                     table_selected: table_selected.clone(),
                 }),
-                15 => GridPanel(),
-                16 => FlexPanel(),
+                ShowcasePage::Grid => GridPanel(),
+                ShowcasePage::Flex => FlexPanel(),
                 _ => ComponentsPanel(ComponentsPanelProps {
+                    section: active_section.get(),
                     expanded: components_expanded.clone(),
                     accordion: components_accordion.clone(),
                     page: components_page.clone(),
@@ -447,7 +468,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     },
                     ..row(10.)
                 };
-                let title_label = NAV_LABELS[active_section.get()].to_owned();
+                let title_label = active_section.get().label().to_owned();
                 let title_text_style = Style {
                     flex_grow: 1.0,
                     min_size: creamui_core::layout::Size {

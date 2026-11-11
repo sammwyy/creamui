@@ -5,7 +5,7 @@ use crate::prelude::*;
 /// The showcase category rail.
 #[component]
 pub fn Nav(
-    active: Signal<usize>,
+    active: Signal<ShowcasePage>,
     content_scroll: ScrollController,
     nav_scroll: ScrollController,
     sidebar_open: Signal<bool>,
@@ -30,41 +30,14 @@ pub fn Nav(
         },
         ..column(5.)
     };
-    let symbols = [
-        Symbol::Appearance,
-        Symbol::Display,
-        Symbol::Keyboard,
-        Symbol::Controls,
-        Symbol::Display,
-        Symbol::Controls,
-        Symbol::Sliders,
-        Symbol::Check,
-        Symbol::Controls,
-        Symbol::Display,
-        Symbol::Folder,
-        Symbol::Grid,
-        Symbol::Grid,
-        Symbol::Folder,
-        Symbol::Grid,
-        Symbol::Grid,
-        Symbol::Controls,
-        Symbol::Grid,
-    ];
     let mut items: Vec<BoxedWidget> = Vec::new();
-    for (i, label) in NAV_LABELS.iter().enumerate() {
-        if i == 0 || i == 2 || i == 8 || i == 10 || i == 13 || i == 15 {
-            let heading = if i == 0 {
-                "SHOWCASE"
-            } else if i == 2 {
-                "CONTROLS"
-            } else if i == 8 {
-                "SELECTION"
-            } else if i == 13 {
-                "DATA VIEW"
-            } else if i == 15 {
-                "LAYOUT"
-            } else {
-                "NAVIGATION"
+    let mut group = None;
+    for entry in &NAV_PAGES {
+        if group != Some(entry.group) {
+            group = Some(entry.group);
+            let heading = match entry.group {
+                NavGroup::Features => "FEATURES",
+                NavGroup::Components => "COMPONENTS",
             };
             items.push(Box::new(jsx! {
                 <RawView style={padding(column(0.), 8.)}>
@@ -77,11 +50,11 @@ pub fn Nav(
         let close_sidebar = sidebar_open.clone();
         items.push(jsx! {
             <NavigationItem
-                symbol={symbols[i]}
-                label={(*label).to_owned()}
-                active={active.get() == i}
+                symbol={entry.symbol}
+                label={entry.label.to_owned()}
+                active={active.get() == entry.page}
                 on_click={Box::new(move || {
-                    select.set(i);
+                    select.set(entry.page);
                     reset_scroll.set(0.0);
                     close_sidebar.set(false);
                 }) as Box<dyn Fn()>}

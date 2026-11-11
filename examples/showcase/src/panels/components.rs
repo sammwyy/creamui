@@ -19,8 +19,24 @@ use creamui_widgets::{
     TooltipController, TooltipPosition, VirtualListState,
 };
 
+fn page_card(
+    current: ShowcasePage,
+    page: ShowcasePage,
+    build: impl FnOnce() -> BoxedWidget,
+) -> BoxedWidget {
+    if current == page {
+        build()
+    } else {
+        Box::new(RawView::new(Style {
+            display: creamui_core::layout::Display::None,
+            ..Default::default()
+        }))
+    }
+}
+
 #[component]
 pub fn ComponentsPanel(
+    section: ShowcasePage,
     expanded: Signal<bool>,
     accordion: Signal<Vec<bool>>,
     page: Signal<usize>,
@@ -926,14 +942,14 @@ pub fn ComponentsPanel(
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
-                <SectionHeader title={"Application components".to_owned()} subtitle={"Interactive disclosure, status, forms, and pagination, shown in themed and raw styles.".to_owned()} />
+                <SectionHeader title={section.label().to_owned()} subtitle={"Interactive themed and raw components with persistent state.".to_owned()} />
             })
-            .child(card(vec![
+            .child(page_card(section, ShowcasePage::Disclosure, || card(vec![
                 label("Accordion & collapsible"),
                 Box::new(themed_accordion),
                 Box::new(disclosure),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::States, || card(vec![
                 label("Inline alerts"),
                 alert,
                 Box::new(Alert::styled(
@@ -942,8 +958,8 @@ pub fn ComponentsPanel(
                     "Heads up",
                     "Review the details before continuing.",
                 )),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::States, || card(vec![
                 label("Loading & empty states"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
@@ -958,8 +974,8 @@ pub fn ComponentsPanel(
                 Box::new(
                     EmptyState::new("No results", "Try a different search term.").compact(),
                 ),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Forms, || card(vec![
                 label("Fields & form"),
                 Box::new(form),
                 Box::new(RawText::new(
@@ -967,8 +983,8 @@ pub fn ComponentsPanel(
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Pagination, || card(vec![
                 label("Pagination"),
                 Box::new(pagination),
                 Box::new(RawText::new(
@@ -976,43 +992,49 @@ pub fn ComponentsPanel(
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
-            ]))
-            .child(card(vec![
-                label("Headless building blocks"),
+            ])))
+            .child(page_card(section, ShowcasePage::States, || card(vec![
+                label("Raw feedback"),
                 Box::new(raw_alert),
-                Box::new(raw_disclosure),
-                Box::new(raw_field),
                 Box::new(raw_empty),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Disclosure, || card(vec![
+                label("Raw disclosure"),
+                Box::new(raw_disclosure),
+            ])))
+            .child(page_card(section, ShowcasePage::Forms, || card(vec![
+                label("Raw field"),
+                Box::new(raw_field),
+            ])))
+            .child(page_card(section, ShowcasePage::Workspace, || card(vec![
                 label("Workspace & data"),
                 Box::new(stepper),
                 Box::new(detail),
                 Box::new(status),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Workspace, || card(vec![
                 label("Raw workspace building blocks"),
                 Box::new(raw_stepper),
                 Box::new(raw_details),
                 Box::new(raw_status),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Tags, || card(vec![
                 label("Shortcuts & tags"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(Kbd::new(["Mod".to_owned(), "K".to_owned()])))
                         .child(themed_tag),
                 ),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Tags, || card(vec![
                 label("Raw content building blocks"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(raw_shortcut))
                         .child(Box::new(raw_tag)),
                 ),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
                 label("Grouped inputs & split actions"),
                 Box::new(InputGroup::controlled(&group_input).prefix("$").suffix("USD")),
                 Box::new(RawView::new(row(theme.spacing_medium)).child(Box::new(toggle)).child(Box::new(dropdown))),
@@ -1022,13 +1044,13 @@ pub fn ComponentsPanel(
                     theme.text_secondary,
                     theme.typography.caption,
                 )),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
                 label("Raw input & action building blocks"),
                 Box::new(raw_input_group),
                 Box::new(RawView::new(row(theme.spacing_small)).child(Box::new(raw_toggle)).child(Box::new(raw_split))),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::InputGroups, || card(vec![
                 label("Bounded number input"),
                 Box::new(themed_number),
                 Box::new(RawText::new(
@@ -1037,8 +1059,8 @@ pub fn ComponentsPanel(
                     theme.typography.caption,
                 )),
                 Box::new(raw_numeric),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Calendar, || card(vec![
                 label("Calendar"),
                 Box::new(themed_calendar),
                 Box::new(RawText::new(
@@ -1048,8 +1070,8 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw calendar"),
                 Box::new(raw_calendar),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Rating, || card(vec![
                 label("Ratings"),
                 Box::new(themed_rating),
                 Box::new(RawText::new(
@@ -1058,14 +1080,14 @@ pub fn ComponentsPanel(
                     theme.typography.caption,
                 )),
                 Box::new(raw_rating),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Carousel, || card(vec![
                 label("Carousel"),
                 Box::new(themed_carousel),
                 label("Raw carousel"),
                 Box::new(raw_carousel),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Verification, || card(vec![
                 label("Verification code"),
                 Box::new(themed_otp),
                 Box::new(RawText::new(
@@ -1075,8 +1097,8 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw code cells"),
                 Box::new(raw_otp_input),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Notifications, || card(vec![
                 label("Toast notifications"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
@@ -1109,13 +1131,13 @@ pub fn ComponentsPanel(
                         ))),
                 ),
                 raw_toast,
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Tooltip, || card(vec![
                 label("Tooltip"),
                 Box::new(themed_tooltip),
                 Box::new(raw_tooltip_view),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Panels, || card(vec![
                 label("Resizable panels"),
                 Box::new(themed_panels),
                 label("Raw split panels"),
@@ -1125,8 +1147,8 @@ pub fn ComponentsPanel(
                     "Collapse / restore",
                     move || collapse_raw.toggle_collapsed(),
                 )),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Panels, || card(vec![
                 label("Grid layout"),
                 Box::new(themed_grid),
                 Box::new(RawText::new(
@@ -1139,8 +1161,8 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw grid"),
                 Box::new(raw_grid_view),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::DataTable, || card(vec![
                 label("Data table"),
                 Box::new(
                     RawView::new(row(theme.spacing_small))
@@ -1161,16 +1183,16 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw virtual data table"),
                 Box::new(raw_data_table),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Sheets, || card(vec![
                 label("Sheets"),
                 Box::new(
                     RawView::new(row(theme.spacing_medium))
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "Open sheet", move || open_sheet.set(true))))
                         .child(Box::new(Button::secondary(ButtonSize::Sm, "Raw bottom", move || open_raw_sheet.set(true)))),
                 ),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Toolbar, || card(vec![
                 label("Toolbars"),
                 Box::new(themed_toolbar),
                 Box::new(RawText::new(
@@ -1180,14 +1202,14 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw toolbar with overflow"),
                 Box::new(raw_toolbar_view),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Chart, || card(vec![
                 label("Chart"),
                 Box::new(chart_view),
                 label("Raw plot"),
                 Box::new(raw_plot_view),
-            ]))
-            .child(card(vec![
+            ])))
+            .child(page_card(section, ShowcasePage::Diff, || card(vec![
                 label("Diff"),
                 Box::new(themed_diff),
                 Box::new(RawText::new(
@@ -1197,6 +1219,6 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw virtual diff"),
                 Box::new(raw_diff_view),
-            ])),
+            ]))),
     )
 }

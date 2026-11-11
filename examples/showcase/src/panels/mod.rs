@@ -1,10 +1,11 @@
-//! One module per sidebar section — see `NAV_LABELS` in `common.rs` for
+//! One module per sidebar section — see `NAV_PAGES` in `common.rs` for
 //! the display order these map to.
 
 mod appearance;
 mod button;
 mod checkbox;
 mod components;
+mod features;
 mod feedback;
 mod flex;
 mod grid;
@@ -24,6 +25,7 @@ pub use appearance::*;
 pub use button::*;
 pub use checkbox::*;
 pub use components::*;
+pub use features::*;
 pub use feedback::*;
 pub use flex::*;
 pub use grid::*;

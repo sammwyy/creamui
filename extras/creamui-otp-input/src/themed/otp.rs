@@ -4,7 +4,11 @@ use crate::raw::{OtpColors, OtpController, RawOtpInput};
 pub struct OtpInput {
     inner: RawOtpInput,
 }
-impl_styled_inner!(OtpInput);
+impl Styled for OtpInput {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.inner.set_style(self.inner.style().merged_over(style));
+    }
+}
 
 impl OtpInput {
     pub fn new(controller: &OtpController, on_change: impl Fn(String) + 'static) -> Self {

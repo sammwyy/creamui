@@ -29,9 +29,10 @@ use creamui_core::{Styled, Widget};
 use creamui_data_table::DataTableController;
 use creamui_diff_viewer::DiffController;
 use creamui_grid_layout::{GridCell, GridController};
+use creamui_otp_input::OtpController;
 use creamui_widgets::{
-    OtpController, RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost,
-    ToolbarController, TooltipController, VirtualListState,
+    RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost, ToolbarController,
+    TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;

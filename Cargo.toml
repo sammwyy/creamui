@@ -17,6 +17,7 @@ members = [
     "extras/creamui-grid-layout",
     "extras/creamui-resizable-panels",
     "extras/creamui-data-table",
+    "extras/creamui-otp-input",
     "crates/image",
     "crates/platform",
     "crates/render",
@@ -78,6 +79,7 @@ creamui-diff-viewer = { version = "0.3.0", path = "extras/creamui-diff-viewer" }
 creamui-grid-layout = { version = "0.3.0", path = "extras/creamui-grid-layout" }
 creamui-resizable-panels = { version = "0.3.0", path = "extras/creamui-resizable-panels" }
 creamui-data-table = { version = "0.3.0", path = "extras/creamui-data-table" }
+creamui-otp-input = { version = "0.3.0", path = "extras/creamui-otp-input" }
 creamui-image = { version = "0.3.0", path = "crates/image" }
 creamui-platform = { version = "0.3.0", path = "crates/platform" }
 creamui-render = { version = "0.3.0", path = "crates/render" }

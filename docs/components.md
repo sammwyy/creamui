@@ -23,7 +23,6 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Text entry | `TextInput`, `TextArea`, `InputGroup` | Controlled editing and composable prefix/suffix addons. | `RawTextInput`, `RawTextArea`, `RawInputGroup` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
 | Numeric and activity | `Slider`, `Spinner`, `NumberInput` | Range selection, activity indicator, and bounded numeric editing. | `RawSlider`, `RawSpinner`, `RawNumberInput` |
-| Verification | `OtpInput` | Fixed-length numeric code entry with paste distribution and cell focus. | `RawOtpInput`, `OtpController` |
 | Choice | `Select`, `ComboBox` | Option popup; searchable mode (`ComboBox` alias). | `RawView`, `RawTextInput`, `RawScrollView`; no dedicated raw select |
 | Choice | `Radio`, `RadioGroup`, `SegmentedControl`, `ListBox` | Single-choice buttons, groups, segments, and option list. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Date and time | `DateTimePicker`, `DateInput`, `TimeInput` | Date/time editing and input wrappers. | `RawDateTimePicker` |
@@ -65,6 +64,7 @@ Specialized components live in independent crates. Applications that only use `c
 | `creamui-grid-layout` | `GridLayout` | `RawGridLayout`, `GridController`, `GridCell` |
 | `creamui-resizable-panels` | `ResizablePanels` | `RawResizablePanels` (uses `SplitState` from `creamui-widgets`) |
 | `creamui-data-table` | `DataTable` | `RawDataTable`, `DataTableController` (uses `TableColumn` from `creamui-widgets`) |
+| `creamui-otp-input` | `OtpInput` | `RawOtpInput`, `OtpController`, `OtpColors` |
 
 Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
 

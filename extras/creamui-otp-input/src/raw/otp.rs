@@ -168,6 +168,12 @@ impl RawOtpInput {
     }
 }
 
+impl Styled for RawOtpInput {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
+
 impl Widget for RawOtpInput {
     fn style(&self) -> creamui_core::Style {
         self.style.clone()
@@ -235,7 +241,7 @@ impl Widget for RawOtpInput {
                 let controller = controller.clone();
                 let on_change = on_change.clone();
                 let lifetime = lifetime.clone();
-                crate::clipboard::read(move |paste| {
+                creamui_widgets::read_clipboard(move |paste| {
                     if lifetime.upgrade().is_some() && controller.insert(&paste) {
                         on_change(controller.peek());
                     }

@@ -103,7 +103,6 @@ mod foundation;
 mod marquee;
 mod navigation;
 mod number;
-mod otp;
 mod pickers;
 mod rating;
 mod scroll;
@@ -133,7 +132,6 @@ pub use foundation::*;
 pub use marquee::*;
 pub use navigation::*;
 pub use number::*;
-pub use otp::*;
 pub use pickers::*;
 pub use rating::*;
 pub use scroll::*;
@@ -182,7 +180,6 @@ impl_direct_styled!(
     RawListView,
     RawMarquee,
     RawNumberInput,
-    RawOtpInput,
     RawPagination,
     RawPre,
     RawQuote,

@@ -4,6 +4,7 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move one-time code entry into the opt-in `creamui-otp-input` crate.
 - Move advanced sortable/filterable virtual tables into the opt-in
   `creamui-data-table` crate; keep basic tables in `creamui-widgets`.
 - Move multi-pane resizable layouts to the opt-in

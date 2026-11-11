@@ -24,7 +24,7 @@ mod nav;
 mod panels;
 mod prelude;
 
-use creamui_widgets::{OtpController, ToastController, ToastHost, TooltipController};
+use creamui_widgets::{OtpController, SplitState, ToastController, ToastHost, TooltipController};
 use panels::*;
 use prelude::*;
 
@@ -121,6 +121,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_raw_toast_visible = Signal::new(true);
     let components_tooltip = TooltipController::default();
     let components_raw_tooltip = TooltipController::default();
+    let components_panels = vec![SplitState::new(0.32), SplitState::new(0.55)];
+    let components_raw_panels = SplitState::new(0.4);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -329,6 +331,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_toast_visible: components_raw_toast_visible.clone(),
                     tooltip: components_tooltip.clone(),
                     raw_tooltip: components_raw_tooltip.clone(),
+                    panels: components_panels.clone(),
+                    raw_panels: components_raw_panels.clone(),
                 }),
             };
 

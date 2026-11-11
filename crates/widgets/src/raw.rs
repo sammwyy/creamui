@@ -106,6 +106,7 @@ mod number;
 mod otp;
 mod pickers;
 mod rating;
+mod resizable;
 mod scroll;
 mod spinner;
 mod split;
@@ -134,6 +135,7 @@ pub use number::*;
 pub use otp::*;
 pub use pickers::*;
 pub use rating::*;
+pub use resizable::*;
 pub use scroll::*;
 pub use spinner::*;
 pub use split::*;
@@ -185,6 +187,7 @@ impl_direct_styled!(
     RawPre,
     RawQuote,
     RawRating,
+    RawResizablePanels,
     RawScrollView,
     RawScrollbar,
     RawSidebar,

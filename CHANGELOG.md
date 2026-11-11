@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add nested `RawResizablePanels`/`ResizablePanels` with persistent split
+  handles, min/max constraints, keyboard resize and collapsible pane state.
 - Add `RawTooltip`/`Tooltip` with delayed hover, keyboard focus, viewport-aware
   positioning, and optional shortcut text.
 - Add queued `RawToast`/`Toast` notifications with a slotted host,

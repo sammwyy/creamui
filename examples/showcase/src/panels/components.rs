@@ -6,9 +6,10 @@ use creamui_widgets::{
     Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
     RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
     RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawTooltip,
-    Skeleton, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry, ToastStatus,
-    ToggleButton, Tooltip, TooltipController, TooltipPosition,
+    RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
+    RawToast, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState,
+    Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Tooltip,
+    TooltipController, TooltipPosition,
 };
 
 #[component]
@@ -42,6 +43,8 @@ pub fn ComponentsPanel(
     raw_toast_visible: Signal<bool>,
     tooltip: TooltipController,
     raw_tooltip: TooltipController,
+    panels: Vec<SplitState>,
+    raw_panels: SplitState,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -484,6 +487,45 @@ pub fn ComponentsPanel(
     )
     .position(TooltipPosition::Right)
     .popup_size(180.0, 42.0);
+    let pane = |text: &str| -> BoxedWidget {
+        Box::new(
+            RawView::new(
+                Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Percent(1.0),
+                        height: Dimension::Percent(1.0),
+                    },
+                    ..Default::default()
+                }
+                .padding_all(theme.spacing_small),
+            )
+            .background(theme.surface_hover)
+            .child(Box::new(RawText::new(
+                text,
+                theme.text_primary,
+                theme.typography.caption,
+            ))),
+        )
+    };
+    let themed_panels = ResizablePanels::new(SplitAxis::Horizontal, panels)
+        .pane(pane("Files"), 52.0, Some(230.0))
+        .pane(pane("Editor"), 85.0, None)
+        .pane(pane("Preview"), 54.0, None);
+    let collapse_raw = raw_panels.clone();
+    let raw_panels_view = RawResizablePanels::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(80.0),
+            },
+            ..Default::default()
+        },
+        SplitAxis::Horizontal,
+        vec![raw_panels],
+    )
+    .divider(6.0, theme.accent)
+    .pane(pane("Raw left"), 0.0, None)
+    .pane(pane("Raw right"), 48.0, None);
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -834,6 +876,17 @@ pub fn ComponentsPanel(
                 label("Tooltip"),
                 Box::new(themed_tooltip),
                 Box::new(raw_tooltip_view),
+            ]))
+            .child(card(vec![
+                label("Resizable panels"),
+                Box::new(themed_panels),
+                label("Raw split panels"),
+                Box::new(raw_panels_view),
+                Box::new(Button::secondary(
+                    ButtonSize::Sm,
+                    "Collapse / restore",
+                    move || collapse_raw.toggle_collapsed(),
+                )),
             ])),
     )
 }

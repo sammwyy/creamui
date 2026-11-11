@@ -106,7 +106,6 @@ mod navigation;
 mod number;
 mod otp;
 mod pickers;
-mod questionnaire;
 mod rating;
 mod scroll;
 mod sheet;
@@ -138,7 +137,6 @@ pub use navigation::*;
 pub use number::*;
 pub use otp::*;
 pub use pickers::*;
-pub use questionnaire::*;
 pub use rating::*;
 pub use scroll::*;
 pub use sheet::*;
@@ -191,7 +189,6 @@ impl_direct_styled!(
     RawOtpInput,
     RawPagination,
     RawPre,
-    RawQuestionnaire,
     RawQuote,
     RawRating,
     RawScrollView,

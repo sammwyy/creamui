@@ -45,7 +45,6 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Hints | `Tooltip` | Hover- or focus-triggered hints with delayed, viewport-aware placement. | `RawTooltip`, `TooltipController` |
 | Overlays | `Sheet` | Scrollable edge panels with optional modal backdrop and focus return. | `RawSheet` |
 | Workspace actions | `Toolbar` | Grouped keyboard-navigable commands with responsive overflow. | `RawToolbar`, `ToolbarController` |
-| Guided forms | `Questionnaire` | Validated multi-step questions with branching and back navigation. | `RawQuestionnaire`, `QuestionnaireController` |
 | Content | `Tag`, `Attachment`, `ChatMessage` | Selectable labels, attachment progress/errors, and sender/body/action layouts. | `RawTag`, `RawAttachment`, `RawChatMessage` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
@@ -66,6 +65,7 @@ Specialized components live in independent crates. Applications that only use `c
 | `creamui-diff-viewer` | `Diff` | `RawDiff`, `DiffController`, `DiffHunk` |
 | `creamui-grid-layout` | `GridLayout` | `RawGridLayout`, `GridController`, `GridCell` |
 | `creamui-resizable-panels` | `ResizablePanels` | `RawResizablePanels` (uses `SplitState` from `creamui-widgets`) |
+| `creamui-questionnaire` | `Questionnaire` | `RawQuestionnaire`, `QuestionnaireController`, `QuestionStep` |
 
 Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
 

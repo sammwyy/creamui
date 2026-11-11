@@ -4,6 +4,7 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move guided branching forms to the opt-in `creamui-questionnaire` crate.
 - Move multi-pane resizable layouts to the opt-in
   `creamui-resizable-panels` crate; keep `RawSplitView` as a shared primitive.
 - Move the draggable dashboard grid into the opt-in `creamui-grid-layout` crate.

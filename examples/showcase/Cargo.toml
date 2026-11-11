@@ -16,6 +16,7 @@ creamui-chart = { workspace = true }
 creamui-diff-viewer = { workspace = true }
 creamui-grid-layout = { workspace = true }
 creamui-resizable-panels = { workspace = true }
+creamui-questionnaire = { workspace = true }
 creamui-devtools = { workspace = true, features = ["perf-metrics"] }
 creamui-image = { path = "../../crates/image", features = ["jpeg", "webp"] }
 creamui-jsx = { workspace = true }

@@ -1,7 +1,7 @@
 use super::*;
-use crate::layout::StyleExt;
-use crate::{RawStepper, StepState};
 use creamui_reactive::Signal;
+use creamui_widgets::layout::StyleExt;
+use creamui_widgets::{RawStepper, StepState};
 use std::collections::BTreeMap;
 
 #[derive(Clone)]
@@ -248,6 +248,12 @@ impl Widget for RawQuestionnaire {
         }
         children.push(Box::new(navigation));
         children
+    }
+}
+
+impl Styled for RawQuestionnaire {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
     }
 }
 

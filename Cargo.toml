@@ -16,6 +16,7 @@ members = [
     "extras/creamui-diff-viewer",
     "extras/creamui-grid-layout",
     "extras/creamui-resizable-panels",
+    "extras/creamui-questionnaire",
     "crates/image",
     "crates/platform",
     "crates/render",
@@ -76,6 +77,7 @@ creamui-chart = { version = "0.3.0", path = "extras/creamui-chart" }
 creamui-diff-viewer = { version = "0.3.0", path = "extras/creamui-diff-viewer" }
 creamui-grid-layout = { version = "0.3.0", path = "extras/creamui-grid-layout" }
 creamui-resizable-panels = { version = "0.3.0", path = "extras/creamui-resizable-panels" }
+creamui-questionnaire = { version = "0.3.0", path = "extras/creamui-questionnaire" }
 creamui-image = { version = "0.3.0", path = "crates/image" }
 creamui-platform = { version = "0.3.0", path = "crates/platform" }
 creamui-render = { version = "0.3.0", path = "crates/render" }

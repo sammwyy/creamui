@@ -1,11 +1,17 @@
 use super::*;
-use crate::layout::StyleExt;
 use crate::raw::{QuestionnaireController, RawQuestionnaire};
+use creamui_widgets::layout::StyleExt;
 
 pub struct Questionnaire {
     inner: RawQuestionnaire,
 }
-impl_styled_inner!(Questionnaire);
+
+impl Styled for Questionnaire {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        let merged = self.inner.style().merged_over(style);
+        self.inner.set_style(merged);
+    }
+}
 
 impl Questionnaire {
     pub fn new(controller: &QuestionnaireController) -> Self {

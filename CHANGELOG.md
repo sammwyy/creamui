@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add `RawSheet`/`Sheet` edge panels with modal and nonmodal layouts,
+  backdrop/Escape dismissal, scrollable content, and focus return.
 - Add virtualized `RawDataTable`/`DataTable` with controlled sorting,
   filtering, multi-row selection, and column visibility/order.
 - Add controlled `RawGridLayout`/`GridLayout` dashboard cells with drag and

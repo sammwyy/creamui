@@ -280,6 +280,7 @@ fn constrain_inflow(mut style: taffy::style::Style) -> taffy::style::Style {
 #[derive(Default)]
 struct PaintOutputs {
     modal: bool,
+    modal_dismiss: Option<Rc<dyn Fn()>>,
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
@@ -580,6 +581,7 @@ fn paint_instance(
     let focus_visible = painter.focus_visible() || instance.widget.accepts_text_input();
     if paint_self && instance.widget.is_modal() && rect.overlaps(effective_clip) {
         out.modal = true;
+        out.modal_dismiss = instance.widget.on_modal_dismiss();
         out.hits.clear();
         out.hits_at.clear();
         out.double_clicks.clear();
@@ -935,6 +937,7 @@ fn report_layout(tree: &Tree, instance: &Instance, parent_origin: Point) -> bool
 /// lists need [`Widget::key`](crate::Widget::key) for stable identity.
 pub struct Scene {
     modal: bool,
+    modal_dismiss: Option<Rc<dyn Fn()>>,
     pointer_barriers: Vec<PointerBarrier>,
     hits: Vec<(Rect, Rc<dyn Fn()>)>,
     hits_at: Vec<(Rect, Rc<dyn Fn(Point)>)>,
@@ -961,6 +964,14 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn is_modal(&self) -> bool {
+        self.modal
+    }
+
+    pub fn modal_dismiss(&self) -> Option<&Rc<dyn Fn()>> {
+        self.modal_dismiss.as_ref()
+    }
+
     pub fn double_click_at(&self, point: Point) -> Option<(Point, Rc<dyn Fn(Point)>)> {
         self.double_clicks
             .iter()
@@ -1529,6 +1540,7 @@ impl Renderer {
             out.focusables.iter().map(|(id, _, _, _, _)| *id).collect();
         Some(Scene {
             modal: out.modal,
+            modal_dismiss: out.modal_dismiss,
             pointer_barriers: out.pointer_barriers,
             hits: out.hits,
             hits_at: out.hits_at,

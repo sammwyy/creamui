@@ -24,9 +24,10 @@ mod nav;
 mod panels;
 mod prelude;
 
+use creamui_core::{Styled, Widget};
 use creamui_widgets::{
-    DataTableController, GridCell, GridController, OtpController, SplitState, ToastController,
-    ToastHost, TooltipController, VirtualListState,
+    DataTableController, GridCell, GridController, OtpController, RawSheet, Sheet, SheetEdge,
+    SplitState, ToastController, ToastHost, TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;
@@ -140,6 +141,10 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_table_virtual = VirtualListState::new(8, 32.0);
     let components_raw_table_scroll = ScrollController::new(0.0);
     let components_raw_table_virtual = VirtualListState::new(8, 32.0);
+    let components_sheet_open = Signal::new(false);
+    let components_raw_sheet_open = Signal::new(false);
+    let components_sheet_scroll = ScrollController::new(0.0);
+    let components_raw_sheet_scroll = ScrollController::new(0.0);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -357,6 +362,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     table_virtual: components_table_virtual.clone(),
                     raw_table_scroll: components_raw_table_scroll.clone(),
                     raw_table_virtual: components_raw_table_virtual.clone(),
+                    sheet_open: components_sheet_open.clone(),
+                    raw_sheet_open: components_raw_sheet_open.clone(),
                 }),
             };
 
@@ -508,6 +515,82 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             let file_prompt: BoxedWidget =
                 Box::new(creamui_widgets::FilePrompt::new(&picker_file_prompt));
             let toast_host: BoxedWidget = Box::new(ToastHost::new(&components_toasts));
+            let sheet_layer: BoxedWidget = if components_sheet_open.get() {
+                let dismiss = components_sheet_open.clone();
+                let content = RawView::new(
+                    Style::default()
+                        .flex_column()
+                        .gap(theme.spacing_medium)
+                        .padding_all(theme.spacing_medium),
+                )
+                .child(Box::new(RawText::new(
+                    "Workspace details remain scrollable inside the sheet.",
+                    theme.text_primary,
+                    theme.typography.body,
+                )))
+                .child(Box::new(RawText::new(
+                    "The backdrop or Escape dismisses this modal panel.",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )));
+                let content = (0..60).fold(content, |content, index| {
+                    content.child(Box::new(RawText::new(
+                        format!("Detail item {}", index + 1),
+                        theme.text_secondary,
+                        theme.typography.body,
+                    )))
+                });
+                Box::new(
+                    Sheet::new(
+                        SheetEdge::Right,
+                        components_sheet_scroll.clone(),
+                        Box::new(content),
+                        move || dismiss.set(false),
+                    )
+                    .title("Sheet details")
+                    .extent(320.0),
+                )
+            } else if components_raw_sheet_open.get() {
+                let dismiss = components_raw_sheet_open.clone();
+                let content = RawView::new(
+                    Style::default()
+                        .flex_column()
+                        .gap(theme.spacing_medium)
+                        .padding_all(theme.spacing_medium),
+                )
+                .child(Box::new(RawText::new(
+                    "Raw bottom sheet",
+                    theme.text_primary,
+                    theme.typography.body,
+                )))
+                .child(Box::new(
+                    creamui_widgets::RawButton::new(Style::default(), move || dismiss.set(false))
+                        .child(Box::new(RawText::new(
+                            "Close raw sheet",
+                            theme.accent,
+                            theme.typography.body,
+                        ))),
+                ));
+                let dismiss = components_raw_sheet_open.clone();
+                Box::new(
+                    RawSheet::new(
+                        Style::default(),
+                        components_raw_sheet_scroll.clone(),
+                        SheetEdge::Bottom,
+                        Box::new(content),
+                        move || dismiss.set(false),
+                    )
+                    .panel_style(
+                        RawView::new(Style::default())
+                            .background(theme.surface_elevated)
+                            .style(),
+                    )
+                    .extent(180.0)
+                    .modal(false),
+                )
+            } else {
+                Box::new(RawView::new(Style::default()))
+            };
 
             Box::new(jsx! {
                 <RawView style={root_style} background={theme.surface}>
@@ -520,6 +603,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     {dialog}
                     {file_prompt}
                     {toast_host}
+                    {sheet_layer}
                 </RawView>
             })
         }),

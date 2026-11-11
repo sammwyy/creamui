@@ -53,6 +53,8 @@ pub fn ComponentsPanel(
     table_virtual: VirtualListState,
     raw_table_scroll: ScrollController,
     raw_table_virtual: VirtualListState,
+    sheet_open: Signal<bool>,
+    raw_sheet_open: Signal<bool>,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -603,6 +605,8 @@ pub fn ComponentsPanel(
     let clear_filter = data_table.clone();
     let toggle_column = data_table.clone();
     let reorder_column = data_table.clone();
+    let open_sheet = sheet_open.clone();
+    let open_raw_sheet = raw_sheet_open.clone();
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -1000,6 +1004,14 @@ pub fn ComponentsPanel(
                 )),
                 label("Raw virtual data table"),
                 Box::new(raw_data_table),
+            ]))
+            .child(card(vec![
+                label("Sheets"),
+                Box::new(
+                    RawView::new(row(theme.spacing_medium))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "Open sheet", move || open_sheet.set(true))))
+                        .child(Box::new(Button::secondary(ButtonSize::Sm, "Raw bottom", move || open_raw_sheet.set(true)))),
+                ),
             ])),
     )
 }

@@ -851,6 +851,7 @@ struct Pipeline {
     window_controls: WindowControls,
     clear_color: Color,
     focused: Cell<Option<usize>>,
+    modal_focus_return: Cell<Option<creamui_core::FocusId>>,
     /// A legacy widget tree may reveal a text field in response to a click
     /// or shortcut. Focus it after that freshly-built scene is available.
     pending_text_input_focus: Cell<bool>,
@@ -1155,11 +1156,19 @@ impl Pipeline {
                     renderer.paint(recorder, self.focused.get(), self.caret_visible.get())
                 {
                     let previous_index = self.focused.get();
-                    let entering_modal = scene
-                        .as_ref()
-                        .is_none_or(|previous| previous.modal_focus().is_none());
+                    let previous_modal = scene.as_ref().is_some_and(|previous| previous.is_modal());
+                    let entering_modal = !previous_modal && next.is_modal();
+                    let leaving_modal = previous_modal && !next.is_modal();
+                    if entering_modal {
+                        self.modal_focus_return.set(previous_focus);
+                    }
+                    let restore = leaving_modal
+                        .then(|| self.modal_focus_return.replace(None))
+                        .flatten();
                     let focused = if self.pending_text_input_focus.replace(false) {
                         next.first_text_input()
+                    } else if let Some(index) = restore.and_then(|id| next.focus_index(id)) {
+                        Some(index)
                     } else if scene.is_some() {
                         previous_focus.and_then(|id| next.focus_index(id))
                     } else {
@@ -3032,6 +3041,13 @@ impl WindowState {
             self.pipeline.invalidate_paint();
             return;
         }
+        if key.key == Key::Escape {
+            if let Some(dismiss) = self.scene(|scene| scene.modal_dismiss().cloned()) {
+                dismiss();
+                self.pipeline.invalidate_layout();
+                return;
+            }
+        }
         let Some(index) = self.pipeline.focused.get() else {
             return;
         };
@@ -4822,6 +4838,7 @@ fn build_window_spec(
         window_controls,
         clear_color,
         focused: Cell::new(options.focus_first.then_some(0)),
+        modal_focus_return: Cell::new(None),
         pending_text_input_focus: Cell::new(false),
         caret_visible: Cell::new(true),
         pending_root: RefCell::new(None),

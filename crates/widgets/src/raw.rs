@@ -110,6 +110,7 @@ mod pickers;
 mod rating;
 mod resizable;
 mod scroll;
+mod sheet;
 mod spinner;
 mod split;
 mod text_input;
@@ -141,6 +142,7 @@ pub use pickers::*;
 pub use rating::*;
 pub use resizable::*;
 pub use scroll::*;
+pub use sheet::*;
 pub use spinner::*;
 pub use split::*;
 pub use text_input::*;
@@ -195,6 +197,7 @@ impl_direct_styled!(
     RawResizablePanels,
     RawScrollView,
     RawScrollbar,
+    RawSheet,
     RawSidebar,
     RawSkeleton,
     RawSlider,

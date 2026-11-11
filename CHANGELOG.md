@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add virtualized `RawDiff`/`Diff` with unified/side-by-side views,
+  line selection, numbered gutters, and conflict highlighting.
 - Add `RawPlot`/`Chart` with clipped line, area, and bar series,
   explicit scales, hit testing, and themed axes and legend.
 - Add `RawQuestionnaire`/`Questionnaire` with required-answer validation,

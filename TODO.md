@@ -88,7 +88,6 @@ one can be extended. Variants are design suggestions, not promised features.
 
 | Name | Purpose | Raw plan | Themed plan and variants |
 |---|---|---|---|
-| `Diff` | Review supplied patch hunks without editing source. | `RawDiff` virtualizes lines/hunks with gutter, selection, and conflict markers. | `Diff` themes insert/delete/neutral lines; unified/side-by-side. |
 | `CodeEditor` | Edit source with line numbers, highlighting, and large-file navigation. | `RawCodeEditor` builds on text editing with revisioned document, gutter, IME, and undo. | `CodeEditor` themes tokens/selection; read-only/editable and wrap/no-wrap. |
 | `RichTextView` | Render application-provided Markdown or rich document nodes. | `RawRichTextView` lays out text runs, links, images, and selections safely. | `RichTextView` themes headings/links/code; Markdown as an optional parser. |
 | `MessageScroller` | Follow the tail of a long conversation and preserve position on prepend. | Extend `RawVirtualList` with anchored scrolling, unread marker, and jump-to-latest. | `MessageScroller` themes jump/unread affordances; follow/pause states. |

@@ -2,17 +2,18 @@ use crate::prelude::*;
 use creamui_core::{Styled, Widget};
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    Chart, ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList,
-    DropdownButton, EmptyState, Field, Form, GridController, GridLayout, InputGroup, Kbd,
-    NumberInput, OtpColors, OtpController, OtpInput, Pagination, PlotController, PlotKind,
-    PlotScale, PlotSeries, Questionnaire, QuestionnaireController, Rating, RawAlert, RawAttachment,
-    RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList,
-    RawDropdownButton, RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd,
-    RawNumberInput, RawOtpInput, RawPlot, RawQuestionnaire, RawRating, RawResizablePanels,
-    RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip,
-    ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag,
-    ToastController, ToastEntry, ToastStatus, ToggleButton, Toolbar, ToolbarCommand,
-    ToolbarController, Tooltip, TooltipController, TooltipPosition, VirtualListState,
+    Chart, ChatMessage, Collapsible, DataTable, DataTableController, DescriptionList, Diff,
+    DiffColors, DiffController, DiffHunk, DiffKind, DiffLine, DropdownButton, EmptyState, Field,
+    Form, GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors, OtpController,
+    OtpInput, Pagination, PlotController, PlotKind, PlotScale, PlotSeries, Questionnaire,
+    QuestionnaireController, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel,
+    RawChatMessage, RawCollapsible, RawDataTable, RawDescriptionList, RawDiff, RawDropdownButton,
+    RawEmptyState, RawField, RawGridLayout, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
+    RawPlot, RawQuestionnaire, RawRating, RawResizablePanels, RawSkeleton, RawStatusBar,
+    RawStepper, RawTag, RawTextInput, RawToast, RawToolbar, RawTooltip, ResizablePanels, Skeleton,
+    SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag, ToastController, ToastEntry,
+    ToastStatus, ToggleButton, Toolbar, ToolbarCommand, ToolbarController, Tooltip,
+    TooltipController, TooltipPosition, VirtualListState,
 };
 
 #[component]
@@ -63,6 +64,12 @@ pub fn ComponentsPanel(
     questionnaire: QuestionnaireController,
     chart: PlotController,
     raw_plot: PlotController,
+    diff: DiffController,
+    diff_state: VirtualListState,
+    diff_scroll: ScrollController,
+    raw_diff: DiffController,
+    raw_diff_state: VirtualListState,
+    raw_diff_scroll: ScrollController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -809,6 +816,78 @@ pub fn ComponentsPanel(
         )],
     )
     .scales(PlotScale::new(0.0, 3.0), PlotScale::new(0.0, 10.0));
+    let diff_hunks = vec![
+        DiffHunk::new("@@ -1,5 +1,5 @@")
+            .line(DiffLine::new(
+                DiffKind::Context,
+                Some(1),
+                Some(1),
+                "fn render() {",
+            ))
+            .line(DiffLine::new(
+                DiffKind::Deletion,
+                Some(2),
+                None,
+                "  let x = 1;",
+            ))
+            .line(DiffLine::new(
+                DiffKind::Addition,
+                None,
+                Some(2),
+                "  let x = 2;",
+            ))
+            .line(DiffLine::new(
+                DiffKind::Context,
+                Some(3),
+                Some(3),
+                "  apply(x);",
+            ))
+            .line(DiffLine::new(
+                DiffKind::Conflict,
+                Some(4),
+                Some(4),
+                "<<<< ours",
+            ))
+            .line(DiffLine::new(DiffKind::Context, Some(5), Some(5), "}")),
+        DiffHunk::new("@@ -8,1 +8,2 @@")
+            .line(DiffLine::new(
+                DiffKind::Addition,
+                None,
+                Some(8),
+                "let ready = true;",
+            ))
+            .line(DiffLine::new(
+                DiffKind::Addition,
+                None,
+                Some(9),
+                "let done = true;",
+            )),
+    ];
+    let themed_diff = Diff::new(&diff, diff_state, diff_scroll, 138.0, &diff_hunks);
+    let raw_diff_view = RawDiff::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(90.0),
+            },
+            ..Default::default()
+        },
+        &raw_diff,
+        raw_diff_state,
+        raw_diff_scroll,
+        90.0,
+        &diff_hunks,
+    )
+    .colors(DiffColors {
+        context: theme.surface,
+        addition: theme.success.mix(theme.surface, 0.87),
+        deletion: theme.danger.mix(theme.surface, 0.87),
+        conflict: theme.warning.mix(theme.surface, 0.84),
+        selected: theme.accent.mix(theme.surface, 0.65),
+        header: theme.surface_elevated,
+        text: theme.text_primary,
+        gutter: theme.text_secondary,
+    });
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -1242,6 +1321,17 @@ pub fn ComponentsPanel(
                 Box::new(chart_view),
                 label("Raw plot"),
                 Box::new(raw_plot_view),
+            ]))
+            .child(card(vec![
+                label("Diff"),
+                Box::new(themed_diff),
+                Box::new(RawText::new(
+                    format!("Selected line: {:?}", diff.selected()),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw virtual diff"),
+                Box::new(raw_diff_view),
             ])),
     )
 }

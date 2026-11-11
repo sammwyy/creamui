@@ -47,6 +47,7 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Workspace actions | `Toolbar` | Grouped keyboard-navigable commands with responsive overflow. | `RawToolbar`, `ToolbarController` |
 | Guided forms | `Questionnaire` | Validated multi-step questions with branching and back navigation. | `RawQuestionnaire`, `QuestionnaireController` |
 | Charts | `Chart` | Clipped line, area, and bar series with axes, legend, and point hit testing. | `RawPlot`, `PlotController` |
+| Code review | `Diff` | Virtualized patch hunks with unified/split views, line selection, and conflict markers. | `RawDiff`, `DiffController` |
 | Content | `Tag`, `Attachment`, `ChatMessage` | Selectable labels, attachment progress/errors, and sender/body/action layouts. | `RawTag`, `RawAttachment`, `RawChatMessage` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |

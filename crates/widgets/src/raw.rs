@@ -99,6 +99,7 @@ mod context_menu;
 mod controls;
 mod data_table;
 mod dataview;
+mod diff;
 mod disclosure;
 mod foundation;
 mod grid_layout;
@@ -134,6 +135,7 @@ pub use context_menu::*;
 pub use controls::*;
 pub use data_table::*;
 pub use dataview::*;
+pub use diff::*;
 pub use disclosure::*;
 pub use foundation::*;
 pub use grid_layout::*;
@@ -183,6 +185,7 @@ impl_direct_styled!(
     RawColorPicker,
     RawDateTimePicker,
     RawDescriptionList,
+    RawDiff,
     RawDropdownButton,
     RawEmptyState,
     RawField,

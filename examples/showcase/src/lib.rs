@@ -26,9 +26,9 @@ mod prelude;
 
 use creamui_core::{Styled, Widget};
 use creamui_widgets::{
-    DataTableController, GridCell, GridController, OtpController, PlotController, QuestionStep,
-    QuestionnaireController, RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost,
-    ToolbarController, TooltipController, VirtualListState,
+    DataTableController, DiffController, GridCell, GridController, OtpController, PlotController,
+    QuestionStep, QuestionnaireController, RawSheet, Sheet, SheetEdge, SplitState, ToastController,
+    ToastHost, ToolbarController, TooltipController, VirtualListState,
 };
 use panels::*;
 use prelude::*;
@@ -164,6 +164,12 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     ]);
     let components_chart = PlotController::new();
     let components_raw_plot = PlotController::new();
+    let components_diff = DiffController::new();
+    let components_diff_state = VirtualListState::new(8, 26.0);
+    let components_diff_scroll = ScrollController::new(0.0);
+    let components_raw_diff = DiffController::new();
+    let components_raw_diff_state = VirtualListState::new(8, 26.0);
+    let components_raw_diff_scroll = ScrollController::new(0.0);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -389,6 +395,12 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     questionnaire: components_questionnaire.clone(),
                     chart: components_chart.clone(),
                     raw_plot: components_raw_plot.clone(),
+                    diff: components_diff.clone(),
+                    diff_state: components_diff_state.clone(),
+                    diff_scroll: components_diff_scroll.clone(),
+                    raw_diff: components_raw_diff.clone(),
+                    raw_diff_state: components_raw_diff_state.clone(),
+                    raw_diff_scroll: components_raw_diff_scroll.clone(),
                 }),
             };
 

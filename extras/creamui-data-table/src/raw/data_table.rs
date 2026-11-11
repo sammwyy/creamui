@@ -1,6 +1,6 @@
 use super::*;
-use crate::{RawVirtualTable, ScrollController, TableColumn, VirtualListState};
 use creamui_reactive::Signal;
+use creamui_widgets::{RawVirtualTable, ScrollController, TableColumn, VirtualListState};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
@@ -220,7 +220,7 @@ impl RawDataTable {
         Self { inner }
     }
 
-    pub fn customize(mut self, customize: impl FnOnce(&mut crate::RawTable)) -> Self {
+    pub fn customize(mut self, customize: impl FnOnce(&mut creamui_widgets::RawTable)) -> Self {
         self.inner = self.inner.customize(customize);
         self
     }

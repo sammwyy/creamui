@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move advanced sortable/filterable virtual tables into the opt-in
+  `creamui-data-table` crate; keep basic tables in `creamui-widgets`.
 - Move guided branching forms to the opt-in `creamui-questionnaire` crate.
 - Move multi-pane resizable layouts to the opt-in
   `creamui-resizable-panels` crate; keep `RawSplitView` as a shared primitive.

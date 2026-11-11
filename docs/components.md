@@ -36,7 +36,6 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Navigation | `Sidebar`, `SidebarItem`, `SidebarSeparator`, `SidebarNode` | Sidebar navigation and its items, separators, and tree model. | `RawSidebar`, `RawView`; no dedicated raw item/node |
 | Scrolling | `ScrollView`, `VirtualList` | Scrollable content and visible-range list rendering. | `RawScrollView`, `RawScrollbar`, `RawVirtualList` |
 | Data | `ListView`, `Table`, `VirtualTable` | Lists, tabular data, and virtualized rows. | `RawListView`, `RawTable`, `RawVirtualTable` |
-| Data operations | `DataTable` | Virtualized filtering, sorting, multi-selection, and column management. | `RawDataTable`, `DataTableController` |
 | Data | `DescriptionList` | Read-only key/value details with aligned or stacked labels. | `RawDescriptionList` |
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
 | Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
@@ -66,6 +65,7 @@ Specialized components live in independent crates. Applications that only use `c
 | `creamui-grid-layout` | `GridLayout` | `RawGridLayout`, `GridController`, `GridCell` |
 | `creamui-resizable-panels` | `ResizablePanels` | `RawResizablePanels` (uses `SplitState` from `creamui-widgets`) |
 | `creamui-questionnaire` | `Questionnaire` | `RawQuestionnaire`, `QuestionnaireController`, `QuestionStep` |
+| `creamui-data-table` | `DataTable` | `RawDataTable`, `DataTableController` (uses `TableColumn` from `creamui-widgets`) |
 
 Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
 

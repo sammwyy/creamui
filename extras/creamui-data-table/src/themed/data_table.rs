@@ -1,11 +1,17 @@
 use super::*;
 use crate::raw::{DataTableController, RawDataTable};
-use crate::{ScrollController, TableColumn, VirtualListState};
+use creamui_widgets::{ScrollController, TableColumn, VirtualListState};
 
 pub struct DataTable {
     inner: RawDataTable,
 }
-impl_styled_inner!(DataTable);
+
+impl Styled for DataTable {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        let merged = self.inner.style().merged_over(style);
+        self.inner.set_style(merged);
+    }
+}
 
 impl DataTable {
     pub fn new(

@@ -2,14 +2,14 @@ use crate::prelude::*;
 use creamui_core::Styled;
 use creamui_widgets::{
     Accordion, Alert, AlertStatus, AlertVariant, Attachment, Calendar, CalendarColors, Carousel,
-    ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form, InputGroup,
-    Kbd, NumberInput, OtpColors, OtpController, OtpInput, Pagination, Rating, RawAlert,
-    RawAttachment, RawCalendar, RawCarousel, RawChatMessage, RawCollapsible, RawDescriptionList,
-    RawDropdownButton, RawEmptyState, RawField, RawInputGroup, RawKbd, RawNumberInput, RawOtpInput,
-    RawRating, RawResizablePanels, RawSkeleton, RawStatusBar, RawStepper, RawTag, RawTextInput,
-    RawToast, RawTooltip, ResizablePanels, Skeleton, SplitAxis, SplitState, StatusBar, StepState,
-    Stepper, Tag, ToastController, ToastEntry, ToastStatus, ToggleButton, Tooltip,
-    TooltipController, TooltipPosition,
+    ChatMessage, Collapsible, DescriptionList, DropdownButton, EmptyState, Field, Form,
+    GridController, GridLayout, InputGroup, Kbd, NumberInput, OtpColors, OtpController, OtpInput,
+    Pagination, Rating, RawAlert, RawAttachment, RawCalendar, RawCarousel, RawChatMessage,
+    RawCollapsible, RawDescriptionList, RawDropdownButton, RawEmptyState, RawField, RawGridLayout,
+    RawInputGroup, RawKbd, RawNumberInput, RawOtpInput, RawRating, RawResizablePanels, RawSkeleton,
+    RawStatusBar, RawStepper, RawTag, RawTextInput, RawToast, RawTooltip, ResizablePanels,
+    Skeleton, SplitAxis, SplitState, StatusBar, StepState, Stepper, Tag, ToastController,
+    ToastEntry, ToastStatus, ToggleButton, Tooltip, TooltipController, TooltipPosition,
 };
 
 #[component]
@@ -45,6 +45,8 @@ pub fn ComponentsPanel(
     raw_tooltip: TooltipController,
     panels: Vec<SplitState>,
     raw_panels: SplitState,
+    grid: GridController,
+    raw_grid: GridController,
 ) -> BoxedWidget {
     let theme = use_theme();
     let card = |children: Vec<BoxedWidget>| -> BoxedWidget {
@@ -526,6 +528,25 @@ pub fn ComponentsPanel(
     .divider(6.0, theme.accent)
     .pane(pane("Raw left"), 0.0, None)
     .pane(pane("Raw right"), 48.0, None);
+    let themed_grid = GridLayout::new(&grid, 2)
+        .row_height(70.0)
+        .item("summary", "Summary")
+        .item("activity", "Activity")
+        .item("metrics", "Metrics");
+    let raw_grid_view = RawGridLayout::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Auto,
+            },
+            ..Default::default()
+        },
+        &raw_grid,
+        2,
+    )
+    .row_height(52.0)
+    .item("left", pane("Raw left"))
+    .item("right", pane("Raw right"));
     let raw_attachment = RawAttachment::new(
         Style::default().flex_row().gap(theme.spacing_medium),
         Box::new(RawText::new(
@@ -887,6 +908,20 @@ pub fn ComponentsPanel(
                     "Collapse / restore",
                     move || collapse_raw.toggle_collapsed(),
                 )),
+            ]))
+            .child(card(vec![
+                label("Grid layout"),
+                Box::new(themed_grid),
+                Box::new(RawText::new(
+                    format!(
+                        "Positions: {}",
+                        grid.cells().iter().map(|cell| format!("{} ({}, {})", cell.id, cell.column, cell.row)).collect::<Vec<_>>().join(", ")
+                    ),
+                    theme.text_secondary,
+                    theme.typography.caption,
+                )),
+                label("Raw grid"),
+                Box::new(raw_grid_view),
             ])),
     )
 }

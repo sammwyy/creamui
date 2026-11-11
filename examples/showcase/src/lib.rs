@@ -24,7 +24,10 @@ mod nav;
 mod panels;
 mod prelude;
 
-use creamui_widgets::{OtpController, SplitState, ToastController, ToastHost, TooltipController};
+use creamui_widgets::{
+    GridCell, GridController, OtpController, SplitState, ToastController, ToastHost,
+    TooltipController,
+};
 use panels::*;
 use prelude::*;
 
@@ -123,6 +126,15 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let components_raw_tooltip = TooltipController::default();
     let components_panels = vec![SplitState::new(0.32), SplitState::new(0.55)];
     let components_raw_panels = SplitState::new(0.4);
+    let components_grid = GridController::new(vec![
+        GridCell::new("summary", 0, 0),
+        GridCell::new("activity", 1, 0),
+        GridCell::new("metrics", 0, 1).span(2, 1),
+    ]);
+    let components_raw_grid = GridController::new(vec![
+        GridCell::new("left", 0, 0),
+        GridCell::new("right", 1, 0),
+    ]);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -333,6 +345,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     raw_tooltip: components_raw_tooltip.clone(),
                     panels: components_panels.clone(),
                     raw_panels: components_raw_panels.clone(),
+                    grid: components_grid.clone(),
+                    raw_grid: components_raw_grid.clone(),
                 }),
             };
 

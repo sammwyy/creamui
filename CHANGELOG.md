@@ -4,6 +4,8 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Add controlled `RawGridLayout`/`GridLayout` dashboard cells with drag and
+  keyboard movement, spans, bounds, and collision rejection.
 - Add nested `RawResizablePanels`/`ResizablePanels` with persistent split
   handles, min/max constraints, keyboard resize and collapsible pane state.
 - Add `RawTooltip`/`Tooltip` with delayed hover, keyboard focus, viewport-aware

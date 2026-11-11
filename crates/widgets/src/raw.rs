@@ -100,6 +100,7 @@ mod controls;
 mod dataview;
 mod disclosure;
 mod foundation;
+mod grid_layout;
 mod marquee;
 mod navigation;
 mod number;
@@ -129,6 +130,7 @@ pub use controls::*;
 pub use dataview::*;
 pub use disclosure::*;
 pub use foundation::*;
+pub use grid_layout::*;
 pub use marquee::*;
 pub use navigation::*;
 pub use number::*;
@@ -176,6 +178,7 @@ impl_direct_styled!(
     RawField,
     RawFilePicker,
     RawForm,
+    RawGridLayout,
     RawInputGroup,
     RawKbd,
     RawLink,

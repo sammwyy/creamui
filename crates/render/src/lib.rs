@@ -41,6 +41,7 @@ pub use display_list::{damage, diff, Bounds, Damage, DisplayList, FrameDiff, Scr
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub use gpu::{GpuRenderer, HeadlessGpu};
 pub use raster::Rasterizer;
+pub use raw_window_handle;
 pub use recorder::SceneRecorder;
 pub use shortcuts::{Shortcut, ShortcutScope};
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]

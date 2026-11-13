@@ -52,13 +52,13 @@ swash = "0.2"
 rustc-hash = "2"
 bytemuck = { version = "1", features = ["derive"], optional = true }
 log = "0.4"
+raw-window-handle = { workspace = true }
 env_logger = { version = "0.11", default-features = false, optional = true }
 tracing = { version = "0.1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
-raw-window-handle = { workspace = true }
 
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 softbuffer = { workspace = true }

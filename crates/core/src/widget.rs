@@ -732,6 +732,10 @@ pub trait Widget {
         false
     }
 
+    fn on_modal_dismiss(&self) -> Option<Rc<dyn Fn()>> {
+        None
+    }
+
     /// Optional keyboard handler, called with each [`KeyInput`] while this
     /// widget has focus (see [`Widget::focusable`]). Default: `None`.
     fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {

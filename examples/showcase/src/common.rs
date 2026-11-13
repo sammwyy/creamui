@@ -2,26 +2,341 @@
 
 use crate::prelude::*;
 
-/// Sidebar categories in display order.
-pub const NAV_LABELS: [&str; 17] = [
-    "Appearance",
-    "Typography",
-    "Input",
-    "Pickers",
-    "Images",
-    "Button",
-    "Slider",
-    "Checkbox",
-    "Selection",
-    "Feedback",
-    "Sidebar",
-    "Tabs",
-    "Scroll",
-    "Tree",
-    "Table",
-    "Grid",
-    "Flex",
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum ShowcasePage {
+    Appearance,
+    Theming,
+    Hooks,
+    Events,
+    Typography,
+    Input,
+    Pickers,
+    Images,
+    Button,
+    Slider,
+    Checkbox,
+    Selection,
+    Feedback,
+    Sidebar,
+    Tabs,
+    Scroll,
+    Tree,
+    Table,
+    Grid,
+    Flex,
+    Disclosure,
+    States,
+    Forms,
+    Pagination,
+    Workspace,
+    Tags,
+    InputGroups,
+    Actions,
+    NumberInput,
+    Calendar,
+    Rating,
+    Carousel,
+    Verification,
+    Notifications,
+    Tooltip,
+    Panels,
+    DataTable,
+    Sheets,
+    Toolbar,
+    Chart,
+    Diff,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavGroup {
+    Features,
+    Components,
+}
+
+pub struct NavPage {
+    pub page: ShowcasePage,
+    pub label: &'static str,
+    pub symbol: Symbol,
+    pub group: NavGroup,
+}
+
+pub const NAV_PAGES: [NavPage; 41] = [
+    NavPage {
+        page: ShowcasePage::Appearance,
+        label: "Appearance",
+        symbol: Symbol::Appearance,
+        group: NavGroup::Features,
+    },
+    NavPage {
+        page: ShowcasePage::Theming,
+        label: "Theming",
+        symbol: Symbol::Display,
+        group: NavGroup::Features,
+    },
+    NavPage {
+        page: ShowcasePage::Hooks,
+        label: "Hooks & state",
+        symbol: Symbol::Controls,
+        group: NavGroup::Features,
+    },
+    NavPage {
+        page: ShowcasePage::Events,
+        label: "Events",
+        symbol: Symbol::Keyboard,
+        group: NavGroup::Features,
+    },
+    NavPage {
+        page: ShowcasePage::Typography,
+        label: "Typography",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Input,
+        label: "Input",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Pickers,
+        label: "Pickers",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Images,
+        label: "Images",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Button,
+        label: "Button",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Slider,
+        label: "Slider",
+        symbol: Symbol::Sliders,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Checkbox,
+        label: "Checkbox",
+        symbol: Symbol::Check,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Selection,
+        label: "Selection",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Feedback,
+        label: "Feedback",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Sidebar,
+        label: "Sidebar",
+        symbol: Symbol::Folder,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Tabs,
+        label: "Tabs",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Scroll,
+        label: "Scroll",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Tree,
+        label: "Tree",
+        symbol: Symbol::Folder,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Table,
+        label: "Table",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Grid,
+        label: "Grid",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Flex,
+        label: "Flex",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Disclosure,
+        label: "Disclosure",
+        symbol: Symbol::Folder,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::States,
+        label: "States & alerts",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Forms,
+        label: "Forms",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Pagination,
+        label: "Pagination",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Workspace,
+        label: "Workspace",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Tags,
+        label: "Tags & shortcuts",
+        symbol: Symbol::Keyboard,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::InputGroups,
+        label: "Input groups",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Actions,
+        label: "Actions",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::NumberInput,
+        label: "Number input",
+        symbol: Symbol::Sliders,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Calendar,
+        label: "Calendar",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Rating,
+        label: "Rating",
+        symbol: Symbol::Check,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Carousel,
+        label: "Carousel",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Verification,
+        label: "Verification",
+        symbol: Symbol::Keyboard,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Notifications,
+        label: "Notifications",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Tooltip,
+        label: "Tooltip",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Panels,
+        label: "Panels & layouts",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::DataTable,
+        label: "Data table",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Sheets,
+        label: "Sheets",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Toolbar,
+        label: "Toolbar",
+        symbol: Symbol::Controls,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Chart,
+        label: "Chart",
+        symbol: Symbol::Grid,
+        group: NavGroup::Components,
+    },
+    NavPage {
+        page: ShowcasePage::Diff,
+        label: "Diff",
+        symbol: Symbol::Display,
+        group: NavGroup::Components,
+    },
 ];
+
+impl ShowcasePage {
+    pub fn label(self) -> &'static str {
+        NAV_PAGES[self as usize].label
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_entries_match_page_indices_and_group_order() {
+        let mut labels = std::collections::HashSet::new();
+        for (index, entry) in NAV_PAGES.iter().enumerate() {
+            assert_eq!(entry.page as usize, index);
+            assert!(labels.insert(entry.label));
+            assert_eq!(
+                entry.group,
+                if index < 4 {
+                    NavGroup::Features
+                } else {
+                    NavGroup::Components
+                }
+            );
+        }
+    }
+}
 pub const ACCENTS: [(&str, Color); 5] = [
     ("Lilac", Color::rgb(181, 139, 255)),
     ("Sky", Color::rgb(118, 192, 255)),

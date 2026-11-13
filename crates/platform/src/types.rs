@@ -496,6 +496,9 @@ pub struct WindowAttributes {
     pub decorations: bool,
     pub transparent: bool,
     pub role: WindowRole,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`) that matches the
+    /// app's `.desktop` file. `None` keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowAttributes {
@@ -508,6 +511,7 @@ impl Default for WindowAttributes {
             decorations: true,
             transparent: false,
             role: WindowRole::Normal,
+            app_id: None,
         }
     }
 }

@@ -14,29 +14,64 @@ The names below are public `creamui-widgets` widgets and helpers. "No dedicated 
 | Area | Public components | What they do | Raw foundation |
 |---|---|---|---|
 | Text | `Text`, `Heading` | Body copy and display headings. | `RawText` |
+| Shortcuts | `Kbd` | Platform-aware modifier sequences in themed keycaps. | `RawKbd` |
 | Typography | `Quote`, `Pre`, `Link` | Quotation, preformatted text, and clickable links. | `RawQuote`, `RawPre`, `RawLink` |
 | Visuals | `Icon`, `Surface`, `Avatar`, `Card` | Symbols/images, themed surfaces, avatar fallback, and content cards. | `RawView`, `RawText`; no dedicated raw avatar or card |
-| Actions | `Button` | Action with size, variant, and loading/success/disabled states. | `RawButton` |
-| Text entry | `TextInput`, `TextArea` | Controlled single- and multiline editing. | `RawTextInput`, `RawTextArea` |
+| Actions | `Button`, `ToggleButton`, `DropdownButton` | Sized actions, controlled pressed state, and split menu triggers. | `RawButton`, `RawDropdownButton` |
+| Disclosure | `Accordion`, `Collapsible` | Controlled expandable sections with keyboard-accessible triggers. | `RawAccordion`, `RawCollapsible` |
+| Forms | `Field`, `Form` | Labeled inputs with hints/errors and controlled submission. | `RawField`, `RawForm` |
+| Text entry | `TextInput`, `TextArea`, `InputGroup` | Controlled editing and composable prefix/suffix addons. | `RawTextInput`, `RawTextArea`, `RawInputGroup` |
 | Toggles | `Checkbox`, `Switch` | Checked-state controls. | `RawCheckbox`, `RawSwitch` |
-| Numeric and activity | `Slider`, `Spinner` | Range selection and activity indicator. | `RawSlider`, `RawSpinner` |
+| Numeric and activity | `Slider`, `Spinner`, `NumberInput` | Range selection, activity indicator, and bounded numeric editing. | `RawSlider`, `RawSpinner`, `RawNumberInput` |
 | Choice | `Select`, `ComboBox` | Option popup; searchable mode (`ComboBox` alias). | `RawView`, `RawTextInput`, `RawScrollView`; no dedicated raw select |
 | Choice | `Radio`, `RadioGroup`, `SegmentedControl`, `ListBox` | Single-choice buttons, groups, segments, and option list. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Date and time | `DateTimePicker`, `DateInput`, `TimeInput` | Date/time editing and input wrappers. | `RawDateTimePicker` |
+| Calendar | `Calendar` | Standalone month grid with controlled selection and disabled dates. | `RawCalendar` |
+| Rating | `Rating` | Keyboard and pointer rating with optional half steps or read-only display. | `RawRating` |
+| Carousel | `Carousel` | Finite slides with swipe, keyboard navigation, and indicators. | `RawCarousel` |
 | Color and files | `ColorPicker`, `FilePicker`, `FilePrompt` | Color selection, native/browser file selection, and path prompt fallback. | `RawColorPicker`, `RawFilePicker`; no dedicated raw prompt |
 | Tabs | `Tabs`, `Tab` | Tab strip and individual selectable tab. | `RawTabs`, `RawTab` |
+| Navigation | `Pagination` | Controlled page links, gaps, and previous/next controls. | `RawPagination` |
 | Navigation | `Sidebar`, `SidebarItem`, `SidebarSeparator`, `SidebarNode` | Sidebar navigation and its items, separators, and tree model. | `RawSidebar`, `RawView`; no dedicated raw item/node |
 | Scrolling | `ScrollView`, `VirtualList` | Scrollable content and visible-range list rendering. | `RawScrollView`, `RawScrollbar`, `RawVirtualList` |
 | Data | `ListView`, `Table`, `VirtualTable` | Lists, tabular data, and virtualized rows. | `RawListView`, `RawTable`, `RawVirtualTable` |
+| Data | `DescriptionList` | Read-only key/value details with aligned or stacked labels. | `RawDescriptionList` |
 | Hierarchy | `TreeView`, `VirtualTreeView` | Expandable trees and virtualized tree rows. | `RawVirtualList`, `RawView`; no dedicated raw tree |
-| Feedback | `ProgressBar`, `ProgressRing`, `Badge`, `TypingIndicator` | Completion, counts/status, and animated typing state. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
+| Feedback | `ProgressBar`, `ProgressRing`, `Badge` | Completion and counts/status. | `RawView`, `RawCanvas`; no dedicated raw counterparts |
+| Feedback | `Alert`, `Skeleton`, `EmptyState` | Inline status, loading placeholder, and empty-content layout. | `RawAlert`, `RawSkeleton`, `RawEmptyState` |
+| Notifications | `Toast`, `ToastHost` | Queued, dismissible notifications with optional actions and timeouts. | `RawToast`, `RawToastHost`, `ToastController` |
+| Hints | `Tooltip` | Hover- or focus-triggered hints with delayed, viewport-aware placement. | `RawTooltip`, `TooltipController` |
+| Overlays | `Sheet` | Scrollable edge panels with optional modal backdrop and focus return. | `RawSheet` |
+| Workspace actions | `Toolbar` | Grouped keyboard-navigable commands with responsive overflow. | `RawToolbar`, `ToolbarController` |
+| Content | `Tag` | Selectable, removable labels. | `RawTag` |
 | Overlays | `Overlay`, `Popover`, `AlertDialog` | Layered surfaces, anchored content, and confirmation. | `RawView`; no dedicated raw counterparts |
 | Dialogs | `Dialog`, `DialogHeader`, `DialogContent`, `DialogFooter`, `DialogMessage`, `ModalActions` | Modal shell, composable sections, message, and action layout. | `RawView`, `RawButton`; no dedicated raw counterparts |
 | Menus | `MenuBar`, `MenuPopup`, `MenuItem`, `ContextMenu` | Menus, popup items, and right-click actions. | `RawContextMenu` for context menus; `RawView` for other menus |
 | Commands | `CommandPalette` | Searchable commands with shortcuts and grouped results. | `RawTextInput`, `RawScrollView`, `RawView`; no dedicated raw palette |
 | Window | `AppTitlebar`, `CaptionButtonView` | Custom titlebar and window caption actions. | `RawView`, `RawButton`; no dedicated raw counterparts |
+| Workspace | `StatusBar`, `Stepper` | Slotted status content and controlled workflow stages. | `RawStatusBar`, `RawStepper` |
 
 The raw-only building blocks `RawCanvas`, `RawMarquee`, `RawSplitView`, `RawTranslate`, and `RawView` cover custom painting, moving text, resizable splits, translations, and containers. `Block`, `Flex`, and `Grid` live in `creamui_widgets::layout`; `Image` is exported by the separate `creamui-image` crate. `RawScrollbar` is a lower-level part of scrolling. Controllers and models such as `TabController`, `TextController`, `TreeController`, `SplitState`, and `VirtualListState` are support APIs rather than additional visual components.
+
+## Optional components
+
+Specialized components live in independent crates. Applications that only use `creamui-widgets` do not compile their implementations.
+
+| Crate | Themed API | Raw API |
+|---|---|---|
+| `creamui-chart` | `Chart` | `RawPlot`, `PlotController`, `PlotSeries` |
+| `creamui-diff-viewer` | `Diff` | `RawDiff`, `DiffController`, `DiffHunk` |
+| `creamui-grid-layout` | `GridLayout` | `RawGridLayout`, `GridController`, `GridCell` |
+| `creamui-resizable-panels` | `ResizablePanels` | `RawResizablePanels` (uses `SplitState` from `creamui-widgets`) |
+| `creamui-data-table` | `DataTable` | `RawDataTable`, `DataTableController` (uses `TableColumn` from `creamui-widgets`) |
+| `creamui-otp-input` | `OtpInput` | `RawOtpInput`, `OtpController`, `OtpColors` |
+
+Each crate exposes its raw and themed widgets through `raw` and `themed` modules, respectively, and re-exports the public types at its root. Add only the crates an application needs:
+
+```toml
+[dependencies]
+creamui-diff-viewer = "0.3"
+```
 
 ## Style support
 

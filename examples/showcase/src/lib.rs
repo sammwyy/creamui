@@ -1,8 +1,7 @@
-//! A component showcase: a sidebar switches between a live theme editor
-//! ("Appearance") and a gallery view for every themed control CreamUI ships
-//! with — inputs, selection controls, feedback, navigation, and overlays.
+//! A showcase with feature demos above a gallery of raw and themed
+//! components — inputs, selection controls, feedback, navigation, and overlays.
 //!
-//! Each sidebar section lives in its own file under `panels/`; `common.rs`
+//! Related sidebar pages live under `panels/`; `common.rs`
 //! holds the shared design tokens/layout helpers, `nav.rs` the sidebar rail
 //! itself, and `prelude.rs` the one import every one of those files starts
 //! with.
@@ -24,6 +23,16 @@ mod nav;
 mod panels;
 mod prelude;
 
+use creamui_chart::PlotController;
+use creamui_core::{Styled, Widget};
+use creamui_data_table::DataTableController;
+use creamui_diff_viewer::DiffController;
+use creamui_grid_layout::{GridCell, GridController};
+use creamui_otp_input::OtpController;
+use creamui_widgets::{
+    RawSheet, Sheet, SheetEdge, SplitState, ToastController, ToastHost, ToolbarController,
+    TooltipController, VirtualListState,
+};
 use panels::*;
 use prelude::*;
 
@@ -40,7 +49,13 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         .expect("bundled WebP should decode");
     let theme_mode = Signal::new(ThemeMode::Dark);
     let accent_index = Signal::new(0usize);
-    let active_section = Signal::new(0usize);
+    let active_section = Signal::new(ShowcasePage::Appearance);
+    let hooks_counter = Signal::new(0i32);
+    let hooks_enabled = Signal::new(true);
+    let theme_raw_clicks = Signal::new(0usize);
+    let event_clicks = Signal::new(0usize);
+    let event_last = Signal::new("No events yet".to_owned());
+    let event_input = TextController::default();
     let sidebar_open = Signal::new(false);
 
     let plain = TextController::default();
@@ -91,6 +106,66 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
     let tree_demo = TreeController::default();
     let table_scroll_demo = ScrollController::default();
     let table_selected = Signal::new(0usize);
+    let components_expanded = Signal::new(false);
+    let components_accordion = Signal::new(vec![true, false]);
+    let components_page = Signal::new(6usize);
+    let components_alert = Signal::new(true);
+    let components_submissions = Signal::new(0usize);
+    let components_input = TextController::default();
+    let components_step = Signal::new(1usize);
+    let components_tag = Signal::new(false);
+    let components_tag_visible = Signal::new(true);
+    let components_group_input = TextController::default();
+    let components_raw_group = Signal::new(String::new());
+    let components_pressed = Signal::new(false);
+    let components_menu_open = Signal::new(false);
+    let components_action_count = Signal::new(0usize);
+    let components_number = Signal::new(2.5f64);
+    let components_number_text = TextController::new("2.5");
+    let components_raw_number_text = TextController::new("3");
+    let components_raw_number = Signal::new(3.0f64);
+    let components_month = Signal::new(DateTime::new(2026, 3, 1, 0, 0));
+    let components_date = Signal::new(Some(DateTime::new(2026, 3, 15, 0, 0)));
+    let components_rating = Signal::new(3.5f32);
+    let components_carousel = Signal::new(0usize);
+    let components_otp = OtpController::new(6, "12");
+    let components_raw_otp = OtpController::new(4, "");
+    let components_otp_updates = Signal::new(0usize);
+    let components_toasts = ToastController::new();
+    let components_raw_toast_visible = Signal::new(true);
+    let components_tooltip = TooltipController::default();
+    let components_raw_tooltip = TooltipController::default();
+    let components_panels = vec![SplitState::new(0.32), SplitState::new(0.55)];
+    let components_raw_panels = SplitState::new(0.4);
+    let components_grid = GridController::new(vec![
+        GridCell::new("summary", 0, 0),
+        GridCell::new("activity", 1, 0),
+        GridCell::new("metrics", 0, 1).span(2, 1),
+    ]);
+    let components_raw_grid = GridController::new(vec![
+        GridCell::new("left", 0, 0),
+        GridCell::new("right", 1, 0),
+    ]);
+    let components_data_table = DataTableController::new(3);
+    let components_table_scroll = ScrollController::new(0.0);
+    let components_table_virtual = VirtualListState::new(8, 32.0);
+    let components_raw_table_scroll = ScrollController::new(0.0);
+    let components_raw_table_virtual = VirtualListState::new(8, 32.0);
+    let components_sheet_open = Signal::new(false);
+    let components_raw_sheet_open = Signal::new(false);
+    let components_sheet_scroll = ScrollController::new(0.0);
+    let components_raw_sheet_scroll = ScrollController::new(0.0);
+    let components_toolbar = ToolbarController::new();
+    let components_raw_toolbar = ToolbarController::new();
+    let components_toolbar_actions = Signal::new(0usize);
+    let components_chart = PlotController::new();
+    let components_raw_plot = PlotController::new();
+    let components_diff = DiffController::new();
+    let components_diff_state = VirtualListState::new(8, 26.0);
+    let components_diff_scroll = ScrollController::new(0.0);
+    let components_raw_diff = DiffController::new();
+    let components_raw_diff_state = VirtualListState::new(8, 26.0);
+    let components_raw_diff_scroll = ScrollController::new(0.0);
 
     // Kept alive for the window's whole lifetime (`launch` doesn't return
     // until `run` does) so the effect it holds keeps reacting; dropping an
@@ -120,6 +195,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
         }),
         Box::new(move |viewport: Size| -> BoxedWidget {
             creamui_reactive::provide_context(picker_file_prompt.clone());
+            components_tooltip.set_viewport(viewport);
+            components_raw_tooltip.set_viewport(viewport);
             // Browser event loops return from `run`, so the build closure owns
             // the theme effect for the lifetime of the window.
             let _theme_sync = &theme_sync;
@@ -195,78 +272,166 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             // active branch's signals, so a hidden editor or progress demo
             // cannot invalidate this window or make us lay it out again.
             let panel = match active_section.get() {
-                0 => AppearancePanel(AppearancePanelProps {
+                ShowcasePage::Appearance => AppearancePanel(AppearancePanelProps {
                     mode: theme_mode.clone(),
                     accent_index: accent_index.clone(),
                 }),
-                1 => TypographyPanel(TypographyPanelProps {
+                ShowcasePage::Theming => ThemingPanel(ThemingPanelProps {
+                    mode: theme_mode.clone(),
+                    accent_index: accent_index.clone(),
+                    raw_clicks: theme_raw_clicks.clone(),
+                }),
+                ShowcasePage::Hooks => HooksPanel(HooksPanelProps {
+                    counter: hooks_counter.clone(),
+                    enabled: hooks_enabled.clone(),
+                }),
+                ShowcasePage::Events => EventsPanel(EventsPanelProps {
+                    clicks: event_clicks.clone(),
+                    last_event: event_last.clone(),
+                    input: event_input.clone(),
+                }),
+                ShowcasePage::Typography => TypographyPanel(TypographyPanelProps {
                     link_clicks: typography_link_clicks.clone(),
                 }),
-                2 => InputPanel(InputPanelProps {
+                ShowcasePage::Input => InputPanel(InputPanelProps {
                     plain: plain.clone(),
                     with_placeholder: with_placeholder.clone(),
                     notes: notes.clone(),
                     notes_wrapped: notes_wrapped.clone(),
                 }),
-                3 => PickersPanel(PickersPanelProps {
+                ShowcasePage::Pickers => PickersPanel(PickersPanelProps {
                     date_time: picker_date_time.clone(),
                     color: picker_color.clone(),
                     color_picker: picker_color_popup.clone(),
                     file: picker_file.clone(),
                 }),
-                4 => ImagesPanel(ImagesPanelProps {
+                ShowcasePage::Images => ImagesPanel(ImagesPanelProps {
                     png: image_png.clone(),
                     jpeg: image_jpeg.clone(),
                     webp: image_webp.clone(),
                 }),
-                5 => ButtonPanel(ButtonPanelProps {
+                ShowcasePage::Button => ButtonPanel(ButtonPanelProps {
                     clicks: clicks.clone(),
                 }),
-                6 => SliderPanel(SliderPanelProps {
+                ShowcasePage::Slider => SliderPanel(SliderPanelProps {
                     volume: volume.clone(),
                     brightness: brightness.clone(),
                     zoom: zoom.clone(),
                 }),
-                7 => CheckboxPanel(CheckboxPanelProps {
+                ShowcasePage::Checkbox => CheckboxPanel(CheckboxPanelProps {
                     notifications: notifications.clone(),
                     auto_save: auto_save.clone(),
                     beta_features: beta_features.clone(),
                 }),
-                8 => SelectionPanel(SelectionPanelProps {
+                ShowcasePage::Selection => SelectionPanel(SelectionPanelProps {
                     select: select.clone(),
                     radio: radio.clone(),
                     segment: segment.clone(),
                     list_scroll: list_scroll_demo.clone(),
                     list_selected: list_selected.clone(),
                 }),
-                9 => FeedbackPanel(FeedbackPanelProps {
+                ShowcasePage::Feedback => FeedbackPanel(FeedbackPanelProps {
                     progress: progress.clone(),
                     show_popover: show_popover.clone(),
                     show_alert: show_alert.clone(),
                 }),
-                10 => SidebarPanel(SidebarPanelProps {
+                ShowcasePage::Sidebar => SidebarPanel(SidebarPanelProps {
                     active: sidebar_demo_active.clone(),
                 }),
-                11 => TabsPanel(TabsPanelProps {
+                ShowcasePage::Tabs => TabsPanel(TabsPanelProps {
                     filled: tabs_filled.clone(),
                     pill: tabs_pill.clone(),
                     indicator: tabs_indicator.clone(),
                     content: tabs_content.clone(),
                 }),
-                12 => ScrollPanel(ScrollPanelProps {
+                ShowcasePage::Scroll => ScrollPanel(ScrollPanelProps {
                     themed_scroll: themed_scroll_demo.clone(),
                     custom_scroll: custom_scroll_demo.clone(),
                 }),
-                13 => TreePanel(TreePanelProps {
+                ShowcasePage::Tree => TreePanel(TreePanelProps {
                     tree_scroll: tree_scroll_demo.clone(),
                     tree: tree_demo.clone(),
                 }),
-                14 => TablePanel(TablePanelProps {
+                ShowcasePage::Table => TablePanel(TablePanelProps {
                     table_scroll: table_scroll_demo.clone(),
                     table_selected: table_selected.clone(),
                 }),
-                15 => GridPanel(),
-                _ => FlexPanel(),
+                ShowcasePage::Grid => GridPanel(),
+                ShowcasePage::Flex => FlexPanel(),
+                ShowcasePage::Disclosure
+                | ShowcasePage::States
+                | ShowcasePage::Forms
+                | ShowcasePage::Pagination
+                | ShowcasePage::Workspace
+                | ShowcasePage::Tags
+                | ShowcasePage::InputGroups
+                | ShowcasePage::Actions
+                | ShowcasePage::NumberInput
+                | ShowcasePage::Calendar
+                | ShowcasePage::Rating
+                | ShowcasePage::Carousel
+                | ShowcasePage::Verification
+                | ShowcasePage::Notifications
+                | ShowcasePage::Tooltip
+                | ShowcasePage::Panels
+                | ShowcasePage::DataTable
+                | ShowcasePage::Sheets
+                | ShowcasePage::Toolbar
+                | ShowcasePage::Chart
+                | ShowcasePage::Diff => ComponentsPanel(ComponentsPanelProps {
+                    section: active_section.get(),
+                    expanded: components_expanded.clone(),
+                    accordion: components_accordion.clone(),
+                    page: components_page.clone(),
+                    visible: components_alert.clone(),
+                    submissions: components_submissions.clone(),
+                    input: components_input.clone(),
+                    step: components_step.clone(),
+                    tag: components_tag.clone(),
+                    tag_visible: components_tag_visible.clone(),
+                    group_input: components_group_input.clone(),
+                    raw_group: components_raw_group.clone(),
+                    pressed: components_pressed.clone(),
+                    menu_open: components_menu_open.clone(),
+                    action_count: components_action_count.clone(),
+                    number: components_number.clone(),
+                    number_text: components_number_text.clone(),
+                    raw_number: components_raw_number.clone(),
+                    raw_number_text: components_raw_number_text.clone(),
+                    month: components_month.clone(),
+                    date: components_date.clone(),
+                    rating: components_rating.clone(),
+                    carousel: components_carousel.clone(),
+                    otp: components_otp.clone(),
+                    raw_otp: components_raw_otp.clone(),
+                    otp_updates: components_otp_updates.clone(),
+                    toasts: components_toasts.clone(),
+                    raw_toast_visible: components_raw_toast_visible.clone(),
+                    tooltip: components_tooltip.clone(),
+                    raw_tooltip: components_raw_tooltip.clone(),
+                    panels: components_panels.clone(),
+                    raw_panels: components_raw_panels.clone(),
+                    grid: components_grid.clone(),
+                    raw_grid: components_raw_grid.clone(),
+                    data_table: components_data_table.clone(),
+                    table_scroll: components_table_scroll.clone(),
+                    table_virtual: components_table_virtual.clone(),
+                    raw_table_scroll: components_raw_table_scroll.clone(),
+                    raw_table_virtual: components_raw_table_virtual.clone(),
+                    sheet_open: components_sheet_open.clone(),
+                    raw_sheet_open: components_raw_sheet_open.clone(),
+                    toolbar: components_toolbar.clone(),
+                    raw_toolbar: components_raw_toolbar.clone(),
+                    toolbar_actions: components_toolbar_actions.clone(),
+                    chart: components_chart.clone(),
+                    raw_plot: components_raw_plot.clone(),
+                    diff: components_diff.clone(),
+                    diff_state: components_diff_state.clone(),
+                    diff_scroll: components_diff_scroll.clone(),
+                    raw_diff: components_raw_diff.clone(),
+                    raw_diff_state: components_raw_diff_state.clone(),
+                    raw_diff_scroll: components_raw_diff_scroll.clone(),
+                }),
             };
 
             let scroll_style = Style {
@@ -322,7 +487,7 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     },
                     ..row(10.)
                 };
-                let title_label = NAV_LABELS[active_section.get()].to_owned();
+                let title_label = active_section.get().label().to_owned();
                 let title_text_style = Style {
                     flex_grow: 1.0,
                     min_size: creamui_core::layout::Size {
@@ -416,6 +581,83 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
             };
             let file_prompt: BoxedWidget =
                 Box::new(creamui_widgets::FilePrompt::new(&picker_file_prompt));
+            let toast_host: BoxedWidget = Box::new(ToastHost::new(&components_toasts));
+            let sheet_layer: BoxedWidget = if components_sheet_open.get() {
+                let dismiss = components_sheet_open.clone();
+                let content = RawView::new(
+                    Style::default()
+                        .flex_column()
+                        .gap(theme.spacing_medium)
+                        .padding_all(theme.spacing_medium),
+                )
+                .child(Box::new(RawText::new(
+                    "Workspace details remain scrollable inside the sheet.",
+                    theme.text_primary,
+                    theme.typography.body,
+                )))
+                .child(Box::new(RawText::new(
+                    "The backdrop or Escape dismisses this modal panel.",
+                    theme.text_secondary,
+                    theme.typography.body,
+                )));
+                let content = (0..60).fold(content, |content, index| {
+                    content.child(Box::new(RawText::new(
+                        format!("Detail item {}", index + 1),
+                        theme.text_secondary,
+                        theme.typography.body,
+                    )))
+                });
+                Box::new(
+                    Sheet::new(
+                        SheetEdge::Right,
+                        components_sheet_scroll.clone(),
+                        Box::new(content),
+                        move || dismiss.set(false),
+                    )
+                    .title("Sheet details")
+                    .extent(320.0),
+                )
+            } else if components_raw_sheet_open.get() {
+                let dismiss = components_raw_sheet_open.clone();
+                let content = RawView::new(
+                    Style::default()
+                        .flex_column()
+                        .gap(theme.spacing_medium)
+                        .padding_all(theme.spacing_medium),
+                )
+                .child(Box::new(RawText::new(
+                    "Raw bottom sheet",
+                    theme.text_primary,
+                    theme.typography.body,
+                )))
+                .child(Box::new(
+                    creamui_widgets::RawButton::new(Style::default(), move || dismiss.set(false))
+                        .child(Box::new(RawText::new(
+                            "Close raw sheet",
+                            theme.accent,
+                            theme.typography.body,
+                        ))),
+                ));
+                let dismiss = components_raw_sheet_open.clone();
+                Box::new(
+                    RawSheet::new(
+                        Style::default(),
+                        components_raw_sheet_scroll.clone(),
+                        SheetEdge::Bottom,
+                        Box::new(content),
+                        move || dismiss.set(false),
+                    )
+                    .panel_style(
+                        RawView::new(Style::default())
+                            .background(theme.surface_elevated)
+                            .style(),
+                    )
+                    .extent(180.0)
+                    .modal(false),
+                )
+            } else {
+                Box::new(RawView::new(Style::default()))
+            };
 
             Box::new(jsx! {
                 <RawView style={root_style} background={theme.surface}>
@@ -427,6 +669,8 @@ fn build_showcase() -> (WindowOptions, Color, ReadyCallback, ViewBuilder) {
                     {sidebar_drawer}
                     {dialog}
                     {file_prompt}
+                    {toast_host}
+                    {sheet_layer}
                 </RawView>
             })
         }),

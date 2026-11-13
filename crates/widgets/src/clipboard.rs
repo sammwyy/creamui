@@ -176,7 +176,7 @@ fn read_text() -> Option<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn read(callback: impl FnOnce(String) + 'static) {
+pub fn read(callback: impl FnOnce(String) + 'static) {
     if let Some(text) = read_text() {
         callback(text);
     }
@@ -220,7 +220,7 @@ pub(crate) fn write_text(text: String) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn read(callback: impl FnOnce(String) + 'static) {
+pub fn read(callback: impl FnOnce(String) + 'static) {
     let Some(clipboard) = browser_clipboard() else {
         return;
     };

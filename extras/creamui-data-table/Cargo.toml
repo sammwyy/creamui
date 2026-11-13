@@ -1,0 +1,14 @@
+[package]
+name = "creamui-data-table"
+description = "Optional interactive virtual data table for CreamUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+creamui-core = { workspace = true }
+creamui-reactive = { workspace = true }
+creamui-theme = { workspace = true }
+creamui-widgets = { workspace = true }

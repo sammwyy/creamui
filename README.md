@@ -24,6 +24,13 @@ CreamUI includes text, buttons, text inputs, text areas, checkboxes, switches, s
 
 Core controls have lower-level `Raw*` counterparts for manual styling. Composite themed widgets can also be customized with `Styled` or assembled from raw controls and layout primitives. See the [component catalog](docs/components.md#component-catalog) for the available foundations.
 
+Specialized widgets are opt-in crates under `extras/`. For example, `creamui-chart`
+provides raw/themed charts, `creamui-diff-viewer` provides raw/themed patch
+review, and `creamui-grid-layout` provides a draggable dashboard grid. Only
+applications that depend on an extra compile it; the
+[optional component catalog](docs/components.md#optional-components) lists
+the available crates.
+
 ## Quick start
 
 Add the runtime crates to your application:

@@ -12,13 +12,20 @@ pub enum SplitAxis {
 pub struct SplitState {
     fraction: Signal<f32>,
     bounds: Rc<Cell<Rect>>,
+    restored: Rc<Cell<f32>>,
 }
 
 impl SplitState {
     pub fn new(fraction: f32) -> Self {
+        let fraction = if fraction.is_finite() {
+            fraction.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
         Self {
-            fraction: Signal::new(fraction.clamp(0.0, 1.0)),
+            fraction: Signal::new(fraction),
             bounds: Rc::new(Cell::new(Rect::default())),
+            restored: Rc::new(Cell::new(if fraction > 0.0 { fraction } else { 0.5 })),
         }
     }
 
@@ -29,6 +36,16 @@ impl SplitState {
     pub fn set_fraction(&self, fraction: f32) {
         if fraction.is_finite() {
             self.fraction.set_if_changed(fraction.clamp(0.0, 1.0));
+        }
+    }
+
+    pub fn toggle_collapsed(&self) {
+        let fraction = self.fraction();
+        if fraction > 0.0 {
+            self.restored.set(fraction);
+            self.set_fraction(0.0);
+        } else {
+            self.set_fraction(self.restored.get());
         }
     }
 }
@@ -42,6 +59,8 @@ pub struct RawSplitView {
     divider: f32,
     first_min: f32,
     second_min: f32,
+    first_max: Option<f32>,
+    second_max: Option<f32>,
     color: Color,
 }
 
@@ -62,6 +81,8 @@ impl RawSplitView {
             divider: 6.0,
             first_min: 0.0,
             second_min: 0.0,
+            first_max: None,
+            second_max: None,
             color: Color::rgb(90, 90, 90),
         }
     }
@@ -75,6 +96,12 @@ impl RawSplitView {
     pub fn min_sizes(mut self, first: f32, second: f32) -> Self {
         self.first_min = first.max(0.0);
         self.second_min = second.max(0.0);
+        self
+    }
+
+    pub fn max_sizes(mut self, first: Option<f32>, second: Option<f32>) -> Self {
+        self.first_max = first.map(|value| value.max(0.0));
+        self.second_max = second.map(|value| value.max(0.0));
         self
     }
 }
@@ -103,7 +130,7 @@ impl Widget for RawSplitView {
 
     fn children(&mut self) -> Vec<BoxedWidget> {
         let fraction = self.state.fraction();
-        let pane = |weight: f32, min: f32, child: BoxedWidget| {
+        let pane = |weight: f32, min: f32, max: Option<f32>, child: BoxedWidget| {
             let mut style = Style {
                 flex_grow: weight,
                 flex_shrink: 1.0,
@@ -120,6 +147,18 @@ impl Widget for RawSplitView {
                     height: Dimension::Length(min),
                 },
             };
+            if let Some(max) = max {
+                style.max_size = match self.axis {
+                    SplitAxis::Horizontal => LayoutSize {
+                        width: Dimension::Length(max.max(min)),
+                        height: Dimension::Auto,
+                    },
+                    SplitAxis::Vertical => LayoutSize {
+                        width: Dimension::Auto,
+                        height: Dimension::Length(max.max(min)),
+                    },
+                };
+            }
             Box::new(super::RawView::new(style).child(child)) as BoxedWidget
         };
         let divider_style = Style {
@@ -137,16 +176,28 @@ impl Widget for RawSplitView {
             ..Default::default()
         };
         vec![
-            pane(fraction, self.first_min, self.first.take().unwrap()),
+            pane(
+                fraction,
+                self.first_min,
+                self.first_max,
+                self.first.take().unwrap(),
+            ),
             Box::new(SplitDivider {
                 style: divider_style.into(),
                 state: self.state.clone(),
                 axis: self.axis,
                 first_min: self.first_min,
                 second_min: self.second_min,
+                first_max: self.first_max,
+                second_max: self.second_max,
                 color: self.color,
             }),
-            pane(1.0 - fraction, self.second_min, self.second.take().unwrap()),
+            pane(
+                1.0 - fraction,
+                self.second_min,
+                self.second_max,
+                self.second.take().unwrap(),
+            ),
         ]
     }
 }
@@ -157,6 +208,8 @@ struct SplitDivider {
     axis: SplitAxis,
     first_min: f32,
     second_min: f32,
+    first_max: Option<f32>,
+    second_max: Option<f32>,
     color: Color,
 }
 
@@ -174,8 +227,13 @@ impl SplitDivider {
         if available == 0.0 {
             return;
         }
-        let min = self.first_min.min(available);
-        let max = (available - self.second_min).max(min);
+        let min = self
+            .first_min
+            .max(available - self.second_max.unwrap_or(available))
+            .min(available);
+        let max = (available - self.second_min)
+            .min(self.first_max.unwrap_or(available))
+            .max(min);
         self.state
             .set_fraction(((position - origin - divider / 2.0).clamp(min, max)) / available);
     }
@@ -190,11 +248,63 @@ impl Widget for SplitDivider {
         painter.fill_rect(rect, self.color, 0.0);
     }
 
+    fn focusable(&self) -> bool {
+        true
+    }
+
+    fn on_key(&self) -> Option<Rc<dyn Fn(KeyInput)>> {
+        let state = self.state.clone();
+        let axis = self.axis;
+        let divider = match axis {
+            SplitAxis::Horizontal => self.style.layout.size.width,
+            SplitAxis::Vertical => self.style.layout.size.height,
+        };
+        let first_min = self.first_min;
+        let second_min = self.second_min;
+        let first_max = self.first_max;
+        let second_max = self.second_max;
+        Some(Rc::new(move |input| {
+            let bounds = state.bounds.get();
+            let length = match axis {
+                SplitAxis::Horizontal => bounds.width,
+                SplitAxis::Vertical => bounds.height,
+            };
+            let Dimension::Length(divider) = divider else {
+                return;
+            };
+            let available = (length - divider).max(0.0);
+            if available <= 0.0 {
+                return;
+            }
+            let min = first_min
+                .max(available - second_max.unwrap_or(available))
+                .min(available);
+            let max = (available - second_min)
+                .min(first_max.unwrap_or(available))
+                .max(min);
+            let current = state.fraction() * available;
+            let next = match (axis, input.key) {
+                (_, Key::Home) => min,
+                (_, Key::End) => max,
+                (SplitAxis::Horizontal, Key::Left) | (SplitAxis::Vertical, Key::Up) => {
+                    current - 10.0
+                }
+                (SplitAxis::Horizontal, Key::Right) | (SplitAxis::Vertical, Key::Down) => {
+                    current + 10.0
+                }
+                _ => return,
+            };
+            state.set_fraction(next.clamp(min, max) / available);
+        }))
+    }
+
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {
         let state = self.state.clone();
         let axis = self.axis;
         let first_min = self.first_min;
         let second_min = self.second_min;
+        let first_max = self.first_max;
+        let second_max = self.second_max;
         let color = self.color;
         let style = self.style.clone();
         Some(Rc::new(move |point, rect| {
@@ -204,6 +314,8 @@ impl Widget for SplitDivider {
                 axis,
                 first_min,
                 second_min,
+                first_max,
+                second_max,
                 color,
             };
             divider.move_to(match axis {
@@ -327,6 +439,8 @@ mod tests {
             axis: SplitAxis::Horizontal,
             first_min: 50.0,
             second_min: 60.0,
+            first_max: None,
+            second_max: None,
             color: Color::rgb(0, 0, 0),
         };
         divider.move_to(10.0);
@@ -335,5 +449,55 @@ mod tests {
         assert_eq!(state.fraction(), 130.0 / 190.0);
         state.set_fraction(f32::NAN);
         assert_eq!(state.fraction(), 130.0 / 190.0);
+    }
+
+    #[test]
+    fn divider_keyboard_resizes_and_honors_minima() {
+        let state = SplitState::new(0.5);
+        state.bounds.set(Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 100.0,
+        });
+        let divider = SplitDivider {
+            style: Style {
+                size: LayoutSize {
+                    width: Dimension::Length(10.0),
+                    height: Dimension::Auto,
+                },
+                ..Default::default()
+            }
+            .into(),
+            state: state.clone(),
+            axis: SplitAxis::Horizontal,
+            first_min: 50.0,
+            second_min: 60.0,
+            first_max: None,
+            second_max: None,
+            color: Color::rgb(0, 0, 0),
+        };
+        assert!(divider.focusable());
+        let press = |key| {
+            divider.on_key().unwrap()(KeyInput {
+                key,
+                modifiers: Default::default(),
+            })
+        };
+        press(Key::Right);
+        assert_eq!(state.fraction(), 105.0 / 190.0);
+        press(Key::End);
+        assert_eq!(state.fraction(), 130.0 / 190.0);
+        press(Key::Home);
+        assert_eq!(state.fraction(), 50.0 / 190.0);
+    }
+
+    #[test]
+    fn split_state_restores_fraction_after_collapsing() {
+        let state = SplitState::new(0.3);
+        state.toggle_collapsed();
+        assert_eq!(state.fraction(), 0.0);
+        state.toggle_collapsed();
+        assert_eq!(state.fraction(), 0.3);
     }
 }

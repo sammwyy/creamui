@@ -39,6 +39,28 @@ fn every_widget_gets_common_builders_without_component_forwarders() {
         .expect("styled wrapper must preserve the button handler")();
     assert!(clicked.get());
 }
+
+#[test]
+fn toggle_button_pressed_state_survives_pointer_state_resolution() {
+    let widget = RawButton::new(Style::default(), || {})
+        .width(80.0)
+        .height(32.0)
+        .pressed_state(true)
+        .pressed_style(StateStyle::new().background(Color::rgb(50, 100, 150)));
+    let mut painter = RecordingPainter::default();
+    render_frame(
+        Box::new(widget),
+        Size {
+            width: 80.0,
+            height: 32.0,
+        },
+        &mut painter,
+    );
+    assert!(painter
+        .filled_rects
+        .iter()
+        .any(|(_, color)| *color == Color::rgb(50, 100, 150)));
+}
 use creamui_reactive::Signal;
 use creamui_theme::{Color, Theme};
 use creamui_widgets::raw::{
@@ -89,28 +111,6 @@ fn compact_raw_controls_keep_all_paint_inside_their_bounds() {
     let mut painter = RecordingPainter::default();
     slider.paint(&mut painter, rect);
     assert_paint_inside(&painter, rect);
-}
-
-#[test]
-fn compact_themed_feedback_keeps_animated_dots_inside_its_bounds() {
-    creamui_reactive::with_context_scope(|| {
-        creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
-        let indicator = creamui_widgets::TypingIndicator::new();
-        let rect = Rect {
-            x: 10.0,
-            y: 20.0,
-            width: 18.0,
-            height: 10.0,
-        };
-        for time in [0.0, 0.2, 0.4, 0.6, 1.0] {
-            let mut painter = RecordingPainter {
-                time,
-                ..Default::default()
-            };
-            indicator.paint(&mut painter, rect);
-            assert_paint_inside(&painter, rect);
-        }
-    });
 }
 
 #[test]

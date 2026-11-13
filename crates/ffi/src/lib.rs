@@ -1086,6 +1086,7 @@ fn window_options_from_c(options: CWindowOptions) -> creamui_render::WindowOptio
         },
         theme: Theme::default(),
         system_bars: Default::default(),
+        app_id: None,
     }
 }
 

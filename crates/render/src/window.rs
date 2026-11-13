@@ -383,6 +383,11 @@ pub struct WindowOptions {
     /// Whether the layout viewport stops at the system bars or draws
     /// underneath them. See [`SystemBars`].
     pub system_bars: SystemBars,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`), e.g.
+    /// `"org.example.App"`. Match the `.desktop` file name so docks show the
+    /// app's name and icon; Flatpak requires it to equal the app ID. `None`
+    /// keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowOptions {
@@ -402,6 +407,7 @@ impl Default for WindowOptions {
             backend: RenderBackend::default(),
             theme: Theme::default(),
             system_bars: SystemBars::Inset,
+            app_id: None,
         }
     }
 }
@@ -851,6 +857,7 @@ struct Pipeline {
     window_controls: WindowControls,
     clear_color: Color,
     focused: Cell<Option<usize>>,
+    modal_focus_return: Cell<Option<creamui_core::FocusId>>,
     /// A legacy widget tree may reveal a text field in response to a click
     /// or shortcut. Focus it after that freshly-built scene is available.
     pending_text_input_focus: Cell<bool>,
@@ -858,6 +865,8 @@ struct Pipeline {
     pending_root: RefCell<Option<BoxedWidget>>,
     needs_layout: Cell<bool>,
     needs_paint: Cell<bool>,
+    /// A programmatic resize is pending; the next redraw rereads the window size.
+    size_requested: Cell<bool>,
     dump_frame_path: Option<String>,
 }
 
@@ -1018,6 +1027,16 @@ impl Pipeline {
         }
     }
 
+    /// winit on Wayland applies the size at once and sends no `Resized`, so
+    /// the next redraw rereads the window size instead of waiting for one.
+    fn request_inner_size(&self, size: LogicalSize) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.request_inner_size(size);
+        }
+        self.size_requested.set(true);
+        self.request_redraw();
+    }
+
     /// Rebuilds the widget tree from `build_ui`. Runs inside the window's
     /// reactive effect so it stays subscribed to whatever it reads; layout
     /// and paint wait for the next frame.
@@ -1167,11 +1186,19 @@ impl Pipeline {
                     renderer.paint(recorder, self.focused.get(), self.caret_visible.get())
                 {
                     let previous_index = self.focused.get();
-                    let entering_modal = scene
-                        .as_ref()
-                        .is_none_or(|previous| previous.modal_focus().is_none());
+                    let previous_modal = scene.as_ref().is_some_and(|previous| previous.is_modal());
+                    let entering_modal = !previous_modal && next.is_modal();
+                    let leaving_modal = previous_modal && !next.is_modal();
+                    if entering_modal {
+                        self.modal_focus_return.set(previous_focus);
+                    }
+                    let restore = leaving_modal
+                        .then(|| self.modal_focus_return.replace(None))
+                        .flatten();
                     let focused = if self.pending_text_input_focus.replace(false) {
                         next.first_text_input()
+                    } else if let Some(index) = restore.and_then(|id| next.focus_index(id)) {
+                        Some(index)
                     } else if scene.is_some() {
                         previous_focus.and_then(|id| next.focus_index(id))
                     } else {
@@ -1748,6 +1775,8 @@ pub struct WindowHandle {
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
+    /// Resolved desktop ID, inherited by popups opened from this window.
+    app_id: Option<String>,
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_device: Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)>,
 }
@@ -1870,12 +1899,12 @@ impl WindowHandle {
         }
     }
 
-    /// Requests a new logical-pixel window size. The actual resize (and any
-    /// resulting `Resized` event) happens asynchronously, same as a user
-    /// dragging the window border.
+    /// Requests a new logical-pixel window size. Some platforms apply it
+    /// later with a `Resized` event, others (Wayland) at once; the next frame
+    /// is laid out for the new size either way.
     pub fn resize(&self, width: u32, height: u32) {
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.request_inner_size(LogicalSize::new(width as f64, height as f64));
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.request_inner_size(LogicalSize::new(width as f64, height as f64));
         }
     }
 
@@ -3052,6 +3081,13 @@ impl WindowState {
             self.pipeline.invalidate_paint();
             return;
         }
+        if key.key == Key::Escape {
+            if let Some(dismiss) = self.scene(|scene| scene.modal_dismiss().cloned()) {
+                dismiss();
+                self.pipeline.invalidate_layout();
+                return;
+            }
+        }
         let Some(index) = self.pipeline.focused.get() else {
             return;
         };
@@ -3841,6 +3877,12 @@ impl WindowState {
             self.pipeline.invalidate_layout();
         }
         self.refresh_safe_area();
+        if self.pipeline.size_requested.take() {
+            let viewport = self.viewport_from_window();
+            if viewport.width > 0.0 && viewport.height > 0.0 {
+                self.queue_viewport(viewport);
+            }
+        }
         self.flush_pending_viewport();
         self.pipeline.update();
         let ready = self
@@ -4042,6 +4084,13 @@ impl AppHandler {
             return;
         }
         let t0 = Instant::now();
+        // Popups are separate windows on some backends (winit): keep them in
+        // the parent's app so docks don't list them as an unknown one.
+        let app_id = spec.options.app_id.clone().or_else(|| {
+            spec.popup
+                .as_ref()
+                .and_then(|popup| popup.parent.app_id.clone())
+        });
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
             size: LogicalSize::new(spec.options.width as f64, spec.options.height as f64),
@@ -4053,6 +4102,7 @@ impl AppHandler {
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
             role: spec.options.role,
+            app_id: app_id.clone(),
         };
 
         let popup_parent = spec.popup.as_ref().and_then(|popup| {
@@ -4175,6 +4225,7 @@ impl AppHandler {
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
+            app_id,
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_device,
         });
@@ -4850,11 +4901,13 @@ fn build_window_spec(
         window_controls,
         clear_color,
         focused: Cell::new(options.focus_first.then_some(0)),
+        modal_focus_return: Cell::new(None),
         pending_text_input_focus: Cell::new(false),
         caret_visible: Cell::new(true),
         pending_root: RefCell::new(None),
         needs_layout: Cell::new(true),
         needs_paint: Cell::new(true),
+        size_requested: Cell::new(false),
         dump_frame_path,
     });
     let effect = create_effect({
@@ -4956,7 +5009,13 @@ mod tests {
         }
         fn request_redraw(&self) {}
         fn close(&self) {}
-        fn request_inner_size(&self, _: LogicalSize) {}
+        // Applies at once without a `Resized`, like winit on Wayland.
+        fn request_inner_size(&self, size: LogicalSize) {
+            *self.size.lock().unwrap() = Some(creamui_platform::PhysicalSize {
+                width: size.width as u32,
+                height: size.height as u32,
+            });
+        }
         fn set_min_inner_size(&self, size: Option<LogicalSize>) {
             self.minimum.lock().unwrap().push(size);
         }
@@ -5133,6 +5192,7 @@ mod tests {
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
+                app_id: None,
                 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
                 gpu_device: None,
             }
@@ -7909,6 +7969,36 @@ mod tests {
             report.damaged_pixels, report.frame_pixels,
             "showing a hidden window must repaint it whole: {report:?}"
         );
+    }
+
+    #[test]
+    fn a_programmatic_resize_without_a_resized_event_lays_out_the_new_size() {
+        let sizes = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let sizes = sizes.clone();
+            move |size| {
+                sizes.borrow_mut().push(size);
+                Box::new(BlankWidget)
+            }
+        });
+        let window = Arc::new(InteractiveTestWindow::default());
+        *harness.state.pipeline.window.borrow_mut() = Some(window);
+        // Wayland: the size applies at once and no `Resized` follows.
+        harness
+            .state
+            .pipeline
+            .request_inner_size(LogicalSize::new(250.0, 84.0));
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(
+            sizes.borrow().last().copied(),
+            Some(Size {
+                width: 250.0,
+                height: 84.0
+            })
+        );
+        let frame = harness.state.pipeline.frame.borrow();
+        let presented = frame.presented.as_ref().unwrap();
+        assert_eq!((presented.width, presented.height), (250, 84));
     }
 
     #[test]

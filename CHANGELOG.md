@@ -4,6 +4,61 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Move one-time code entry into the opt-in `creamui-otp-input` crate.
+- Move advanced sortable/filterable virtual tables into the opt-in
+  `creamui-data-table` crate; keep basic tables in `creamui-widgets`.
+- Move multi-pane resizable layouts to the opt-in
+  `creamui-resizable-panels` crate; keep `RawSplitView` as a shared primitive.
+- Move the draggable dashboard grid into the opt-in `creamui-grid-layout` crate.
+- Move chart and diff viewer widgets from `creamui-widgets` into opt-in
+  `creamui-chart` and `creamui-diff-viewer` crates.
+- Add virtualized `RawDiff`/`Diff` with unified/side-by-side views,
+  line selection, numbered gutters, and conflict highlighting.
+- Add `RawPlot`/`Chart` with clipped line, area, and bar series,
+  explicit scales, hit testing, and themed axes and legend.
+- Add raw/themed grouped toolbars with keyboard action navigation and
+  responsive overflow menus.
+- Add `RawSheet`/`Sheet` edge panels with modal and nonmodal layouts,
+  backdrop/Escape dismissal, scrollable content, and focus return.
+- Add virtualized `RawDataTable`/`DataTable` with controlled sorting,
+  filtering, multi-row selection, and column visibility/order.
+- Add controlled `RawGridLayout`/`GridLayout` dashboard cells with drag and
+  keyboard movement, spans, bounds, and collision rejection.
+- Add nested `RawResizablePanels`/`ResizablePanels` with persistent split
+  handles, min/max constraints, keyboard resize and collapsible pane state.
+- Add `RawTooltip`/`Tooltip` with delayed hover, keyboard focus, viewport-aware
+  positioning, and optional shortcut text.
+- Add queued `RawToast`/`Toast` notifications with a slotted host,
+  auto-dismissal on native and browser, action callbacks, and themed status
+  tones.
+- Add `RawOtpInput`/`OtpInput` with a controlled digit sequence, paste
+  distribution, cursor navigation, masked/error states, and a per-cell
+  themed focus treatment.
+- Add `RawCarousel` and `Carousel` with controlled slides, keyboard navigation,
+  swipe gestures, previous/next actions, indicators, and optional looping.
+- Add `RawRating` and `Rating` with read-only and interactive stars, half-step
+  selection, keyboard increments, and pointer hit testing.
+- Add `RawCalendar` and `Calendar` with controlled month and day selection,
+  disabled dates, week-start configuration, keyboard day navigation, and
+  today highlighting.
+- Add `RawNumberInput` and `NumberInput` with persistent draft text,
+  finite bounded values, configurable decimal precision, commit on Enter or
+  blur, and stepper buttons and arrow-key increments.
+- Add `RawInputGroup`/`InputGroup`, controlled `ToggleButton` with an explicit
+  pressed state on `RawButton`, and `RawDropdownButton`/`DropdownButton`
+  with independent, keyboard-focusable primary and menu actions.
+- Add `RawKbd`/`Kbd` and `RawTag`/`Tag` for shortcuts and
+  selectable and removable tags.
+- Add `RawDescriptionList`/`DescriptionList`, `RawStatusBar`/`StatusBar`,
+  and `RawStepper`/`Stepper` for key/value details, slotted status content,
+  and controlled workflow stages.
+- Add `RawAccordion`/`Accordion`, `RawField`/`Field`, `RawForm`/`Form`,
+  and `RawPagination`/`Pagination` with controlled callbacks, optional errors,
+  submission state, and gap-aware page links.
+- Add controlled `RawCollapsible`/`Collapsible`, slotted inline `RawAlert`/`Alert`
+  with status tones and dismissal, static `RawSkeleton`/`Skeleton` placeholders,
+  and slotted `RawEmptyState`/`EmptyState` layouts. Raw widgets accept explicit
+  styles; themed widgets use the active theme.
 - Default to CPU-only builds in the main, renderer, and FFI crates and desktop
   examples. The `gpu` feature remains opt-in; GPU benchmarks enable it explicitly.
 - Skip unchanged blocks when checking GPU instance uploads, retaining the

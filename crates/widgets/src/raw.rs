@@ -88,37 +88,63 @@ fn draw_text_decorations(
     }
 }
 
+mod actions;
+mod application;
 mod button;
+mod calendar;
 mod canvas;
+mod carousel;
+mod content;
 mod context_menu;
 mod controls;
 mod dataview;
+mod disclosure;
 mod foundation;
 mod marquee;
 mod navigation;
+mod number;
 mod pickers;
+mod rating;
 mod scroll;
+mod sheet;
 mod spinner;
 mod split;
 mod text_input;
+mod toast;
+mod toolbar;
+mod tooltip;
 mod typography;
 mod virtualize;
+mod workspace;
 
+pub use actions::*;
+pub use application::*;
 pub use button::*;
+pub use calendar::*;
 pub use canvas::*;
+pub use carousel::*;
+pub use content::*;
 pub use context_menu::*;
 pub use controls::*;
 pub use dataview::*;
+pub use disclosure::*;
 pub use foundation::*;
 pub use marquee::*;
 pub use navigation::*;
+pub use number::*;
 pub use pickers::*;
+pub use rating::*;
 pub use scroll::*;
+pub use sheet::*;
 pub use spinner::*;
 pub use split::*;
 pub use text_input::*;
+pub use toast::*;
+pub use toolbar::*;
+pub use tooltip::*;
 pub use typography::*;
 pub use virtualize::*;
+pub use workspace::*;
 
 macro_rules! impl_direct_styled {
     ($($widget:ty),+ $(,)?) => {
@@ -133,28 +159,51 @@ macro_rules! impl_direct_styled {
 }
 
 impl_direct_styled!(
+    RawAccordion,
+    RawAlert,
     RawButton,
+    RawCalendar,
+    RawCarousel,
     RawCheckbox,
+    RawCollapsible,
     RawColorPicker,
     RawDateTimePicker,
+    RawDescriptionList,
+    RawDropdownButton,
+    RawEmptyState,
+    RawField,
     RawFilePicker,
+    RawForm,
+    RawInputGroup,
+    RawKbd,
     RawLink,
     RawListView,
     RawMarquee,
+    RawNumberInput,
+    RawPagination,
     RawPre,
     RawQuote,
+    RawRating,
     RawScrollView,
     RawScrollbar,
+    RawSheet,
     RawSidebar,
+    RawSkeleton,
     RawSlider,
     RawSpinner,
+    RawStatusBar,
+    RawStepper,
     RawSwitch,
     RawTab,
     RawTable,
+    RawTag,
     RawTabs,
     RawText,
     RawTextArea,
     RawTextInput,
+    RawToast,
+    RawToastHost,
+    RawTooltip,
     RawView,
     RawVirtualList,
 );

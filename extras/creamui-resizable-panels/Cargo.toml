@@ -1,0 +1,16 @@
+[package]
+name = "creamui-resizable-panels"
+description = "Optional multi-pane resizable layouts for CreamUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+creamui-core = { workspace = true }
+creamui-theme = { workspace = true }
+creamui-widgets = { workspace = true }
+
+[dev-dependencies]
+creamui-reactive = { workspace = true }

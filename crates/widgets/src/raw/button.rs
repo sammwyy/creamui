@@ -14,6 +14,7 @@ pub struct RawButton {
     pub on_drag_end: Option<Rc<dyn Fn()>>,
     pub disabled: bool,
     pub keyboard_focus: bool,
+    pub pressed_state: bool,
 }
 
 impl RawButton {
@@ -33,6 +34,7 @@ impl RawButton {
             on_drag_end: None,
             disabled: false,
             keyboard_focus: true,
+            pressed_state: false,
         }
     }
 
@@ -96,6 +98,11 @@ impl RawButton {
         self.keyboard_focus = enabled;
         self
     }
+
+    pub fn pressed_state(mut self, pressed: bool) -> Self {
+        self.pressed_state = pressed;
+        self
+    }
 }
 
 impl Widget for RawButton {
@@ -108,7 +115,9 @@ impl Widget for RawButton {
     }
 
     fn style_state(&self) -> creamui_core::StyleState {
-        creamui_core::StyleState::NORMAL.with_disabled(self.disabled)
+        creamui_core::StyleState::NORMAL
+            .with_disabled(self.disabled)
+            .with_pressed(self.pressed_state)
     }
 
     fn focusable(&self) -> bool {

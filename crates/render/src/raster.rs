@@ -24,6 +24,7 @@ pub struct Rasterizer {
     pixmap: Pixmap,
     scratch: Vec<u8>,
     images: TintCache,
+    solid_fast_path: bool,
 }
 
 #[derive(Default)]
@@ -70,6 +71,7 @@ impl Rasterizer {
             pixmap: Pixmap::new(width.max(1), height.max(1)).expect("non-zero pixmap size"),
             scratch: Vec::new(),
             images: TintCache::default(),
+            solid_fast_path: true,
         }
     }
 
@@ -196,6 +198,11 @@ impl Rasterizer {
             draw_text(&mut self.pixmap, run, clip);
             return;
         }
+        if let Primitive::Quad(quad) = primitive {
+            if self.draw_solid_quad(quad, &clip) {
+                return;
+            }
+        }
         let bounds = primitive.bounds();
         if clip.contains(bounds) {
             paint(
@@ -227,6 +234,67 @@ impl Rasterizer {
             }
         }
         self.draw_clipped(primitive, clip, bounds);
+    }
+
+    /// Draws a large solid quad's fully covered fill and border pixels
+    /// directly and leaves only anti-aliased edges and corners to
+    /// `tiny-skia`, whose generic pipeline is many times slower per pixel.
+    /// Blends exactly as `tiny-skia` does, so the result is identical.
+    /// Returns `false`, having drawn nothing, when neither part qualifies.
+    fn draw_solid_quad(&mut self, quad: &Quad, clip: &Clip) -> bool {
+        if !self.solid_fast_path {
+            return false;
+        }
+        let fill = fill_plan(quad).map(|plan| plan.clipped(clip));
+        let border = border_plan(quad).map(|plan| plan.clipped(clip));
+        if fill.is_none() && border.is_none() {
+            return false;
+        }
+        let fill_only = Quad {
+            border_width: 0.0,
+            ..quad.clone()
+        };
+        match fill {
+            Some(plan) => self.draw_plan(&plan, Primitive::Quad(fill_only), clip),
+            None if quad.background.a > 0 || quad.gradient.is_some() => {
+                self.draw(&Primitive::Quad(fill_only), clip.clone())
+            }
+            None => {}
+        }
+        let border_only = Quad {
+            background: Color::rgba(0, 0, 0, 0),
+            gradient: None,
+            ..quad.clone()
+        };
+        match border {
+            Some(plan) => self.draw_plan(&plan, Primitive::Quad(border_only), clip),
+            None if quad.border_width > 0.0 && quad.border_color.a > 0 => {
+                self.draw(&Primitive::Quad(border_only), clip.clone())
+            }
+            None => {}
+        }
+        true
+    }
+
+    fn draw_plan(&mut self, plan: &SolidPlan, primitive: Primitive, clip: &Clip) {
+        let bounds = primitive.bounds();
+        let color = premultiply_like_tiny_skia(plan.color);
+        for part in &plan.solid {
+            let part = part.intersect(clip.bounds);
+            if !part.is_empty() {
+                blend_solid(&mut self.pixmap, part, color);
+            }
+        }
+        for rim in &plan.rims {
+            let rim = rim.intersect(clip.bounds);
+            if !rim.is_empty() {
+                let rim_clip = Clip {
+                    bounds: rim,
+                    rounded: clip.rounded.clone(),
+                };
+                self.draw_clipped(&primitive, rim_clip, bounds);
+            }
+        }
     }
 
     /// Draws `primitive` into a scratch buffer around its visible part and
@@ -580,6 +648,236 @@ fn copy_rows(
     }
 }
 
+/// Disjoint, pixel-aligned parts of a quad's fill or border: `solid` ones
+/// the shape covers completely in `color`, and `rims` covering the rest of
+/// it, which still need anti-aliasing.
+struct SolidPlan {
+    color: Color,
+    solid: Vec<Bounds>,
+    rims: Vec<Bounds>,
+}
+
+impl SolidPlan {
+    const MIN_SOLID_PIXELS: f32 = 64.0 * 64.0;
+
+    /// Restricts the solid parts to `clip`, moving whatever its rounded
+    /// corners could cut into the rims.
+    fn clipped(mut self, clip: &Clip) -> Self {
+        let mut solid: Vec<Bounds> = self
+            .solid
+            .iter()
+            .map(|part| part.intersect(clip.bounds))
+            .filter(|part| !part.is_empty())
+            .collect();
+        for rounded in clip.rounded_clips() {
+            let mut inside = Vec::new();
+            for part in solid {
+                if rounded.inner().contains(part) {
+                    inside.push(part);
+                    continue;
+                }
+                let b = rounded.bounds;
+                let r = rounded.radius.min(b.width() / 2.0).min(b.height() / 2.0);
+                let (top, left) = ((b.y0 + r).ceil(), (b.x0 + r).ceil());
+                let (bottom, right) = ((b.y1 - r).floor().max(top), (b.x1 - r).floor().max(left));
+                let (edge0, edge1) = (b.x0.ceil(), b.x1.floor().max(b.x0.ceil()));
+                let (above, below) = (b.y0.ceil(), b.y1.floor());
+                for (y0, y1, x0, x1) in [
+                    (f32::MIN, above, f32::MAX, f32::MAX),
+                    (above, top, left, right),
+                    (top, bottom, edge0, edge1),
+                    (bottom, below, left, right),
+                    (below, f32::MAX, f32::MAX, f32::MAX),
+                ] {
+                    let band = part.intersect(Bounds::new(f32::MIN, y0, f32::MAX, y1));
+                    for (piece, solid) in [
+                        (Bounds::new(f32::MIN, y0, x0, y1), false),
+                        (Bounds::new(x0, y0, x1, y1), true),
+                        (Bounds::new(x1, y0, f32::MAX, y1), false),
+                    ] {
+                        let piece = band.intersect(piece);
+                        if piece.is_empty() {
+                            continue;
+                        }
+                        if solid {
+                            inside.push(piece);
+                        } else {
+                            self.rims.push(piece);
+                        }
+                    }
+                }
+            }
+            solid = inside;
+        }
+        self.solid = solid;
+        self
+    }
+}
+
+/// The pixel grid around a quad: its rounded-out bounds, and the pixel
+/// lines `corner` in from each edge, past which corners can't reach.
+struct QuadGrid {
+    outer: Bounds,
+    inner: Bounds,
+}
+
+impl QuadGrid {
+    fn new(b: Bounds, corner: f32) -> Option<Self> {
+        let inner = Bounds::new(
+            (b.x0 + corner).ceil(),
+            (b.y0 + corner).ceil(),
+            (b.x1 - corner).floor(),
+            (b.y1 - corner).floor(),
+        );
+        (inner.x1 > inner.x0 && inner.y1 > inner.y0).then(|| QuadGrid {
+            outer: b.round_out(),
+            inner,
+        })
+    }
+
+    fn corners(&self) -> [Bounds; 4] {
+        let (o, i) = (self.outer, self.inner);
+        [
+            Bounds::new(o.x0, o.y0, i.x0, i.y0),
+            Bounds::new(i.x1, o.y0, o.x1, i.y0),
+            Bounds::new(o.x0, i.y1, i.x0, o.y1),
+            Bounds::new(i.x1, i.y1, o.x1, o.y1),
+        ]
+    }
+}
+
+/// Splits `[start, end)` into fully covered pixels and the partly covered
+/// pixel at each fractional end.
+fn pixel_spans(start: f32, end: f32) -> ((f32, f32), [(f32, f32); 2]) {
+    (
+        (start.ceil(), end.floor()),
+        [(start.floor(), start.ceil()), (end.floor(), end.ceil())],
+    )
+}
+
+fn effective_radius(quad: &Quad) -> f32 {
+    let b = quad.bounds;
+    let r = quad.radius.min(b.width() / 2.0).min(b.height() / 2.0);
+    if r <= 0.01 {
+        0.0
+    } else {
+        r
+    }
+}
+
+fn fill_plan(quad: &Quad) -> Option<SolidPlan> {
+    if quad.gradient.is_some() || quad.background.a == 0 {
+        return None;
+    }
+    let b = quad.bounds;
+    let grid = QuadGrid::new(b, effective_radius(quad))?;
+    let (o, i) = (grid.outer, grid.inner);
+    let ((xa, xb), [left, right]) = pixel_spans(b.x0, b.x1);
+    let ((ya, yb), [top, bottom]) = pixel_spans(b.y0, b.y1);
+    if (xb - xa) * (i.y1 - i.y0) < SolidPlan::MIN_SOLID_PIXELS {
+        return None;
+    }
+    let mut rims = grid.corners().to_vec();
+    rims.extend([
+        Bounds::new(i.x0, top.0, i.x1, top.1),
+        Bounds::new(i.x0, bottom.0, i.x1, bottom.1),
+        Bounds::new(left.0, i.y0, left.1, i.y1),
+        Bounds::new(right.0, i.y0, right.1, i.y1),
+    ]);
+    let _ = o;
+    Some(SolidPlan {
+        color: quad.background,
+        solid: vec![
+            Bounds::new(xa, i.y0, xb, i.y1),
+            Bounds::new(i.x0, ya, i.x1, i.y0),
+            Bounds::new(i.x0, i.y1, i.x1, yb),
+        ],
+        rims,
+    })
+}
+
+fn border_plan(quad: &Quad) -> Option<SolidPlan> {
+    let (b, bw) = (quad.bounds, quad.border_width);
+    if bw < 1.0 || quad.border_color.a == 0 {
+        return None;
+    }
+    let grid = QuadGrid::new(b, effective_radius(quad).max(bw))?;
+    let i = grid.inner;
+    let (mut solid, mut rims) = (Vec::new(), grid.corners().to_vec());
+    for (start, end, horizontal) in [
+        (b.y0, b.y0 + bw, true),
+        (b.y1 - bw, b.y1, true),
+        (b.x0, b.x0 + bw, false),
+        (b.x1 - bw, b.x1, false),
+    ] {
+        let (full, partial) = pixel_spans(start, end);
+        let band = |(a, z): (f32, f32)| {
+            if horizontal {
+                Bounds::new(i.x0, a, i.x1, z)
+            } else {
+                Bounds::new(a, i.y0, z, i.y1)
+            }
+        };
+        solid.push(band(full));
+        rims.extend(partial.map(band));
+    }
+    let area: f32 = solid
+        .iter()
+        .map(|part| part.width().max(0.0) * part.height().max(0.0))
+        .sum();
+    (area >= SolidPlan::MIN_SOLID_PIXELS / 4.0).then_some(SolidPlan {
+        color: quad.border_color,
+        solid,
+        rims,
+    })
+}
+
+/// `color` premultiplied and quantized the way `tiny-skia`'s uniform-color
+/// stage does it.
+fn premultiply_like_tiny_skia(color: Color) -> [u8; 4] {
+    let c = tiny_skia::Color::from_rgba8(color.r, color.g, color.b, color.a).premultiply();
+    [c.red(), c.green(), c.blue(), c.alpha()].map(|v| (v * 255.0 + 0.5) as u8)
+}
+
+/// Source-over blends the premultiplied `color` onto the pixel-aligned
+/// `area`, with `tiny-skia`'s lowp arithmetic.
+fn blend_solid(pixmap: &mut Pixmap, area: Bounds, color: [u8; 4]) {
+    let width = pixmap.width() as usize;
+    let (x0, y0, x1, y1) = pixel_span(area);
+    let (x1, y1) = (x1.min(width), y1.min(pixmap.height() as usize));
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let data = pixmap.data_mut();
+    for y in y0..y1 {
+        blend_row(&mut data[(y * width + x0) * 4..(y * width + x1) * 4], color);
+    }
+}
+
+/// Source-over blends the premultiplied `color` onto a row of pixels.
+fn blend_row(row: &mut [u8], color: [u8; 4]) {
+    let pattern: [u8; 64] = std::array::from_fn(|i| color[i % 4]);
+    let inv = 255 - color[3] as u16;
+    let mut chunks = row.chunks_exact_mut(pattern.len());
+    if inv == 0 {
+        for chunk in &mut chunks {
+            chunk.copy_from_slice(&pattern);
+        }
+        let rest = chunks.into_remainder();
+        let len = rest.len();
+        rest.copy_from_slice(&pattern[..len]);
+        return;
+    }
+    for chunk in &mut chunks {
+        for (dst, src) in chunk.iter_mut().zip(pattern) {
+            *dst = src + ((*dst as u16 * inv + 255) >> 8) as u8;
+        }
+    }
+    for (dst, src) in chunks.into_remainder().iter_mut().zip(pattern) {
+        *dst = src + ((*dst as u16 * inv + 255) >> 8) as u8;
+    }
+}
+
 fn mul(channel: u8, alpha: u32) -> u8 {
     ((channel as u32 * alpha + 127) / 255) as u8
 }
@@ -812,6 +1110,7 @@ fn draw_gradient_pixels(
         gradient.end[1] - gradient.start[1],
     ];
     let length_squared = (direction[0] * direction[0] + direction[1] * direction[1]).max(1e-6);
+    let along = [direction[0] / length_squared, direction[1] / length_squared];
     let premultiply = |color: Color| {
         let alpha = color.a as f32 / 255.0;
         [
@@ -836,38 +1135,117 @@ fn draw_gradient_pixels(
         .iter()
         .map(|stop| premultiply(stop.color))
         .collect::<Vec<_>>();
+    let two_stops = (stops.len() == 2
+        && stops[0].offset == 0.0
+        && stops[1].offset == 1.0
+        && !gradient.repeating)
+        .then(|| {
+            let (from, to) = (colors[0], colors[1]);
+            (from, std::array::from_fn::<f32, 4, _>(|c| to[c] - from[c]))
+        });
     let pixels = target.data_mut();
+    let (cx, cy) = ((bounds.x0 + bounds.x1) / 2.0, (bounds.y0 + bounds.y1) / 2.0);
+    let (hx, hy, r) = (bounds.width() / 2.0, bounds.height() / 2.0, quad.radius);
+    let shade = |pixel: &mut [u8], x: usize, y: usize, coverage: f32| {
+        let offset = [
+            x as f32 + 0.5 - start_point[0],
+            y as f32 + 0.5 - start_point[1],
+        ];
+        let t = if gradient.radial {
+            (offset[0] / direction[0].abs().max(1e-6))
+                .hypot(offset[1] / direction[1].abs().max(1e-6))
+        } else {
+            offset[0] * along[0] + offset[1] * along[1]
+        };
+        let sampled = match two_stops {
+            Some((from, delta)) => {
+                let t = t.clamp(0.0, 1.0);
+                std::array::from_fn(|channel| from[channel] + delta[channel] * t)
+            }
+            None => sample_gradient_stops(stops, &colors, t, gradient.repeating),
+        };
+        let alpha = sampled[3] * coverage * (1.0 / 255.0);
+        for channel in 0..4 {
+            let source = sampled[channel] * coverage;
+            pixel[channel] = (source + pixel[channel] as f32 * (1.0 - alpha) + 0.5) as u8;
+        }
+    };
+    let uniform_span = match two_stops {
+        Some(stops) if mask.is_none() && !gradient.radial => Some(stops),
+        _ => None,
+    };
+    let lut = uniform_span.map(|(from, delta)| gradient_lut(from, delta));
     for y in y0..y1 {
-        for x in x0..x1 {
+        let qy = (y as i32 as f32 + 0.5 - cy).abs() - hy + r;
+        let full = |x: usize| {
+            let qx = (x as i32 as f32 + 0.5 - cx).abs() - hx + r;
+            qx <= 0.0 && qy <= 0.0 && qx.max(qy) - r <= -0.5
+        };
+        let (mut span0, mut span1) = (x1, x1);
+        if uniform_span.is_some() {
+            span0 = (x0..x1).find(|&x| full(x)).unwrap_or(x1);
+            span1 = (span0..x1)
+                .rev()
+                .find(|&x| full(x))
+                .map_or(span0, |x| x + 1);
+        }
+        for x in (x0..span0).chain(span1..x1) {
             let index = y * width + x;
-            let mut coverage = rounded_coverage(shape, x as i32, y as i32) as f32 / 255.0;
+            let mut coverage = if full(x) {
+                1.0
+            } else {
+                rounded_coverage(shape, x as i32, y as i32) as f32 / 255.0
+            };
             if let Some(mask) = mask {
                 coverage *= mask.data()[index] as f32 / 255.0;
             }
-            if coverage == 0.0 {
-                continue;
-            }
-            let offset = [
-                x as f32 + 0.5 - start_point[0],
-                y as f32 + 0.5 - start_point[1],
-            ];
-            let t = if gradient.radial {
-                (offset[0] / direction[0].abs().max(1e-6))
-                    .hypot(offset[1] / direction[1].abs().max(1e-6))
-            } else {
-                (offset[0] * direction[0] + offset[1] * direction[1]) / length_squared
-            };
-            let sampled = sample_gradient_stops(stops, &colors, t, gradient.repeating);
-            let alpha = sampled[3] * coverage / 255.0;
-            let pixel = &mut pixels[index * 4..index * 4 + 4];
-            for channel in 0..4 {
-                let source = sampled[channel] * coverage;
-                pixel[channel] = (source + pixel[channel] as f32 * (1.0 - alpha))
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
+            if coverage != 0.0 {
+                shade(&mut pixels[index * 4..index * 4 + 4], x, y, coverage);
             }
         }
+        let Some(lut) = lut.as_deref().filter(|_| span1 > span0) else {
+            continue;
+        };
+        let scale = (lut.len() - 1) as f64 * LUT_FRACTION;
+        let frame_y = y as f64 - transform.ty as f64 + 0.5 - gradient.start[1] as f64;
+        let row_t = (frame_y * along[1] as f64 * scale + LUT_FRACTION / 2.0) as i64;
+        let step = (along[0] as f64 * scale) as i64;
+        let frame_x0 = 0.5 - gradient.start[0] as f64;
+        let origin = row_t + (frame_x0 * along[0] as f64 * scale) as i64;
+        let frame_offset = -(transform.tx as i64);
+        let last = lut.len() as i64 - 1;
+        let row = &mut pixels[(y * width + span0) * 4..(y * width + span1) * 4];
+        let index = |x: usize| {
+            let t = origin.saturating_add((x as i64 + frame_offset).saturating_mul(step));
+            (t >> LUT_FRACTION_BITS).clamp(0, last) as usize
+        };
+        let mut start = span0;
+        while start < span1 {
+            let color = index(start);
+            let end = (start + 1..span1)
+                .find(|&x| index(x) != color)
+                .unwrap_or(span1);
+            blend_row(&mut row[(start - span0) * 4..(end - span0) * 4], lut[color]);
+            start = end;
+        }
     }
+}
+
+const LUT_FRACTION_BITS: u32 = 16;
+const LUT_FRACTION: f64 = (1u64 << LUT_FRACTION_BITS) as f64;
+
+/// Premultiplied colors along a two-stop gradient, at least one per
+/// quarter of a color level so neighbouring entries look the same.
+fn gradient_lut(from: [f32; 4], delta: [f32; 4]) -> Vec<[u8; 4]> {
+    let range = delta.iter().fold(0.0f32, |range, d| range.max(d.abs()));
+    let steps = ((range * 4.0).ceil() as usize + 1).clamp(2, 1024);
+    (0..steps)
+        .map(|step| {
+            let t = step as f32 / (steps - 1) as f32;
+            let [r, g, b, a] = std::array::from_fn(|c| (from[c] + delta[c] * t + 0.5) as u8);
+            [r.min(a), g.min(a), b.min(a), a]
+        })
+        .collect()
 }
 
 fn draw_line(target: &mut PixmapMut, line: &Line, transform: Transform, mask: Option<&Mask>) {
@@ -967,7 +1345,7 @@ fn draw_text(pixmap: &mut Pixmap, run: &TextRun, clip: Clip) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_list::damage;
+    use crate::display_list::{damage, DrawItem};
     use crate::recorder::SceneRecorder;
     use creamui_core::{Painter, Rect, RgbaImage, TextAlign};
     use creamui_theme::ColorScheme;
@@ -991,6 +1369,201 @@ mod tests {
     fn rgba(r: &Rasterizer, x: u32, y: u32) -> [u8; 4] {
         let p = r.pixmap().pixel(x, y).unwrap();
         [p.red(), p.green(), p.blue(), p.alpha()]
+    }
+
+    fn big_quads(clip: Clip) -> DisplayList {
+        let quad = |bounds: Bounds, background: Color, radius: f32, border_width: f32| DrawItem {
+            primitive: Primitive::Quad(Quad {
+                bounds,
+                background,
+                gradient: None,
+                radius,
+                border_width,
+                border_color: Color::rgba(255, 255, 255, 40),
+            }),
+            clip: clip.clone(),
+            layer: 0,
+        };
+        DisplayList {
+            width: 240,
+            height: 180,
+            clear: Color::rgba(0, 0, 0, 0),
+            items: vec![
+                quad(
+                    Bounds::new(0.0, 0.0, 240.0, 180.0),
+                    Color::rgba(20, 20, 20, 240),
+                    0.0,
+                    0.0,
+                ),
+                quad(
+                    Bounds::new(12.0, 0.0, 240.0, 180.0),
+                    Color::rgba(200, 30, 90, 240),
+                    0.0,
+                    0.0,
+                ),
+                quad(
+                    Bounds::new(20.3, 10.6, 220.5, 170.2),
+                    Color::rgba(30, 30, 30, 200),
+                    16.0,
+                    1.0,
+                ),
+                quad(
+                    Bounds::new(40.0, 40.0, 180.0, 150.0),
+                    Color::rgb(0, 128, 255),
+                    9.5,
+                    0.0,
+                ),
+                quad(
+                    Bounds::new(60.5, 70.25, 200.75, 160.5),
+                    Color::rgba(255, 255, 255, 12),
+                    0.0,
+                    2.0,
+                ),
+                quad(
+                    Bounds::new(8.0, 6.0, 232.0, 174.0),
+                    Color::rgba(0, 0, 0, 0),
+                    16.0,
+                    1.0,
+                ),
+                quad(
+                    Bounds::new(15.5, 20.25, 230.75, 175.5),
+                    Color::rgba(0, 0, 0, 0),
+                    12.0,
+                    1.5,
+                ),
+                quad(
+                    Bounds::new(30.0, 30.0, 210.0, 160.0),
+                    Color::rgba(0, 0, 0, 0),
+                    0.0,
+                    3.0,
+                ),
+                quad(
+                    Bounds::new(50.0, 50.0, 150.0, 120.0),
+                    Color::rgba(0, 0, 0, 0),
+                    2.0,
+                    6.0,
+                ),
+            ],
+            layers: Vec::new(),
+        }
+    }
+
+    fn first_difference(
+        a: &[u8],
+        b: &[u8],
+        width: usize,
+    ) -> Option<(usize, usize, [u8; 4], [u8; 4])> {
+        let i = a.chunks(4).zip(b.chunks(4)).position(|(x, y)| x != y)?;
+        Some((
+            i % width,
+            i / width,
+            a[i * 4..i * 4 + 4].try_into().unwrap(),
+            b[i * 4..i * 4 + 4].try_into().unwrap(),
+        ))
+    }
+
+    #[test]
+    fn linear_gradient_partial_repaint_matches_full() {
+        let gradient = |bounds: Bounds, radius: f32| DrawItem {
+            primitive: Primitive::Quad(Quad {
+                bounds,
+                background: Color::rgba(244, 248, 251, 220),
+                gradient: Some(QuadGradient {
+                    start: [bounds.x0, bounds.y0],
+                    end: [bounds.x1, bounds.y1],
+                    start_color: Color::rgba(244, 248, 251, 220),
+                    end_color: Color::rgba(31, 143, 249, 160),
+                    radial: false,
+                    repeating: false,
+                    stops: None,
+                }),
+                radius,
+                border_width: 0.0,
+                border_color: Color::rgba(0, 0, 0, 0),
+            }),
+            clip: Clip {
+                bounds: Bounds::new(0.0, 0.0, 240.0, 180.0),
+                rounded: None,
+            },
+            layer: 0,
+        };
+        let list = DisplayList {
+            width: 240,
+            height: 180,
+            clear: Color::rgba(10, 20, 30, 200),
+            items: vec![
+                gradient(Bounds::new(0.0, 0.0, 240.0, 180.0), 0.0),
+                gradient(Bounds::new(20.3, 10.6, 220.5, 170.2), 14.0),
+            ],
+            layers: Vec::new(),
+        };
+        let mut full = Rasterizer::new(240, 180);
+        full.render(&list, &Damage::Full);
+        let mut partial = Rasterizer::new(240, 180);
+        partial.render(&list, &Damage::Full);
+        partial.render(
+            &list,
+            &Damage::Partial(vec![
+                Bounds::new(0.0, 0.0, 100.0, 64.0),
+                Bounds::new(150.0, 90.0, 240.0, 180.0),
+            ]),
+        );
+        assert_eq!(
+            first_difference(partial.pixmap().data(), full.pixmap().data(), 240),
+            None
+        );
+    }
+
+    #[test]
+    fn large_solid_quads_match_tiny_skia_exactly() {
+        let rounded = |radius: f32| {
+            let mut clip = Clip {
+                bounds: Bounds::new(0.0, 0.0, 240.0, 180.0),
+                rounded: None,
+            };
+            clip.push_rounded(RoundedClip {
+                bounds: Bounds::new(10.0, 8.5, 230.0, 172.0),
+                radius,
+            });
+            clip
+        };
+        for clip in [
+            Bounds::new(0.0, 0.0, 240.0, 180.0),
+            Bounds::new(30.0, 25.0, 190.0, 140.0),
+        ]
+        .map(|bounds| Clip {
+            bounds,
+            rounded: None,
+        })
+        .into_iter()
+        .chain([rounded(16.0), rounded(500.0)])
+        {
+            let list = big_quads(clip.clone());
+            let mut full = Rasterizer::new(240, 180);
+            full.render(&list, &Damage::Full);
+            let mut slow = Rasterizer::new(240, 180);
+            slow.solid_fast_path = false;
+            slow.render(&list, &Damage::Full);
+            assert_eq!(
+                first_difference(full.pixmap().data(), slow.pixmap().data(), 240),
+                None,
+                "clip {clip:?}"
+            );
+            let mut partial = Rasterizer::new(240, 180);
+            partial.render(&list, &Damage::Full);
+            partial.render(
+                &list,
+                &Damage::Partial(vec![
+                    Bounds::new(0.0, 0.0, 100.0, 64.0),
+                    Bounds::new(150.0, 90.0, 240.0, 180.0),
+                ]),
+            );
+            assert_eq!(
+                first_difference(partial.pixmap().data(), full.pixmap().data(), 240),
+                None,
+                "clip {clip:?}"
+            );
+        }
     }
 
     #[test]
@@ -1480,7 +2053,13 @@ mod tests {
             ColorScheme::default(),
         );
         recorder.push_clip_rounded(rect(0.0, 0.0, 1024.0, 1024.0), 16.0);
-        recorder.fill_rect(rect(0.0, 0.0, 1024.0, 1024.0), Color::rgb(255, 0, 0), 16.0);
+        recorder.fill_linear_gradient(
+            rect(0.0, 0.0, 1024.0, 1024.0),
+            Color::rgb(255, 0, 0),
+            Color::rgb(0, 0, 255),
+            90.0,
+            16.0,
+        );
         recorder.pop_clip();
         let mut raster = Rasterizer::new(1024, 1024);
         raster.render(&recorder.finish(), &Damage::Full);

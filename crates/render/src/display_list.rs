@@ -653,29 +653,35 @@ fn scrolled_layer(previous: &DisplayList, next: &DisplayList) -> Option<(u16, i3
 }
 
 /// Whether everything drawn under `area` before the items at `first` is a
-/// single color, so shifting those pixels leaves them unchanged.
+/// single color, so shifting those pixels leaves them unchanged. Solid
+/// quads covering `area` keep it uniform even when translucent, as long as
+/// what they blend over is uniform too.
 fn uniform_backdrop(list: &DisplayList, spaces: &[LayerSpace], first: usize, area: Bounds) -> bool {
-    let backdrop = list.items[..first]
+    for item in list.items[..first]
         .iter()
         .rev()
-        .find(|item| !item.visible_bounds(spaces).intersect(area).is_empty());
-    let Some(item) = backdrop else {
-        return true;
-    };
-    let Primitive::Quad(quad) = item.screen_primitive(spaces).into_owned() else {
-        return false;
-    };
-    let clip = item.screen_clip(spaces);
-    quad.gradient.is_none()
-        && quad.background.a == 255
-        && quad.border_width == 0.0
-        && clip.contains(area)
-        && RoundedClip {
-            bounds: quad.bounds,
-            radius: quad.radius,
+        .filter(|item| !item.visible_bounds(spaces).intersect(area).is_empty())
+    {
+        let Primitive::Quad(quad) = item.screen_primitive(spaces).into_owned() else {
+            return false;
+        };
+        let covers = quad.gradient.is_none()
+            && quad.border_width == 0.0
+            && item.screen_clip(spaces).contains(area)
+            && RoundedClip {
+                bounds: quad.bounds,
+                radius: quad.radius,
+            }
+            .inner()
+            .contains(area);
+        if !covers {
+            return false;
         }
-        .inner()
-        .contains(area)
+        if quad.background.a == 255 {
+            return true;
+        }
+    }
+    true
 }
 
 /// Rects of `area` not covered by `area` shifted by `(dx, dy)`.
@@ -705,12 +711,13 @@ fn exposed(area: Bounds, dx: i32, dy: i32) -> Vec<Bounds> {
 const ALIGN_LOOKAHEAD: usize = 8;
 
 /// Walks `old` and `new` in step, calling `removed`/`added` for items only
-/// one side has (found within [`ALIGN_LOOKAHEAD`] items) and `changed` for
-/// positions whose items differ.
+/// one side has (found within `lookahead` of the unmatched item) and
+/// `changed` for positions whose items differ.
 fn pair<T>(
     old: &[T],
     new: &[T],
     equal: impl Fn(&T, &T) -> bool,
+    lookahead: impl Fn(&T) -> usize,
     mut removed: impl FnMut(&T),
     mut added: impl FnMut(&T),
     mut changed: impl FnMut(&T, &T),
@@ -723,13 +730,16 @@ fn pair<T>(
             continue;
         }
         let ahead = |items: &[T], from: usize, target: &T, flip: bool| {
-            items[from..].iter().take(ALIGN_LOOKAHEAD).position(|item| {
-                if flip {
-                    equal(target, item)
-                } else {
-                    equal(item, target)
-                }
-            })
+            items[from..]
+                .iter()
+                .take(lookahead(target))
+                .position(|item| {
+                    if flip {
+                        equal(target, item)
+                    } else {
+                        equal(item, target)
+                    }
+                })
         };
         if let Some(skip) = ahead(old, i + 1, &new[j], false) {
             old[i..=i + skip].iter().for_each(&mut removed);
@@ -784,6 +794,22 @@ pub fn diff(previous: Option<&DisplayList>, next: &DisplayList) -> FrameDiff {
     let shifted = |layer: u16| scroll.is_some_and(|(moved, _)| next.within(layer, moved));
     let same_space = |layer: u16| old_spaces.get(layer as usize) == new_spaces.get(layer as usize);
     let equal = |a: &DrawItem, b: &DrawItem| a == b && (shifted(a.layer) || same_space(a.layer));
+    let scrolled_items = scroll.map_or(0, |(moved, _)| {
+        let count = |list: &DisplayList| {
+            list.items
+                .iter()
+                .filter(|item| next.within(item.layer, moved))
+                .count()
+        };
+        count(previous).max(count(next))
+    });
+    let lookahead = |item: &DrawItem| {
+        if shifted(item.layer) {
+            scrolled_items.max(ALIGN_LOOKAHEAD)
+        } else {
+            ALIGN_LOOKAHEAD
+        }
+    };
 
     let (old, new) = (&previous.items, &next.items);
     let prefix = old.iter().zip(new).take_while(|(a, b)| equal(a, b)).count();
@@ -817,6 +843,7 @@ pub fn diff(previous: Option<&DisplayList>, next: &DisplayList) -> FrameDiff {
         old_mid,
         new_mid,
         equal,
+        lookahead,
         |item| push(old_bounds(item)),
         |item| push(item.visible_bounds(&new_spaces)),
         |a, b| {
@@ -998,6 +1025,7 @@ mod tests {
             &[1, 2, 3, 4, 5, 6],
             &[2, 3, 30, 5, 6, 7, 8],
             |a, b| a == b,
+            |_| ALIGN_LOOKAHEAD,
             |x| removed.push(*x),
             |x| added.push(*x),
             |a, b| changed.push((*a, *b)),
@@ -1005,6 +1033,114 @@ mod tests {
         assert_eq!(removed, vec![1]);
         assert_eq!(changed, vec![(4, 30)]);
         assert_eq!(added, vec![7, 8]);
+    }
+
+    fn solid(bounds: Bounds, color: Color) -> DrawItem {
+        DrawItem {
+            primitive: Primitive::Quad(Quad {
+                bounds,
+                background: color,
+                gradient: None,
+                radius: 0.0,
+                border_width: 0.0,
+                border_color: Color::rgba(0, 0, 0, 0),
+            }),
+            clip: Clip {
+                bounds: Bounds::new(0.0, 0.0, 200.0, 100.0),
+                rounded: None,
+            },
+            layer: 0,
+        }
+    }
+
+    fn scrolled_over(
+        backdrop: &[DrawItem],
+        offset: f32,
+        rows: std::ops::Range<usize>,
+    ) -> DisplayList {
+        let mut frame = list(backdrop.to_vec());
+        frame.layers.push(ScrollLayer {
+            parent: 0,
+            viewport: Bounds::new(0.0, 0.0, 200.0, 100.0),
+            radius: 0.0,
+            parent_clip: Clip {
+                bounds: Bounds::new(0.0, 0.0, 200.0, 100.0),
+                rounded: None,
+            },
+            offset: [0.0, -offset],
+        });
+        for row in rows {
+            let mut item = quad(0.0, BLUE);
+            if let Primitive::Quad(q) = &mut item.primitive {
+                q.bounds = Bounds::new(0.0, row as f32 * 20.0, 200.0, row as f32 * 20.0 + 18.0);
+            }
+            item.layer = 1;
+            frame.items.push(item);
+        }
+        frame
+    }
+
+    #[test]
+    fn a_scrolled_layer_over_translucent_solid_backdrops_blits() {
+        let area = Bounds::new(0.0, 0.0, 200.0, 100.0);
+        let backdrop = [
+            solid(area, Color::rgba(20, 20, 20, 240)),
+            solid(area, Color::rgba(255, 255, 255, 12)),
+        ];
+        let diff = diff(
+            Some(&scrolled_over(&backdrop, 0.0, 0..5)),
+            &scrolled_over(&backdrop, 20.0, 1..6),
+        );
+        assert_eq!(
+            diff.scroll,
+            Some(ScrollBlit {
+                area,
+                dx: 0,
+                dy: -20,
+            })
+        );
+    }
+
+    #[test]
+    fn many_rows_leaving_a_scrolled_layer_only_damage_the_exposed_strip() {
+        let area = Bounds::new(0.0, 0.0, 200.0, 100.0);
+        let backdrop = [solid(area, RED)];
+        let rows = |offset: f32| {
+            let mut frame = scrolled_over(&backdrop, offset, 0..0);
+            for row in 0..40 {
+                let y = row as f32 * 4.0;
+                if y + 3.0 <= offset || y >= offset + 100.0 {
+                    continue;
+                }
+                let mut item = quad(0.0, BLUE);
+                if let Primitive::Quad(q) = &mut item.primitive {
+                    q.bounds = Bounds::new(row as f32, y, row as f32 + 100.0, y + 3.0);
+                }
+                item.layer = 1;
+                frame.items.push(item);
+            }
+            frame
+        };
+        let diff = diff(Some(&rows(0.0)), &rows(48.0));
+        assert!(diff.scroll.is_some());
+        let Damage::Partial(regions) = &diff.repaint else {
+            panic!("expected partial damage");
+        };
+        assert!(regions.iter().all(|region| region.y0 >= 51.0));
+    }
+
+    #[test]
+    fn a_translucent_backdrop_over_uneven_pixels_does_not_blit() {
+        let area = Bounds::new(0.0, 0.0, 200.0, 100.0);
+        let backdrop = [
+            solid(Bounds::new(0.0, 0.0, 100.0, 100.0), RED),
+            solid(area, Color::rgba(20, 20, 20, 240)),
+        ];
+        let diff = diff(
+            Some(&scrolled_over(&backdrop, 0.0, 0..5)),
+            &scrolled_over(&backdrop, 20.0, 1..6),
+        );
+        assert_eq!(diff.scroll, None);
     }
 
     #[test]

@@ -522,6 +522,9 @@ pub enum WindowEvent {
     DecorationsChanged(WindowDecorations),
     CloseRequested,
     Resized(PhysicalSize),
+    /// Outer top-left position on screen. Not sent on Wayland, where clients
+    /// cannot know their position.
+    Moved(PhysicalPosition),
     /// X11 VisibilityNotify: `false` when the window became visible (mapped),
     /// whose pixels the server dropped. Not sent on other platforms.
     Occluded(bool),

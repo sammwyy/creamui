@@ -756,6 +756,7 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
         }
         winit::event::WindowEvent::CursorLeft { .. } => WindowEvent::CursorLeft,
         winit::event::WindowEvent::Focused(focused) => WindowEvent::Focused(focused),
+        winit::event::WindowEvent::Occluded(occluded) => WindowEvent::Occluded(occluded),
         winit::event::WindowEvent::MouseWheel { delta, .. } => WindowEvent::MouseWheel {
             delta: match delta {
                 WinitScrollDelta::LineDelta(x, y) => MouseScrollDelta::LineDelta(x, y),

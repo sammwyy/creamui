@@ -13,23 +13,18 @@ impl ContextMenu {
                 controller,
                 viewport,
                 ContextMenuStyle {
-                    background: theme.surface_elevated,
-                    border: theme.border,
+                    background: elevation::overlay_fill(&theme),
+                    border: elevation::overlay_border(&theme),
                     text: theme.text_primary,
                     muted: theme.text_disabled,
-                    active: theme.surface_hover,
+                    active: elevation::with_alpha(theme.accent, 46),
                     radius: theme.menu_radius,
                     item_radius: theme.menu_item_radius,
                     row_height: 32.0 * theme.text_scale,
                     font_size: 13.0 * theme.text_scale,
                     width: 248.0 * theme.text_scale,
-                    shadow: Some(creamui_core::BoxShadow::new(
-                        0.0,
-                        6.0,
-                        18.0,
-                        0.0,
-                        Color::rgba(0, 0, 0, 48),
-                    )),
+                    shadow: (!theme.high_contrast)
+                        .then(|| elevation::Elevation::Overlay.shadow(&theme)),
                 },
             ),
         }

@@ -17,21 +17,38 @@ impl Collapsible {
         let trigger = RawView::new(
             Style::default()
                 .flex_row()
-                .gap(theme.spacing_small)
+                .gap(theme.spacing_medium)
                 .align(Align::Center)
-                .padding_xy(theme.spacing_medium, theme.spacing_small),
+                .padding_xy(
+                    theme.spacing_large,
+                    theme.spacing_medium + theme.spacing_small,
+                ),
         )
-        .child(Box::new(RawText::new(
-            if expanded { "−" } else { "+" },
-            theme.text_secondary,
-            theme.typography.body,
-        )))
+        .corner_radius(theme.radius_medium)
+        .hover_style(
+            creamui_core::StateStyle::new()
+                .background(elevation::with_alpha(theme.text_primary, 12)),
+        )
+        .child(Box::new(
+            crate::Icon::new(
+                if expanded {
+                    crate::Symbol::ChevronDown
+                } else {
+                    crate::Symbol::ChevronRight
+                },
+                theme.text_secondary,
+            )
+            .size(14.0),
+        ))
         .child(Box::new(
             RawText::new(label, theme.text_primary, theme.typography.body)
                 .font_family(theme.font_family),
         ));
         Self {
             inner: RawCollapsible::new(Style::default(), expanded, on_toggle)
+                .background(elevation::group_fill(&theme))
+                .border(theme.border, 1.0)
+                .corner_radius(theme.radius_medium)
                 .trigger(Box::new(trigger)),
         }
     }
@@ -42,7 +59,7 @@ impl Collapsible {
             RawView::new(
                 Style::default()
                     .flex_column()
-                    .padding_xy(theme.spacing_medium, theme.spacing_small),
+                    .padding_xy(theme.spacing_large, theme.spacing_medium),
             )
             .child(content),
         ));
@@ -95,46 +112,93 @@ impl Alert {
             AlertStatus::Warning => theme.warning,
             AlertStatus::Error => theme.danger,
         };
-        let (background, text) = match variant {
-            AlertVariant::Subtle => (theme.surface_elevated.mix(tone, 0.14), theme.text_primary),
-            AlertVariant::Solid => {
-                let brightness =
-                    (u32::from(tone.r) * 299 + u32::from(tone.g) * 587 + u32::from(tone.b) * 114)
-                        / 1000;
-                (
-                    tone,
-                    if brightness > 150 {
-                        Color::rgb(0, 0, 0)
-                    } else {
-                        Color::rgb(255, 255, 255)
-                    },
-                )
-            }
-        };
-        let icon = RawView::new(Style::default().size(8.0, 8.0))
-            .background(text)
-            .corner_radius(4.0);
-        Self {
-            inner: RawAlert::new(
-                Style::default()
-                    .flex_row()
-                    .align(Align::Center)
-                    .gap(theme.spacing_medium)
-                    .padding_all(theme.spacing_medium),
-                status,
+        let light = elevation::is_light(&theme);
+        let solid = variant == AlertVariant::Solid;
+        let (background, text, secondary) = if solid {
+            let text = tone.readable_text();
+            (tone, text, elevation::with_alpha(text, 215))
+        } else {
+            (
+                elevation::tint(&theme, tone),
+                theme.text_primary,
+                theme.text_secondary,
             )
-            .background(background)
-            .corner_radius(theme.radius_medium)
-            .icon(Box::new(icon))
-            .title(Box::new(
-                RawText::new(title, text, theme.typography.body)
-                    .bold(true)
-                    .font_family(theme.font_family),
-            ))
-            .message(Box::new(
-                RawText::new(message, text, theme.typography.body).font_family(theme.font_family),
-            )),
-            foreground: text,
+        };
+        let badge = if solid {
+            elevation::with_alpha(text, 40)
+        } else {
+            elevation::with_alpha(tone, if light { 40 } else { 56 })
+        };
+        let glyph = if solid {
+            text
+        } else {
+            elevation::tinted_text(&theme, tone)
+        };
+        let symbol: BoxedWidget = match status {
+            AlertStatus::Success => {
+                Box::new(crate::Icon::new(crate::Symbol::Check, glyph).size(16.0))
+            }
+            AlertStatus::Error => {
+                Box::new(crate::Icon::new(crate::Symbol::Close, glyph).size(14.0))
+            }
+            AlertStatus::Info | AlertStatus::Warning => Box::new(
+                RawText::new(
+                    if status == AlertStatus::Info {
+                        "i"
+                    } else {
+                        "!"
+                    },
+                    glyph,
+                    theme.typography.body,
+                )
+                .bold(true),
+            ),
+        };
+        let icon = RawView::new(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .justify(crate::layout::Justify::Center)
+                .size(26.0, 26.0),
+        )
+        .corner_radius(13.0)
+        .background(badge)
+        .child(symbol);
+        let inner = RawAlert::new(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .gap(theme.spacing_medium + theme.spacing_small)
+                .padding_xy(
+                    theme.spacing_large,
+                    theme.spacing_medium + theme.spacing_small,
+                ),
+            status,
+        )
+        .background(background)
+        .border(
+            if solid {
+                tone
+            } else {
+                elevation::with_alpha(tone, if light { 56 } else { 48 })
+            },
+            1.0,
+        )
+        .corner_radius(theme.radius_medium)
+        .icon(Box::new(icon))
+        .title(Box::new(
+            RawText::new(title, text, theme.typography.body)
+                .bold(true)
+                .font_family(theme.font_family),
+        ))
+        .message(Box::new(
+            RawText::new(message, secondary, theme.typography.body)
+                .font_family(theme.font_family)
+                .margin_top(2.0),
+        ));
+        Self {
+            inner,
+            foreground: if solid { text } else { theme.text_secondary },
         }
     }
 
@@ -145,11 +209,7 @@ impl Alert {
 
     pub fn dismiss(mut self, on_dismiss: impl Fn() + 'static) -> Self {
         self.inner = self.inner.dismiss(
-            Box::new(RawText::new(
-                "×",
-                self.foreground,
-                use_theme().typography.body,
-            )),
+            Box::new(crate::Icon::new(crate::Symbol::Close, self.foreground).size(14.0)),
             on_dismiss,
         );
         self
@@ -216,8 +276,8 @@ impl EmptyState {
                 Style::default()
                     .flex_column()
                     .align(Align::Center)
-                    .gap(theme.spacing_small)
-                    .padding_all(theme.spacing_large),
+                    .gap(theme.spacing_medium)
+                    .padding_all(theme.spacing_large + theme.spacing_medium),
                 Box::new(
                     RawText::new(title, theme.text_primary, theme.typography.section)
                         .bold(true)
@@ -239,7 +299,9 @@ impl EmptyState {
     }
 
     pub fn action(mut self, action: BoxedWidget) -> Self {
-        self.inner = self.inner.action(action);
+        self.inner = self.inner.action(Box::new(
+            RawView::new(Style::default().margin_xy(0.0, use_theme().spacing_medium)).child(action),
+        ));
         self
     }
 
@@ -312,5 +374,34 @@ mod tests {
                 assert_eq!(children.len(), 2);
             });
         }
+    }
+
+    #[test]
+    fn disclosure_and_alert_have_themed_containers_and_separate_status_icon() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let theme = use_theme();
+            let mut collapsible = Collapsible::new("Details", false, |_| {});
+            assert_eq!(
+                collapsible.style().paint.corner_radius,
+                Some(theme.radius_medium)
+            );
+            assert!(collapsible.style().paint.border.is_some());
+            let mut trigger = collapsible.children();
+            let trigger_content = trigger[0].children();
+            assert_eq!(
+                trigger_content[0].style().layout.padding.left,
+                creamui_core::layout::LengthPercentage::Length(theme.spacing_large)
+            );
+
+            let mut alert = Alert::new(AlertStatus::Info, "Notice", "Description");
+            assert!(alert.style().paint.border.is_some());
+            let mut children = alert.children();
+            assert_eq!(
+                children[0].style().layout.size.width,
+                Dimension::Length(26.0)
+            );
+            assert_eq!(children[0].children().len(), 1);
+        });
     }
 }

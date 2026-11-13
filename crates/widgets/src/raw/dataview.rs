@@ -142,6 +142,10 @@ fn row_container_style(height: f32) -> Style {
             width: creamui_core::layout::Dimension::Auto,
             height: creamui_core::layout::Dimension::Length(height),
         },
+        min_size: creamui_core::layout::Size {
+            width: creamui_core::layout::Dimension::Percent(1.0),
+            height: creamui_core::layout::Dimension::Auto,
+        },
         flex_shrink: 0.0,
         ..Default::default()
     }

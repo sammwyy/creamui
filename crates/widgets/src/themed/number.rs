@@ -16,12 +16,13 @@ impl NumberInput {
                 Style {
                     size: creamui_core::layout::Size {
                         width: Dimension::Length(186.0),
-                        height: Dimension::Length(38.0),
+                        height: Dimension::Length(34.0),
                     },
                     ..Style::default()
                         .flex_row()
                         .align(Align::Center)
-                        .padding_xy(theme.spacing_small, 0.0)
+                        .gap(2.0)
+                        .padding_xy(4.0, 0.0)
                 },
                 controller,
                 value,
@@ -32,8 +33,20 @@ impl NumberInput {
                 theme.text_secondary,
                 theme.typography.body,
             )
-            .background(theme.surface_elevated)
-            .border(theme.border, theme.input_border_width)
+            .button_style(
+                creamui_core::Style::from(
+                    Style::default()
+                        .flex_row()
+                        .align(Align::Center)
+                        .justify(crate::layout::Justify::Center)
+                        .size(26.0, 26.0),
+                )
+                .corner_radius(theme.radius_small)
+                .hover(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 1)))
+                .pressed(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 2))),
+            )
+            .background(elevation::field_fill(&theme))
+            .border(elevation::field_border(&theme), theme.input_border_width)
             .corner_radius(theme.input_radius),
         }
     }

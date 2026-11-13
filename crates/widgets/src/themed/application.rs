@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::{Align, StyleExt};
-use crate::raw::{RawAccordion, RawField, RawForm, RawPagination};
+use crate::raw::{PaginationItemStyles, RawAccordion, RawField, RawForm, RawPagination};
 
 pub struct Accordion {
     inner: RawAccordion,
@@ -25,25 +25,49 @@ impl Accordion {
         expanded: bool,
     ) -> Self {
         let theme = use_theme();
-        let header = RawView::new(
-            Style::default()
+        let header = RawView::new(Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Auto,
+            },
+            ..Style::default()
                 .flex_row()
-                .gap(theme.spacing_small)
+                .gap(theme.spacing_medium)
                 .align(Align::Center)
-                .padding_all(theme.spacing_medium),
-        )
-        .background(theme.surface_elevated)
+                .padding_xy(theme.spacing_large, theme.spacing_medium + 2.0)
+        })
+        .background(elevation::group_fill(&theme))
+        .border(theme.border, 1.0)
         .corner_radius(theme.radius_medium)
-        .child(Box::new(RawText::new(
-            if expanded { "−" } else { "+" },
-            theme.accent,
-            theme.typography.body,
-        )))
+        .hover_style(
+            creamui_core::StateStyle::new()
+                .background(elevation::group_fill(&theme).mix(theme.text_primary, 0.04)),
+        )
+        .child(Box::new(
+            crate::Icon::new(
+                if expanded {
+                    crate::Symbol::ChevronDown
+                } else {
+                    crate::Symbol::ChevronRight
+                },
+                theme.text_secondary,
+            )
+            .size(14.0),
+        ))
         .child(Box::new(
             RawText::new(heading, theme.text_primary, theme.typography.body)
+                .bold(expanded)
                 .font_family(theme.font_family),
         ));
-        self.inner = self.inner.item(Box::new(header), content, expanded);
+        let content = RawView::new(
+            Style::default()
+                .flex_column()
+                .padding_xy(theme.spacing_large, theme.spacing_medium),
+        )
+        .child(content);
+        self.inner = self
+            .inner
+            .item(Box::new(header), Box::new(content), expanded);
         self
     }
 }
@@ -135,18 +159,31 @@ impl Form {
         self.inner = self
             .inner
             .submit(
-                Box::new(RawText::new(
-                    label,
-                    theme.selection_text,
-                    theme.typography.body,
-                )),
+                Box::new(
+                    RawText::new(label, theme.accent.readable_text(), theme.typography.body)
+                        .bold(true),
+                ),
                 on_submit,
             )
             .submit_style(
-                creamui_core::Style::new()
-                    .background(theme.accent)
-                    .corner_radius(theme.button_radius)
-                    .padding(theme.spacing_medium),
+                creamui_core::Style::from(Style {
+                    align_self: Some(creamui_core::layout::AlignSelf::Start),
+                    ..Style::default()
+                        .flex_row()
+                        .align(Align::Center)
+                        .justify(crate::layout::Justify::Center)
+                        .padding_xy(14.0, 0.0)
+                })
+                .height(34.0)
+                .background(theme.accent)
+                .corner_radius(theme.button_radius)
+                .hover(creamui_core::StateStyle::new().background(theme.accent_hover))
+                .pressed(creamui_core::StateStyle::new().background(theme.accent_pressed))
+                .disabled(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 1)))
+                .focus(
+                    creamui_core::StateStyle::new()
+                        .outline(elevation::focus_ring(&theme), elevation::FOCUS_RING_WIDTH),
+                ),
             );
         self
     }
@@ -181,13 +218,50 @@ impl Pagination {
                 total,
                 on_change,
             )
-            .colors(theme.surface_elevated, theme.text_primary, theme.accent),
+            .item_styles(pagination_styles(&theme)),
         }
     }
 
     pub fn compact(mut self) -> Self {
         self.inner = self.inner.compact();
         self
+    }
+}
+
+fn pagination_styles(theme: &Theme) -> PaginationItemStyles {
+    let base = || {
+        creamui_core::Style::from(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .justify(crate::layout::Justify::Center)
+                .padding_xy(8.0, 0.0),
+        )
+        .min_width(32.0)
+        .height(32.0)
+        .corner_radius(theme.button_radius)
+    };
+    let clear = elevation::with_alpha(theme.text_primary, 0);
+    let item = base()
+        .background(clear)
+        .border(clear, 1.0)
+        .hover(creamui_core::StateStyle::new().background(elevation::subtle(theme, 1)))
+        .pressed(creamui_core::StateStyle::new().background(elevation::subtle(theme, 2)))
+        .disabled(
+            creamui_core::StateStyle::new()
+                .background(clear)
+                .color(theme.text_disabled),
+        )
+        .focus(creamui_core::StateStyle::new().outline(elevation::focus_ring(theme), 2.0));
+    let selected = base()
+        .background(theme.accent)
+        .border(theme.accent, 1.0)
+        .focus(creamui_core::StateStyle::new().outline(elevation::focus_ring(theme), 2.0));
+    PaginationItemStyles {
+        item,
+        selected,
+        text: theme.text_primary,
+        selected_text: theme.accent.readable_text(),
     }
 }
 

@@ -11,7 +11,7 @@ impl DescriptionList {
     pub fn new() -> Self {
         let theme = use_theme();
         Self {
-            inner: RawDescriptionList::new(Style::default().flex_column().gap(theme.spacing_small)),
+            inner: RawDescriptionList::new(Style::default().flex_column().gap(theme.spacing_large)),
         }
     }
 
@@ -26,7 +26,7 @@ impl DescriptionList {
             Box::new(RawText::new(
                 term,
                 theme.text_secondary,
-                theme.typography.body,
+                theme.typography.caption,
             )),
             Box::new(RawText::new(
                 value,
@@ -63,7 +63,8 @@ impl StatusBar {
                     .align(Align::Center)
                     .padding_xy(theme.spacing_medium, theme.spacing_small)
             })
-            .background(theme.surface_elevated)
+            .background(elevation::with_alpha(theme.text_primary, 8))
+            .border(theme.border, 1.0)
             .corner_radius(theme.radius_small),
         }
     }
@@ -104,7 +105,7 @@ impl Stepper {
                 Style::default()
                     .flex_row()
                     .align(Align::Center)
-                    .gap(theme.spacing_small),
+                    .gap(theme.spacing_medium),
                 on_select,
             ),
             count: 0,
@@ -115,31 +116,62 @@ impl Stepper {
         let theme = use_theme();
         self.count += 1;
         let active = state == StepState::Active;
+        let completed = state == StepState::Completed;
         let foreground = if state == StepState::Disabled {
             theme.text_disabled
-        } else if active {
-            theme.selection_text
         } else {
             theme.text_primary
         };
+        let indicator = RawView::new(
+            Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .justify(crate::layout::Justify::Center)
+                .size(22.0, 22.0),
+        )
+        .background(if active || completed {
+            theme.accent
+        } else {
+            elevation::rail_fill(&theme)
+        })
+        .corner_radius(theme.radius_large.min(11.0))
+        .child(Box::new(
+            RawText::new(
+                self.count.to_string(),
+                if active || completed {
+                    theme.accent.readable_text()
+                } else {
+                    foreground
+                },
+                theme.typography.caption,
+            )
+            .bold(active),
+        ));
         let item = RawView::new(
             Style::default()
                 .flex_row()
                 .align(Align::Center)
-                .gap(theme.spacing_small)
-                .padding_xy(theme.spacing_small, theme.spacing_small),
+                .gap(theme.spacing_medium)
+                .padding_xy(
+                    theme.spacing_medium + theme.spacing_small,
+                    theme.spacing_medium,
+                ),
         )
         .background(if active {
-            theme.accent
+            elevation::with_alpha(theme.accent, 36)
         } else {
-            theme.surface_elevated
+            elevation::group_fill(&theme)
         })
-        .corner_radius(theme.radius_small)
-        .child(Box::new(RawText::new(
-            self.count.to_string(),
-            foreground,
-            theme.typography.caption,
-        )))
+        .border(
+            if active {
+                elevation::with_alpha(theme.accent, 150)
+            } else {
+                theme.border
+            },
+            1.0,
+        )
+        .corner_radius(theme.radius_medium)
+        .child(Box::new(indicator))
         .child(Box::new(RawText::new(
             label,
             foreground,
@@ -194,6 +226,30 @@ mod tests {
                 .step("Create", StepState::Completed)
                 .step("Review", StepState::Active);
             assert_eq!(steps.children().len(), 2);
+        });
+    }
+
+    #[test]
+    fn steps_keep_state_distinct_from_label_and_respect_theme_corners() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let theme = use_theme();
+            let mut steps = Stepper::new(|_| {})
+                .step("Create", StepState::Completed)
+                .step("Review", StepState::Active);
+            let mut items = steps.children();
+            let mut active_button = items[1].children();
+            assert_eq!(
+                active_button[0].style().paint.corner_radius,
+                Some(theme.radius_medium)
+            );
+            let parts = active_button[0].children();
+            assert_eq!(parts.len(), 2);
+            assert_eq!(parts[0].style().layout.size.width, Dimension::Length(22.0));
+            assert_eq!(
+                parts[0].style().paint.corner_radius,
+                Some(theme.radius_large.min(11.0))
+            );
         });
     }
 }

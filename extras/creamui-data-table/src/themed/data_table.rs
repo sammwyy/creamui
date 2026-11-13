@@ -41,12 +41,20 @@ impl DataTable {
         .customize(|table| {
             table.header_height = 34.0;
             table.row_height = 32.0;
-            table.header_background = Some(theme.surface_elevated);
-            table.header_text_color = theme.text_primary;
+            table.header_background = Some(creamui_widgets::elevation::with_alpha(
+                theme.text_primary,
+                10,
+            ));
+            table.header_text_color = theme.text_secondary;
             table.cell_text_color = theme.text_primary;
-            table.row_background = Some(theme.surface);
-            table.alt_row_background = Some(theme.surface_elevated);
-            table.selected_row_background = Some(theme.accent_hover);
+            table.cell_padding = table.cell_padding.max(10.0);
+            table.row_background = None;
+            table.alt_row_background = Some(creamui_widgets::elevation::with_alpha(
+                theme.text_primary,
+                6,
+            ));
+            table.selected_row_background =
+                Some(creamui_widgets::elevation::with_alpha(theme.accent, 56));
             table.divider_color = Some(theme.border);
         });
         Self { inner: raw }

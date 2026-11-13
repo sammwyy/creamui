@@ -163,7 +163,10 @@ fn button_states_keep_readable_labels_without_font_dependent_glyphs() {
             );
             assert!(painter.texts.iter().any(|text| text == "Saved"));
             if state == creamui_widgets::ButtonState::Loading {
-                assert!(painter.text_colors.contains(&theme.text_secondary));
+                assert!(painter
+                    .text_colors
+                    .iter()
+                    .any(|color| color.contrast_ratio(theme.accent) >= 4.5));
             }
         }
     });
@@ -251,11 +254,11 @@ fn themed_file_picker_paints_its_box_and_preserves_common_overrides() {
         assert!(painter
             .filled_rects
             .iter()
-            .any(|(_, color)| *color == theme.surface_elevated));
+            .any(|(_, color)| *color == creamui_widgets::elevation::field_fill(&theme)));
         assert!(painter
             .stroked_rects
             .iter()
-            .any(|(_, color)| *color == theme.border_strong));
+            .any(|(_, color)| *color == creamui_widgets::elevation::control_border(&theme)));
 
         let picker = creamui_widgets::FilePicker::new("", |_| {});
         picker.paint(
@@ -402,11 +405,18 @@ struct RecordingPainter {
     pressed: bool,
     time: f32,
     filled_rects: Vec<(Rect, Color)>,
+    shadows: Vec<(Rect, Color)>,
     stroked_rects: Vec<(Rect, Color)>,
     texts: Vec<String>,
     text_colors: Vec<Color>,
     text_rects: Vec<Rect>,
     lines: Vec<(Point, Point)>,
+}
+
+impl RecordingPainter {
+    fn has_fill(&self, fill: Color) -> bool {
+        self.filled_rects.iter().any(|(_, color)| *color == fill)
+    }
 }
 
 #[derive(Default)]
@@ -448,6 +458,19 @@ impl Painter for RecordingPainter {
     }
     fn fill_rect(&mut self, rect: Rect, color: Color, _corner_radius: f32) {
         self.filled_rects.push((rect, color));
+    }
+
+    fn draw_box_shadow(
+        &mut self,
+        rect: Rect,
+        color: Color,
+        _: f32,
+        _: f32,
+        _: f32,
+        _: f32,
+        _: f32,
+    ) {
+        self.shadows.push((rect, color));
     }
 
     fn stroke_rect(&mut self, rect: Rect, color: Color, _width: f32, _corner_radius: f32) {
@@ -712,10 +735,7 @@ fn button_interactions_use_theme_tokens_and_disabled_controls_skip_focus() {
             height: 180.,
         };
         let scene = render_frame(build(), size, &mut painter);
-        assert!(painter
-            .filled_rects
-            .iter()
-            .any(|(_, color)| *color == theme.accent_hover));
+        assert!(painter.has_fill(theme.accent_hover));
         assert_eq!(scene.next_focus(None, false), Some(0));
         assert_eq!(scene.next_focus(Some(0), false), Some(0));
         assert_eq!(scene.next_focus(None, true), Some(0));
@@ -829,8 +849,8 @@ fn equal_tabs_keep_labels_on_one_line_inside_their_buttons() {
             else {
                 panic!("equal tabs must have a fixed width");
             };
-            assert!(rect.height <= 34.0, "{rect:?}");
-            assert!(rect.width >= label_width, "{rect:?} < {label_width}");
+            assert!(rect.height <= 20.0, "{rect:?} wrapped onto a second line");
+            assert!(rect.width <= label_width, "{rect:?} > {label_width}");
         }
     });
 }
@@ -999,10 +1019,7 @@ fn progress_indicators_paint_accent_fill() {
             },
             &mut painter,
         );
-        assert!(painter
-            .filled_rects
-            .iter()
-            .any(|(_, color)| *color == theme.accent));
+        assert!(painter.has_fill(theme.accent));
     });
 }
 
@@ -1204,10 +1221,7 @@ fn button_paints_and_responds_to_clicks() {
 
         assert_eq!(painter.texts, vec!["Click me".to_string()]);
         assert!(
-            painter
-                .filled_rects
-                .iter()
-                .any(|(_, color)| *color == theme.accent),
+            painter.has_fill(theme.accent),
             "button should paint with the theme's accent color"
         );
 
@@ -1305,7 +1319,8 @@ fn checkbox_toggles_on_click_and_repaints_accordingly() {
         assert!(painter
             .stroked_rects
             .iter()
-            .any(|(_, color)| *color == theme.border_strong));
+            .any(|(_, color)| *color
+                == creamui_widgets::elevation::with_alpha(theme.text_primary, 90)));
         assert!(!painter
             .filled_rects
             .iter()
@@ -1324,10 +1339,7 @@ fn checkbox_toggles_on_click_and_repaints_accordingly() {
         // Re-render with the now-checked state: painted as a fill, not an outline.
         let mut painter2 = RecordingPainter::default();
         render_frame(Box::new(build(checked.clone())), size, &mut painter2);
-        assert!(painter2
-            .filled_rects
-            .iter()
-            .any(|(_, color)| *color == theme.accent));
+        assert!(painter2.has_fill(theme.accent));
     });
 }
 
@@ -1355,7 +1367,7 @@ fn text_input_is_focusable_and_types_and_deletes_characters() {
         let input_rect = painter
             .stroked_rects
             .iter()
-            .find(|(_, color)| *color == theme.border)
+            .find(|(_, color)| *color == creamui_widgets::elevation::field_border(&theme))
             .map(|(rect, _)| *rect)
             .expect("text input border rect");
         let center = Point {
@@ -1728,7 +1740,7 @@ fn text_input_shows_a_hover_cursor_and_a_focus_only_blinking_caret() {
         let input_rect = painter
             .stroked_rects
             .iter()
-            .find(|(_, color)| *color == theme.border)
+            .find(|(_, color)| *color == creamui_widgets::elevation::field_border(&theme))
             .map(|(rect, _)| *rect)
             .expect("text input border rect");
         let center = Point {
@@ -1812,7 +1824,7 @@ fn slider_drag_updates_value_proportionally() {
         let slider_rect = painter
             .filled_rects
             .iter()
-            .find(|(_, color)| *color == theme.border_strong)
+            .find(|(_, color)| *color == creamui_widgets::elevation::rail_fill(&theme))
             .map(|(rect, _)| *rect)
             .expect("slider track rect");
         let center = Point {

@@ -9,9 +9,29 @@ impl_styled_inner!(Checkbox);
 impl Checkbox {
     pub fn new(checked: bool, on_click: impl Fn() + 'static) -> Self {
         let theme = use_theme();
-        let mut inner =
-            RawCheckbox::new(18.0, checked, theme.accent, theme.border_strong, on_click);
-        inner = inner.corner_radius(theme.checkbox_radius);
+        let inner = RawCheckbox::new(
+            18.0,
+            checked,
+            theme.accent,
+            elevation::with_alpha(theme.text_primary, 90),
+            on_click,
+        )
+        .check_color(theme.accent.readable_text())
+        .check_width(2.0)
+        .corner_radius(theme.checkbox_radius)
+        .background(if checked {
+            elevation::clear()
+        } else {
+            elevation::field_fill(&theme)
+        })
+        .hover_style(
+            creamui_core::StateStyle::new()
+                .border(elevation::with_alpha(theme.text_primary, 140), 1.5),
+        )
+        .focus_style(
+            creamui_core::StateStyle::new()
+                .outline(elevation::focus_ring(&theme), elevation::FOCUS_RING_WIDTH),
+        );
         Checkbox { inner }
     }
 
@@ -108,15 +128,26 @@ impl_styled_inner!(Switch);
 impl Switch {
     pub fn new(checked: bool, on_click: impl Fn() + 'static) -> Self {
         let theme = use_theme();
-        Self {
-            inner: RawSwitch::new(
-                checked,
-                theme.accent,
-                theme.border_strong,
-                theme.selection_text,
-                on_click,
-            ),
+        let off = elevation::rail_fill(&theme);
+        let mut inner = RawSwitch::new(
+            checked,
+            theme.accent,
+            off,
+            Color::rgb(255, 255, 255),
+            on_click,
+        )
+        .hover_colors(
+            theme.accent_hover,
+            elevation::with_alpha(off, off.a.saturating_add(14)),
+        )
+        .focus_style(
+            creamui_core::StateStyle::new()
+                .outline(elevation::focus_ring(&theme), elevation::FOCUS_RING_WIDTH),
+        );
+        if !theme.high_contrast {
+            inner = inner.thumb_shadow(elevation::knob_shadow(&theme));
         }
+        Self { inner }
     }
 
     pub fn transition(mut self, transition: creamui_core::Transition) -> Self {

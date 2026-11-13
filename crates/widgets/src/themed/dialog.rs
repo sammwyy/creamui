@@ -112,7 +112,7 @@ impl Widget for Dialog {
         padding(style, use_theme().spacing_large).into()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        painter.fill_rect(rect, Color::rgba(0, 0, 0, 104), 0.0);
+        painter.fill_rect(rect, elevation::scrim(&use_theme()), 0.0);
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         Some(self.dismiss.clone())
@@ -126,10 +126,21 @@ impl Widget for Dialog {
         if let Some(footer) = self.footer.take() {
             sections.push(footer);
         } else if !self.actions.is_empty() {
-            let mut actions = ModalActions::new();
+            let theme = use_theme();
+            let mut actions = RawView::new(Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Auto,
+                },
+                justify_content: Some(JustifyContent::End),
+                align_items: Some(AlignItems::Center),
+                flex_wrap: creamui_core::layout::FlexWrap::Wrap,
+                flex_shrink: 0.0,
+                ..row(theme.spacing_medium)
+            });
             for action in std::mem::take(&mut self.actions) {
                 let dismiss = self.dismiss.clone();
-                actions = actions.child(
+                actions = actions.child(Box::new(
                     Button::styled(
                         action.variant,
                         ButtonSize::Md,
@@ -142,7 +153,7 @@ impl Widget for Dialog {
                             dismiss();
                         }
                     }),
-                );
+                ));
             }
             sections.push(Box::new(DialogFooter::new().child(Box::new(actions))));
         }
@@ -159,6 +170,7 @@ impl Widget for Dialog {
                 flex_shrink: 0.0,
                 ..column(0.0)
             })
+            .elevation(elevation::Elevation::Modal)
             .with_children(sections),
         )]
     }
@@ -187,7 +199,7 @@ impl DialogHeader {
                     align_items: Some(AlignItems::Center),
                     ..row(theme.spacing_medium)
                 },
-                theme.spacing_large,
+                theme.spacing_large + 4.0,
             ))
             .child(Box::new(
                 RawView::new(Style {
@@ -250,7 +262,10 @@ impl DialogHeader {
                 on_close,
             )
             .corner_radius(theme.radius_small)
-            .hover_style(creamui_core::StateStyle::new().background(theme.surface_hover))
+            .hover_style(
+                creamui_core::StateStyle::new()
+                    .background(elevation::with_alpha(theme.text_primary, 16)),
+            )
             .child(Box::new(
                 Icon::new(Symbol::Close, theme.text_secondary).size(14.0),
             )),
@@ -274,7 +289,7 @@ impl DialogContent {
                 flex_shrink: 0.0,
                 ..column(theme.spacing_medium)
             },
-            theme.spacing_large,
+            theme.spacing_large + 4.0,
         );
         style.padding.top = LengthPercentage::Length(0.0);
         Self {
@@ -303,17 +318,23 @@ impl_styled_inner!(DialogFooter);
 impl DialogFooter {
     pub fn new() -> Self {
         let theme = use_theme();
-        Self {
-            inner: RawView::new(padding(
-                Style {
-                    size: creamui_core::layout::Size {
-                        width: Dimension::Percent(1.0),
-                        height: Dimension::Auto,
-                    },
-                    flex_shrink: 0.0,
-                    ..column(theme.spacing_small)
+        let mut style = padding(
+            Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Auto,
                 },
-                theme.spacing_large,
+                flex_shrink: 0.0,
+                ..column(theme.spacing_small)
+            },
+            theme.spacing_medium + theme.spacing_small,
+        );
+        style.padding.left = LengthPercentage::Length(theme.spacing_large + 4.0);
+        style.padding.right = LengthPercentage::Length(theme.spacing_large + 4.0);
+        Self {
+            inner: RawView::new(style).background(elevation::with_alpha(
+                theme.text_primary,
+                if elevation::is_light(&theme) { 8 } else { 6 },
             )),
         }
     }
@@ -385,7 +406,7 @@ impl DialogMessage {
                 ..row(use_theme().spacing_medium)
             })
             .child(Box::new(
-                Text::secondary(message)
+                Text::new(message)
                     .text_align(TextAlign::Start)
                     .layout(Style {
                         flex_grow: 1.0,
@@ -537,6 +558,39 @@ mod tests {
                 scene.hit_test(Point { x, y: 18.0 }).unwrap()();
             }
             assert_eq!(clicked.get(), 3);
+        });
+    }
+
+    #[test]
+    fn dialog_default_actions_are_compact_and_trailing_aligned() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(ThemeProvider::new(Theme::light()));
+            let dialog = Dialog::new("Confirm", "Continue?", || {})
+                .action("Proceed", ButtonVariant::Primary, || {})
+                .dismiss_action("Cancel");
+            let mut painter = Recorder::default();
+            Renderer::new().render(
+                Box::new(dialog),
+                Size {
+                    width: 380.0,
+                    height: 320.0,
+                },
+                &mut painter,
+            );
+            let proceed = painter
+                .text
+                .iter()
+                .find(|(text, _)| text == "Proceed")
+                .unwrap()
+                .1;
+            let cancel = painter
+                .text
+                .iter()
+                .find(|(text, _)| text == "Cancel")
+                .unwrap()
+                .1;
+            assert!(proceed.x > 140.0);
+            assert!(cancel.x > proceed.x);
         });
     }
     #[test]

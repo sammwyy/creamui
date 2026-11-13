@@ -216,7 +216,18 @@ pub struct RawPagination {
     pub total: usize,
     on_change: Rc<dyn Fn(usize)>,
     colors: Option<(Color, Color, Color)>,
+    item_styles: Option<PaginationItemStyles>,
     compact: bool,
+}
+
+/// Explicit per-item styles for [`RawPagination`]; they take precedence
+/// over [`RawPagination::colors`].
+#[derive(Clone)]
+pub struct PaginationItemStyles {
+    pub item: creamui_core::Style,
+    pub selected: creamui_core::Style,
+    pub text: Color,
+    pub selected_text: Color,
 }
 
 impl RawPagination {
@@ -232,8 +243,14 @@ impl RawPagination {
             total,
             on_change: Rc::new(on_change),
             colors: None,
+            item_styles: None,
             compact: false,
         }
+    }
+
+    pub fn item_styles(mut self, styles: PaginationItemStyles) -> Self {
+        self.item_styles = Some(styles);
+        self
     }
 
     pub fn compact(mut self) -> Self {
@@ -264,7 +281,20 @@ impl Widget for RawPagination {
             let mut button =
                 RawButton::new(Style::default(), move || callback(target)).disabled(disabled);
             let mut text = RawText::unstyled(label);
-            if let Some((background, foreground, active)) = self.colors {
+            if let Some(styles) = &self.item_styles {
+                button = button.with_style(if selected {
+                    styles.selected.clone()
+                } else {
+                    styles.item.clone()
+                });
+                text = text
+                    .color(if selected {
+                        styles.selected_text
+                    } else {
+                        styles.text
+                    })
+                    .bold(selected);
+            } else if let Some((background, foreground, active)) = self.colors {
                 button = button
                     .background(if selected { active } else { background })
                     .corner_radius(6.0)
@@ -295,7 +325,9 @@ impl Widget for RawPagination {
                 )),
                 PageItem::Ellipsis => {
                     let mut text = RawText::unstyled("…");
-                    if let Some((_, foreground, _)) = self.colors {
+                    if let Some(styles) = &self.item_styles {
+                        text = text.color(styles.text);
+                    } else if let Some((_, foreground, _)) = self.colors {
                         text = text.color(foreground);
                     }
                     children.push(Box::new(text));

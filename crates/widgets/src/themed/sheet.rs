@@ -22,45 +22,61 @@ impl Sheet {
         let inner = RawSheet::new(Style::default(), scroll, edge, content, move || callback())
             .panel_style(
                 RawView::new(Style::default().flex_column())
-                    .background(theme.surface_elevated)
-                    .border(theme.border, 1.0)
+                    .background(elevation::overlay_fill(&theme))
+                    .border(elevation::overlay_border(&theme), 1.0)
+                    .box_shadow(elevation::Elevation::Modal.shadow(&theme))
                     .style(),
             )
-            .scrim(Color::rgba(0, 0, 0, 110));
+            .scrim(elevation::scrim(&theme));
         Self { inner, dismiss }
     }
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
         let theme = use_theme();
         let dismiss = self.dismiss.clone();
-        self.inner =
-            self.inner.header(Box::new(
-                RawView::new(Style {
-                    size: creamui_core::layout::Size {
-                        width: Dimension::Percent(1.0),
-                        height: Dimension::Length(50.0),
-                    },
-                    flex_shrink: 0.0,
-                    ..Style::default()
+        self.inner = self.inner.header(Box::new(
+            RawView::new(Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Percent(1.0),
+                    height: Dimension::Length(56.0),
+                },
+                flex_shrink: 0.0,
+                ..Style::default()
+                    .flex_row()
+                    .align(Align::Center)
+                    .gap(theme.spacing_medium)
+                    .padding_xy(theme.spacing_large, theme.spacing_medium)
+            })
+            .child(Box::new(
+                RawText::new(title, theme.text_primary, theme.typography.section)
+                    .bold(true)
+                    .layout(Style {
+                        flex_grow: 1.0,
+                        ..Default::default()
+                    }),
+            ))
+            .child(Box::new(
+                RawButton::new(
+                    Style::default()
                         .flex_row()
                         .align(Align::Center)
-                        .gap(theme.spacing_medium)
-                        .padding_all(theme.spacing_medium)
-                })
+                        .justify(crate::layout::Justify::Center)
+                        .size(32.0, 32.0),
+                    move || dismiss(),
+                )
+                .corner_radius(theme.button_radius)
+                .hover_style(
+                    creamui_core::StateStyle::new()
+                        .background(elevation::with_alpha(theme.text_primary, 16)),
+                )
+                .focus_style(
+                    creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0),
+                )
                 .child(Box::new(
-                    RawText::new(title, theme.text_primary, theme.typography.body)
-                        .bold(true)
-                        .layout(Style {
-                            flex_grow: 1.0,
-                            ..Default::default()
-                        }),
-                ))
-                .child(Box::new(
-                    RawButton::new(Style::default(), move || dismiss()).child(Box::new(
-                        RawText::new("x", theme.text_secondary, theme.typography.body),
-                    )),
+                    crate::Icon::new(crate::Symbol::Close, theme.text_secondary).size(16.0),
                 )),
-            ));
+            )),
+        ));
         self
     }
 
@@ -122,6 +138,30 @@ mod tests {
             .title("Details");
             assert!(sheet.is_modal());
             assert_eq!(sheet.children().len(), 1);
+        });
+    }
+
+    #[test]
+    fn sheet_header_has_a_padded_close_target() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let mut sheet = Sheet::new(
+                SheetEdge::Bottom,
+                ScrollController::new(0.0),
+                Box::new(RawView::new(Style::default())),
+                || {},
+            )
+            .title("Details");
+            let mut panel = sheet.children();
+            let mut content = panel[0].children();
+            let mut header = content.remove(0);
+            assert_eq!(header.style().layout.size.height, Dimension::Length(56.0));
+            let children = header.children();
+            assert_eq!(
+                children[1].style().layout.size.width,
+                Dimension::Length(32.0)
+            );
+            assert!(children[1].focusable());
         });
     }
 }

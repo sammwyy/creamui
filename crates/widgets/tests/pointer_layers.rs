@@ -87,7 +87,7 @@ fn select_surfaces_block_every_background_pointer_channel() {
             height: 340.0,
         };
         let scene = renderer.render(build(&controller), viewport, &mut painter);
-        for point in [Point { x: 1.0, y: 35.0 }, Point { x: 280.0, y: 250.0 }] {
+        for point in [Point { x: 1.0, y: 39.0 }, Point { x: 280.0, y: 250.0 }] {
             assert!(scene.hit_test(point).is_some());
             assert!(scene.hit_test_at(point).is_none());
             assert!(scene.focus_hit_test(point).is_none());
@@ -98,7 +98,7 @@ fn select_surfaces_block_every_background_pointer_channel() {
             assert!(scene.window_drag_at(point).is_none());
             assert_ne!(scene.cursor_hit_test(point), Some(CursorIcon::Pointer));
         }
-        scene.hit_test(Point { x: 1.0, y: 35.0 }).unwrap()();
+        scene.hit_test(Point { x: 1.0, y: 39.0 }).unwrap()();
         assert!(controller.is_open());
         let search = Point { x: 20.0, y: 50.0 };
         let focus = scene.focus_hit_test(search).unwrap();

@@ -26,19 +26,16 @@ impl Carousel {
                 on_change,
             )
             .controls(
-                Box::new(RawText::new(
-                    "< Previous",
-                    theme.text_primary,
-                    theme.typography.caption,
-                )),
-                Box::new(RawText::new(
-                    "Next >",
-                    theme.text_primary,
-                    theme.typography.caption,
-                )),
+                Box::new(
+                    crate::Icon::new(crate::Symbol::ChevronLeft, theme.text_primary).size(16.0),
+                ),
+                Box::new(
+                    crate::Icon::new(crate::Symbol::ChevronRight, theme.text_primary).size(16.0),
+                ),
             )
-            .indicators(theme.border, theme.accent)
-            .background(theme.surface_elevated)
+            .indicators(elevation::rail_fill(&theme), theme.accent)
+            .background(elevation::group_fill(&theme))
+            .border(theme.border, 1.0)
             .corner_radius(theme.card_radius),
         }
     }

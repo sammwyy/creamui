@@ -10,6 +10,7 @@ pub struct RawCheckbox {
     pub transition: creamui_core::Transition,
     pub fill_color: Color,
     pub check_color: Color,
+    pub check_width: f32,
     pub on_click: Rc<dyn Fn()>,
     pub disabled: bool,
 }
@@ -36,6 +37,7 @@ impl RawCheckbox {
             transition: creamui_core::Transition::default(),
             fill_color,
             check_color: Color::rgb(255, 255, 255),
+            check_width: 1.8,
             on_click: Rc::new(on_click),
             disabled: false,
         }
@@ -43,6 +45,11 @@ impl RawCheckbox {
 
     pub fn check_color(mut self, color: Color) -> Self {
         self.check_color = color;
+        self
+    }
+
+    pub fn check_width(mut self, width: f32) -> Self {
+        self.check_width = width.max(0.0);
         self
     }
 
@@ -88,9 +95,19 @@ impl RawCheckbox {
         let first = (progress / 0.35).min(1.0);
         let second = ((progress - 0.35) / 0.65).clamp(0.0, 1.0);
         let check_color = fade(self.check_color, progress);
-        painter.stroke_line(start, interpolate(start, middle, first), check_color, 1.8);
+        painter.stroke_line(
+            start,
+            interpolate(start, middle, first),
+            check_color,
+            self.check_width,
+        );
         if second > 0.0 {
-            painter.stroke_line(middle, interpolate(middle, end, second), check_color, 1.8);
+            painter.stroke_line(
+                middle,
+                interpolate(middle, end, second),
+                check_color,
+                self.check_width,
+            );
         }
     }
 
@@ -173,6 +190,8 @@ pub struct RawSwitch {
     pub track_radius: Option<f32>,
     pub thumb_radius: Option<f32>,
     pub thumb_inset: f32,
+    /// Painted under the thumb so it reads as sitting above the track.
+    pub thumb_shadow: Option<Color>,
     pub on_click: Rc<dyn Fn()>,
     pub disabled: bool,
 }
@@ -205,6 +224,7 @@ impl RawSwitch {
             track_radius: None,
             thumb_radius: None,
             thumb_inset: 2.0,
+            thumb_shadow: None,
             on_click: Rc::new(on_click),
             disabled: false,
         }
@@ -230,6 +250,11 @@ impl RawSwitch {
 
     pub fn thumb_inset(mut self, inset: f32) -> Self {
         self.thumb_inset = inset.max(0.0);
+        self
+    }
+
+    pub fn thumb_shadow(mut self, color: Color) -> Self {
+        self.thumb_shadow = Some(color);
         self
     }
 
@@ -265,21 +290,19 @@ impl RawSwitch {
             .min(rect.width.min(rect.height).max(0.0) / 2.0);
         let d = (rect.height.min(rect.width) - inset * 2.0).max(0.0);
         let travel = (rect.width - d - inset * 2.0).max(0.0);
-        painter.fill_rect(
-            rect,
-            track_color,
-            self.track_radius.unwrap_or(rect.height / 2.0),
-        );
-        painter.fill_rect(
-            Rect {
-                x: rect.x + inset + travel * progress,
-                y: rect.y + (rect.height - d) / 2.0,
-                width: d,
-                height: d,
-            },
-            self.thumb_color,
-            self.thumb_radius.unwrap_or(d / 2.0),
-        );
+        let track_radius = self.track_radius.unwrap_or(rect.height / 2.0);
+        painter.fill_rect(rect, track_color, track_radius);
+        let thumb = Rect {
+            x: rect.x + inset + travel * progress,
+            y: rect.y + (rect.height - d) / 2.0,
+            width: d,
+            height: d,
+        };
+        let thumb_radius = self.thumb_radius.unwrap_or(d / 2.0);
+        if let Some(shadow) = self.thumb_shadow {
+            painter.draw_box_shadow(thumb, shadow, 0.0, 1.0, 3.0, 0.0, thumb_radius);
+        }
+        painter.fill_rect(thumb, self.thumb_color, thumb_radius);
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -353,6 +376,9 @@ pub struct RawSlider {
     pub track_radius: Option<f32>,
     pub handle_size: f32,
     pub handle_radius: Option<f32>,
+    /// Painted under the handle so it reads as sitting above the track.
+    pub handle_shadow: Option<Color>,
+    pub handle_border: Option<Color>,
     pub on_change: Rc<dyn Fn(f32)>,
     pub disabled: bool,
 }
@@ -378,6 +404,8 @@ impl RawSlider {
             track_radius: None,
             handle_size: 16.0,
             handle_radius: None,
+            handle_shadow: None,
+            handle_border: None,
             on_change: Rc::new(on_change),
             disabled: false,
         }
@@ -392,6 +420,16 @@ impl RawSlider {
     pub fn handle(mut self, size: f32, radius: f32) -> Self {
         self.handle_size = size.max(0.0);
         self.handle_radius = Some(radius.max(0.0));
+        self
+    }
+
+    pub fn handle_shadow(mut self, color: Color) -> Self {
+        self.handle_shadow = Some(color);
+        self
+    }
+
+    pub fn handle_border(mut self, color: Color) -> Self {
+        self.handle_border = Some(color);
         self
     }
 
@@ -475,13 +513,21 @@ impl Widget for RawSlider {
                 .unwrap_or(track_height / 2.0)
                 .min(track_height / 2.0),
         );
+        let handle = Rect {
+            x: handle_center_x - handle_size / 2.0,
+            y: rect.y + (rect.height - handle_size) / 2.0,
+            width: handle_size,
+            height: handle_size,
+        };
+        let handle_radius = self
+            .handle_radius
+            .unwrap_or(handle_size / 2.0)
+            .min(handle_size / 2.0);
+        if let Some(shadow) = self.handle_shadow {
+            painter.draw_box_shadow(handle, shadow, 0.0, 1.0, 4.0, 0.0, handle_radius);
+        }
         painter.fill_rect(
-            Rect {
-                x: handle_center_x - handle_size / 2.0,
-                y: rect.y + (rect.height - handle_size) / 2.0,
-                width: handle_size,
-                height: handle_size,
-            },
+            handle,
             if !self.disabled && painter.pressed(rect) {
                 self.pressed_handle_color
                     .or(self.hover_handle_color)
@@ -491,10 +537,11 @@ impl Widget for RawSlider {
             } else {
                 self.handle_color
             },
-            self.handle_radius
-                .unwrap_or(handle_size / 2.0)
-                .min(handle_size / 2.0),
+            handle_radius,
         );
+        if let Some(border) = self.handle_border {
+            painter.stroke_rect_inside(handle, border, 1.0, handle_radius);
+        }
     }
 
     fn on_drag(&self) -> Option<Rc<dyn Fn(Point, Rect)>> {

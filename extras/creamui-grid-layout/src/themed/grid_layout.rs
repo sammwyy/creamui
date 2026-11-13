@@ -39,9 +39,10 @@ impl GridLayout {
             },
             ..Style::default().padding_all(theme.spacing_small)
         })
-        .background(theme.surface_hover)
+        .background(creamui_widgets::elevation::group_fill(&theme))
         .border(theme.border, 1.0)
-        .corner_radius(theme.radius_small)
+        .box_shadow(creamui_widgets::elevation::Elevation::Control.shadow(&theme))
+        .corner_radius(theme.radius_medium)
         .child(Box::new(RawText::new(
             label,
             theme.text_primary,

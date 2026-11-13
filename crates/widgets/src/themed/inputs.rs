@@ -17,13 +17,13 @@ impl TextInput {
         self.inner.password = true;
         self
     }
-    /// The style used when none is given explicitly: a fixed 200x38 box,
+    /// The style used when none is given explicitly: a fixed 200x34 box,
     /// matching this widget's original hardcoded layout.
     pub fn default_style() -> Style {
         Style {
             size: creamui_core::layout::Size {
                 width: creamui_core::layout::Dimension::Length(200.0),
-                height: creamui_core::layout::Dimension::Length(38.0),
+                height: creamui_core::layout::Dimension::Length(34.0),
             },
             padding: creamui_core::layout::Rect {
                 top: creamui_core::layout::LengthPercentage::Length(0.0),
@@ -55,11 +55,9 @@ impl TextInput {
             on_change,
         )
         .font_family(theme.font_family)
-        .background(theme.surface_elevated)
-        .border(theme.border, theme.input_border_width)
-        .corner_radius(theme.input_radius)
         .selection_background(theme.selection_background)
         .selection_text_color(theme.selection_text);
+        let inner = elevation::apply_field(inner, &theme);
         TextInput { inner }
     }
 
@@ -186,14 +184,6 @@ impl Widget for TextInput {
     }
 
     fn paint_focused_overlay(&self, painter: &mut dyn Painter, rect: Rect, caret_visible: bool) {
-        if let Some(color) = self.inner.selection_background {
-            painter.stroke_rect(
-                rect,
-                color,
-                2.,
-                self.inner.style.paint.corner_radius.unwrap_or(0.0),
-            );
-        }
         self.inner
             .paint_focused_overlay(painter, rect, caret_visible);
     }
@@ -205,14 +195,6 @@ impl Widget for TextInput {
         content: Rect,
         caret_visible: bool,
     ) {
-        if let Some(color) = self.inner.selection_background {
-            painter.stroke_rect(
-                rect,
-                color,
-                2.,
-                self.inner.style.paint.corner_radius.unwrap_or(0.0),
-            );
-        }
         self.inner
             .paint_focused_overlay_with_content(painter, rect, content, caret_visible);
     }
@@ -254,21 +236,18 @@ impl TextArea {
         on_change: impl Fn(String) + 'static,
     ) -> Self {
         let theme = use_theme();
-        Self {
-            inner: RawTextArea::new(
-                style,
-                value,
-                14.0 * theme.text_scale,
-                theme.text_primary,
-                on_change,
-            )
-            .font_family(theme.font_family)
-            .background(theme.surface_elevated)
-            .border(theme.border, theme.input_border_width)
-            .corner_radius(theme.textarea_radius)
-            .selection_background(theme.selection_background)
-            .selection_text_color(theme.selection_text),
-        }
+        let inner = RawTextArea::new(
+            style,
+            value,
+            14.0 * theme.text_scale,
+            theme.text_primary,
+            on_change,
+        )
+        .font_family(theme.font_family)
+        .selection_background(theme.selection_background)
+        .selection_text_color(theme.selection_text);
+        let inner = elevation::apply_field(inner, &theme).corner_radius(theme.textarea_radius);
+        Self { inner }
     }
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         let theme = use_theme();
@@ -423,7 +402,7 @@ impl Slider {
         Style {
             size: creamui_core::layout::Size {
                 width: creamui_core::layout::Dimension::Length(160.0),
-                height: creamui_core::layout::Dimension::Length(20.0),
+                height: creamui_core::layout::Dimension::Length(22.0),
             },
             ..Default::default()
         }
@@ -437,14 +416,23 @@ impl Slider {
     /// of the fixed 160x20 default.
     fn from_layout(style: Style, value: f32, on_change: impl Fn(f32) + 'static) -> Self {
         let theme = use_theme();
-        let inner = RawSlider::new(
+        let mut inner = RawSlider::new(
             style,
             value,
-            theme.border_strong,
+            elevation::rail_fill(&theme),
             theme.accent,
-            theme.accent,
+            Color::rgb(255, 255, 255),
             on_change,
-        );
+        )
+        .track(4.0, 2.0)
+        .handle(18.0, 9.0)
+        .hover_handle_color(Color::rgb(250, 250, 252))
+        .pressed_handle_color(Color::rgb(236, 238, 242))
+        .handle_border(elevation::with_alpha(Color::rgb(16, 24, 40), 30))
+        .focus_style(creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0));
+        if !theme.high_contrast {
+            inner = inner.handle_shadow(elevation::knob_shadow(&theme));
+        }
         Slider { inner }
     }
 
@@ -478,5 +466,42 @@ impl Widget for Slider {
 
     fn cursor_icon(&self) -> Option<CursorIcon> {
         self.inner.cursor_icon()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_fields_keep_accent_focus_and_allow_layout_overrides() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let theme = use_theme();
+            let input = TextInput::new("", |_| {});
+            let area = TextArea::new("", |_| {});
+            for style in [input.style(), area.style()] {
+                assert_eq!(
+                    style.states.focus.paint.border,
+                    Some(creamui_core::Border::new(theme.accent, 1.0))
+                );
+                assert_eq!(
+                    style.states.focus.paint.outline,
+                    Some(creamui_core::Border::new(
+                        elevation::with_alpha(theme.accent, 60),
+                        3.0
+                    ))
+                );
+                assert!(style.states.hover.paint.border.is_some());
+            }
+            let custom = TextInput::new("", |_| {}).layout(Style {
+                size: creamui_core::layout::Size {
+                    width: Dimension::Length(320.0),
+                    height: Dimension::Length(42.0),
+                },
+                ..Default::default()
+            });
+            assert_eq!(custom.style().layout.size.width, Dimension::Length(320.0));
+        });
     }
 }

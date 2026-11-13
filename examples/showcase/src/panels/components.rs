@@ -100,20 +100,20 @@ pub fn ComponentsPanel(
                             width: Dimension::Percent(1.0),
                             height: Dimension::Auto,
                         },
-                        ..column(theme.spacing_medium)
+                        ..column(theme.spacing_medium + theme.spacing_small)
                     },
-                    theme.spacing_medium,
+                    theme.spacing_large,
                 ),
             )
             .with_children(children),
         )
     };
     let label = |text: &str| -> BoxedWidget {
-        Box::new(RawText::new(
-            text,
-            theme.text_secondary,
-            theme.typography.caption,
-        ))
+        Box::new(
+            RawText::new(text, theme.text_secondary, theme.typography.caption)
+                .bold(true)
+                .margin_top(theme.spacing_small),
+        )
     };
     let themed_accordion = || {
         let sections = accordion.get();
@@ -1048,7 +1048,7 @@ pub fn ComponentsPanel(
     Box::new(
         RawView::new(column(section_gap()))
             .child(jsx! {
-                <SectionHeader title={section.label().to_owned()} subtitle={"Interactive themed and raw components with persistent state.".to_owned()} />
+                <SectionHeader title={section.label().to_owned()} subtitle={section.summary().to_owned()} />
             })
             .child(page_card(section, ShowcasePage::Disclosure, || card(vec![
                 label("Accordion & collapsible"),

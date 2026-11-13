@@ -18,8 +18,8 @@ impl TextSize {
             TextSize::Xl => 20.0,
             TextSize::Lg => 17.0,
             TextSize::Md => 14.0,
-            TextSize::Sm => 12.0,
-            TextSize::Xs => 11.0,
+            TextSize::Sm => 13.0,
+            TextSize::Xs => 12.0,
         }
     }
 
@@ -31,8 +31,8 @@ impl TextSize {
             TextSize::Xl => 28.0, // h1
             TextSize::Lg => 22.0, // h2
             TextSize::Md => 18.0, // h3
-            TextSize::Sm => 15.0, // h4
-            TextSize::Xs => 13.0, // h5
+            TextSize::Sm => 16.0, // h4
+            TextSize::Xs => 14.0, // h5
         }
     }
 }
@@ -190,5 +190,36 @@ impl Widget for Heading {
 
     fn measure_fingerprint(&self) -> Option<u64> {
         self.inner.measure_fingerprint()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_roles_use_light_palette_and_readable_sizes() {
+        creamui_reactive::with_context_scope(|| {
+            let theme = Theme::light();
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+            let primary = Text::new("Body").style();
+            let secondary = Text::secondary("Detail").style();
+            let heading = Heading::new("Section").style();
+            assert_eq!(primary.typography.color, Some(theme.text_primary.into()));
+            assert_eq!(
+                secondary.typography.color,
+                Some(theme.text_secondary.into())
+            );
+            assert_eq!(primary.typography.font_size, Some(14.0));
+            assert_eq!(heading.typography.font_size, Some(18.0));
+            assert_eq!(
+                Text::new("Small")
+                    .size(TextSize::Xs)
+                    .style()
+                    .typography
+                    .font_size,
+                Some(12.0)
+            );
+        });
     }
 }

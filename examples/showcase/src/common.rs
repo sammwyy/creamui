@@ -71,13 +71,13 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Theming,
         label: "Theming",
-        symbol: Symbol::Display,
+        symbol: Symbol::Layers,
         group: NavGroup::Features,
     },
     NavPage {
         page: ShowcasePage::Hooks,
         label: "Hooks & state",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Bolt,
         group: NavGroup::Features,
     },
     NavPage {
@@ -89,31 +89,31 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Typography,
         label: "Typography",
-        symbol: Symbol::Display,
+        symbol: Symbol::Text,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Input,
         label: "Input",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Text,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Pickers,
         label: "Pickers",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Calendar,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Images,
         label: "Images",
-        symbol: Symbol::Display,
+        symbol: Symbol::Image,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Button,
         label: "Button",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Button,
         group: NavGroup::Components,
     },
     NavPage {
@@ -131,43 +131,43 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Selection,
         label: "Selection",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Toggle,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Feedback,
         label: "Feedback",
-        symbol: Symbol::Display,
+        symbol: Symbol::Bell,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Sidebar,
         label: "Sidebar",
-        symbol: Symbol::Folder,
+        symbol: Symbol::Sidebar,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Tabs,
         label: "Tabs",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Display,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Scroll,
         label: "Scroll",
-        symbol: Symbol::Grid,
+        symbol: Symbol::List,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Tree,
         label: "Tree",
-        symbol: Symbol::Folder,
+        symbol: Symbol::Tree,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Table,
         label: "Table",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Table,
         group: NavGroup::Components,
     },
     NavPage {
@@ -179,19 +179,19 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Flex,
         label: "Flex",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Layers,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Disclosure,
         label: "Disclosure",
-        symbol: Symbol::Folder,
+        symbol: Symbol::ChevronDown,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::States,
         label: "States & alerts",
-        symbol: Symbol::Display,
+        symbol: Symbol::Bell,
         group: NavGroup::Components,
     },
     NavPage {
@@ -203,31 +203,31 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Pagination,
         label: "Pagination",
-        symbol: Symbol::Grid,
+        symbol: Symbol::ChevronRight,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Workspace,
         label: "Workspace",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Sidebar,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Tags,
         label: "Tags & shortcuts",
-        symbol: Symbol::Keyboard,
+        symbol: Symbol::Tag,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::InputGroups,
         label: "Input groups",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Button,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Actions,
         label: "Actions",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Bolt,
         group: NavGroup::Components,
     },
     NavPage {
@@ -239,37 +239,37 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Calendar,
         label: "Calendar",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Calendar,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Rating,
         label: "Rating",
-        symbol: Symbol::Check,
+        symbol: Symbol::Star,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Carousel,
         label: "Carousel",
-        symbol: Symbol::Display,
+        symbol: Symbol::Image,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Verification,
         label: "Verification",
-        symbol: Symbol::Keyboard,
+        symbol: Symbol::Lock,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Notifications,
         label: "Notifications",
-        symbol: Symbol::Display,
+        symbol: Symbol::Bell,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Tooltip,
         label: "Tooltip",
-        symbol: Symbol::Controls,
+        symbol: Symbol::Message,
         group: NavGroup::Components,
     },
     NavPage {
@@ -281,13 +281,13 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::DataTable,
         label: "Data table",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Table,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Sheets,
         label: "Sheets",
-        symbol: Symbol::Display,
+        symbol: Symbol::Layers,
         group: NavGroup::Components,
     },
     NavPage {
@@ -299,18 +299,50 @@ pub const NAV_PAGES: [NavPage; 41] = [
     NavPage {
         page: ShowcasePage::Chart,
         label: "Chart",
-        symbol: Symbol::Grid,
+        symbol: Symbol::Chart,
         group: NavGroup::Components,
     },
     NavPage {
         page: ShowcasePage::Diff,
         label: "Diff",
-        symbol: Symbol::Display,
+        symbol: Symbol::Code,
         group: NavGroup::Components,
     },
 ];
 
 impl ShowcasePage {
+    /// One line describing what a component gallery page demonstrates.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Disclosure => {
+                "Progressive disclosure that keeps secondary detail one click away."
+            }
+            Self::States => "Inline status messages, loading placeholders and empty results.",
+            Self::Forms => "Labelled fields with hints, validation and a single clear submit.",
+            Self::Pagination => "Step through long collections without losing your place.",
+            Self::Workspace => "Status bars and steppers that frame multi-step work.",
+            Self::Tags => "Compact labels, filters and keyboard shortcut hints.",
+            Self::InputGroups => {
+                "Fields with fixed prefixes and suffixes such as units or currency."
+            }
+            Self::Actions => "Toggle and split buttons for primary actions with alternatives.",
+            Self::NumberInput => "Bounded numeric entry with stepper controls.",
+            Self::Calendar => "A month grid for picking a single day.",
+            Self::Rating => "Fractional star ratings for quick feedback.",
+            Self::Carousel => "Paged content with arrow and indicator navigation.",
+            Self::Verification => "One-time code entry split into individual cells.",
+            Self::Notifications => "Transient toasts that confirm actions without interrupting.",
+            Self::Tooltip => "Short contextual hints on hover and keyboard focus.",
+            Self::Panels => "Resizable panes and draggable dashboard grids.",
+            Self::DataTable => "Sortable, filterable rows with multi-selection.",
+            Self::Sheets => "Edge-anchored panels for details and secondary tasks.",
+            Self::Toolbar => "Grouped commands that overflow gracefully into a menu.",
+            Self::Chart => "Line, area and bar series on a shared scale.",
+            Self::Diff => "Unified and side-by-side patch review.",
+            _ => "",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         NAV_PAGES[self as usize].label
     }

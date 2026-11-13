@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::StyleExt;
-use crate::raw::{CalendarColors, DateTime, RawCalendar};
+use crate::raw::{CalendarColors, CalendarNavigation, DateTime, RawCalendar};
 
 pub struct Calendar {
     inner: RawCalendar,
@@ -34,11 +34,31 @@ impl Calendar {
             .colors(CalendarColors {
                 text: theme.text_primary,
                 muted: theme.text_secondary,
-                selected_text: theme.selection_text,
+                selected_text: theme.accent.readable_text(),
                 selected: theme.accent,
                 today: theme.accent,
             })
-            .background(theme.surface_elevated)
+            .navigation(CalendarNavigation {
+                previous: Box::new(
+                    crate::Icon::new(crate::Symbol::ChevronLeft, theme.text_secondary).size(16.0),
+                ),
+                next: Box::new(
+                    crate::Icon::new(crate::Symbol::ChevronRight, theme.text_secondary).size(16.0),
+                ),
+                button: creamui_core::Style::from(
+                    Style::default()
+                        .flex_row()
+                        .align(crate::layout::Align::Center)
+                        .justify(crate::layout::Justify::Center)
+                        .size(28.0, 28.0),
+                )
+                .corner_radius(theme.button_radius)
+                .hover(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 1)))
+                .pressed(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 2))),
+            })
+            .day_hover(elevation::subtle(&theme, 1))
+            .background(elevation::group_fill(&theme))
+            .border(theme.border, 1.0)
             .corner_radius(theme.card_radius),
         }
     }
@@ -87,7 +107,7 @@ mod tests {
             assert_eq!(calendar.children().len(), 8);
             assert_eq!(
                 calendar.style().paint.background,
-                Some(theme.surface_elevated.into())
+                Some(elevation::group_fill(&theme).into())
             );
         });
     }

@@ -35,8 +35,8 @@ impl OtpInput {
             )
             .colors(OtpColors {
                 text: theme.text_primary,
-                surface: theme.surface_elevated,
-                border: theme.border,
+                surface: creamui_widgets::elevation::field_fill(&theme),
+                border: creamui_widgets::elevation::control_border(&theme),
                 focus: theme.accent,
                 error: theme.danger,
             }),

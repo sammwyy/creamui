@@ -21,17 +21,17 @@ pub enum ButtonSize {
 impl ButtonSize {
     fn padding(self) -> f32 {
         match self {
-            Self::Xs => 6.,
-            Self::Sm => 9.,
-            Self::Md => 12.,
-            Self::Lg => 16.,
-            Self::Xl => 20.,
+            Self::Xs => 8.,
+            Self::Sm => 10.,
+            Self::Md => 14.,
+            Self::Lg => 18.,
+            Self::Xl => 22.,
         }
     }
     fn font_size(self) -> f32 {
         match self {
-            Self::Xs => 11.,
-            Self::Sm => 12.,
+            Self::Xs => 12.,
+            Self::Sm => 13.,
             Self::Md => 14.,
             Self::Lg => 16.,
             Self::Xl => 18.,
@@ -44,7 +44,7 @@ impl ButtonSize {
         match self {
             Self::Xs => 24.,
             Self::Sm => 28.,
-            Self::Md => 36.,
+            Self::Md => 34.,
             Self::Lg => 40.,
             Self::Xl => 48.,
         }
@@ -80,28 +80,47 @@ impl Button {
         let (background, border, foreground) = match variant {
             ButtonVariant::Primary => (theme.accent, theme.accent, theme.selection_text),
             ButtonVariant::Secondary => (
-                theme.surface_elevated,
-                theme.border_strong,
+                elevation::control_fill(&theme),
+                elevation::control_border(&theme),
                 theme.text_primary,
             ),
-            ButtonVariant::Tertiary => (theme.surface, theme.surface, theme.text_primary),
+            ButtonVariant::Tertiary => (elevation::clear(), elevation::clear(), theme.text_primary),
             ButtonVariant::Destructive => (theme.danger, theme.danger, theme.selection_text),
             ButtonVariant::Success => (theme.success, theme.success, theme.selection_text),
         };
+        let filled = matches!(
+            variant,
+            ButtonVariant::Primary | ButtonVariant::Destructive | ButtonVariant::Success
+        );
         let label = label.into();
         let foreground = if state == ButtonState::Loading {
             theme.text_secondary
         } else {
             foreground
         };
+        let backdrop = if background.a == 0 {
+            elevation::opaque(&theme, theme.surface_elevated)
+        } else {
+            background
+        };
+        let foreground = if foreground.contrast_ratio(backdrop) < 4.5 {
+            backdrop.readable_text()
+        } else {
+            foreground
+        };
         let mut style = centered_box_style(size.padding());
         style.size.height =
             creamui_core::layout::Dimension::Length(size.height() * theme.text_scale);
+        style.min_size.width =
+            creamui_core::layout::Dimension::Length(size.height() * theme.text_scale);
+        style.flex_shrink = 0.0;
         let text = RawText::new(
             label.clone(),
             foreground,
             size.font_size() * theme.text_scale,
-        );
+        )
+        .font_family(theme.font_family)
+        .bold(filled);
         let child: BoxedWidget = if state != ButtonState::Normal {
             let content = Style {
                 display: creamui_core::layout::Display::Flex,
@@ -122,32 +141,56 @@ impl Button {
         } else {
             Box::new(text)
         };
+        let shadow = (variant == ButtonVariant::Secondary)
+            .then(|| elevation::control_shadow(&theme))
+            .flatten();
         let mut inner = RawButton::new(style, on_click)
             .background(background)
             .border(border, size.border_width())
             .corner_radius(theme.button_radius.min(size.height() / 2.))
             .child(child);
+        if let Some(shadow) = shadow {
+            inner = inner.box_shadow(shadow);
+        }
+        let (hover_background, pressed_background) = match variant {
+            ButtonVariant::Primary => (theme.accent_hover, theme.accent_pressed),
+            ButtonVariant::Secondary => (
+                elevation::control_hover(&theme),
+                elevation::control_pressed(&theme),
+            ),
+            ButtonVariant::Tertiary => (elevation::subtle(&theme, 1), elevation::subtle(&theme, 2)),
+            ButtonVariant::Destructive | ButtonVariant::Success => (
+                background.mix(Color::rgb(255, 255, 255), 0.08),
+                background.mix(Color::rgb(0, 0, 0), 0.1),
+            ),
+        };
+        let mut hover = creamui_core::StateStyle::new().background(hover_background);
+        let mut pressed = creamui_core::StateStyle::new().background(pressed_background);
+        if filled {
+            hover = hover.border(hover_background, size.border_width());
+            pressed = pressed.border(pressed_background, size.border_width());
+        }
+        let no_shadow = creamui_core::BoxShadow::new(0.0, 0.0, 0.0, 0.0, elevation::clear());
+        if shadow.is_some() {
+            pressed = pressed.box_shadow(no_shadow);
+        }
+        let disabled = if state == ButtonState::Loading {
+            creamui_core::StateStyle::new()
+                .background(background)
+                .border(border, 1.0)
+        } else {
+            creamui_core::StateStyle::new()
+                .background(elevation::subtle(&theme, 1))
+                .border(elevation::clear(), 1.0)
+                .box_shadow(no_shadow)
+        };
         inner = inner
-            .hover_style(creamui_core::StateStyle::new().background(
-                if variant == ButtonVariant::Primary {
-                    theme.accent_hover
-                } else {
-                    background.mix(theme.text_primary, 0.07)
-                },
-            ))
-            .pressed_style(creamui_core::StateStyle::new().background(
-                if variant == ButtonVariant::Primary {
-                    theme.accent_pressed
-                } else {
-                    background.mix(theme.text_primary, 0.14)
-                },
-            ))
-            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0))
-            .disabled_style(
-                creamui_core::StateStyle::new()
-                    .background(theme.surface_hover)
-                    .border(theme.border, 1.0),
-            );
+            .hover_style(hover)
+            .pressed_style(pressed)
+            .focus_style(
+                creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0),
+            )
+            .disabled_style(disabled);
         let mut button = Self {
             inner,
             theme,
@@ -206,11 +249,14 @@ impl Button {
         self.inner.disabled = disabled || self.state == ButtonState::Loading;
         if disabled && self.state != ButtonState::Loading && self.enabled_children.is_none() {
             self.enabled_children = Some(std::mem::take(&mut self.inner.children));
-            self.inner.children = vec![Box::new(RawText::new(
-                self.label.clone(),
-                self.theme.text_disabled,
-                self.size.font_size() * self.theme.text_scale,
-            ))];
+            self.inner.children = vec![Box::new(
+                RawText::new(
+                    self.label.clone(),
+                    self.theme.text_disabled,
+                    self.size.font_size() * self.theme.text_scale,
+                )
+                .font_family(self.theme.font_family),
+            )];
         } else if !disabled {
             if let Some(children) = self.enabled_children.take() {
                 self.inner.children = children;
@@ -256,5 +302,135 @@ impl Widget for Button {
 
     fn cursor_icon(&self) -> Option<CursorIcon> {
         self.inner.cursor_icon()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn button_states_derive_their_fills_from_theme_colors() {
+        for theme in [Theme::light(), Theme::dark()] {
+            creamui_reactive::with_context_scope(|| {
+                creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+                let button = Button::new("Continue", || {});
+                let style = button.style();
+                assert_eq!(style.paint.background, Some(theme.accent.into()));
+                assert_eq!(
+                    style.states.hover.paint.background,
+                    Some(theme.accent_hover.into())
+                );
+                assert!(style.paint.box_shadow.is_none());
+                assert_eq!(
+                    style.states.pressed.paint.background,
+                    Some(theme.accent_pressed.into())
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn high_contrast_buttons_keep_solid_fill_and_no_shadow() {
+        creamui_reactive::with_context_scope(|| {
+            let mut theme = Theme::light();
+            theme.high_contrast = true;
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+            let button = Button::new("Continue", || {});
+            assert_eq!(button.style().paint.background, Some(theme.accent.into()));
+            assert!(button.style().paint.box_shadow.is_none());
+            assert!(button.style().states.pressed.paint.box_shadow.is_none());
+        });
+    }
+
+    #[test]
+    fn only_neutral_buttons_cast_a_shadow_and_only_in_light_themes() {
+        creamui_reactive::with_context_scope(|| {
+            let theme = Theme::light();
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+            let secondary = Button::secondary(ButtonSize::Xs, "Action", || {});
+            assert!(secondary.style().paint.box_shadow.is_some());
+            let primary = Button::styled(
+                ButtonVariant::Primary,
+                ButtonSize::Sm,
+                "Action",
+                ButtonState::Normal,
+                || {},
+            );
+            assert!(primary.style().paint.box_shadow.is_none());
+            let tertiary = Button::styled(
+                ButtonVariant::Tertiary,
+                ButtonSize::Md,
+                "Action",
+                ButtonState::Normal,
+                || {},
+            );
+            let style = tertiary.style();
+            assert!(style.paint.box_shadow.is_none());
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(Theme::dark()));
+            assert!(Button::secondary(ButtonSize::Md, "Action", || {})
+                .style()
+                .paint
+                .box_shadow
+                .is_none());
+            let mut tertiary = tertiary;
+            let label = tertiary.children().remove(0);
+            let color = label
+                .style()
+                .typography
+                .color
+                .unwrap()
+                .resolve(&theme.colors);
+            assert_eq!(color, theme.text_primary);
+        });
+    }
+
+    #[test]
+    fn action_labels_contrast_with_custom_accents_without_overriding_explicit_styles() {
+        for accent in [Color::rgb(12, 24, 48), Color::rgb(242, 224, 140)] {
+            creamui_reactive::with_context_scope(|| {
+                let theme = Theme::light().with_accent(accent);
+                creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+                let mut button = Button::new("Continue", || {});
+                let label = button.children().remove(0);
+                let color = label
+                    .style()
+                    .typography
+                    .color
+                    .unwrap()
+                    .resolve(&theme.colors);
+                assert!(color.contrast_ratio(accent) >= 4.5);
+                let custom = Color::rgb(65, 45, 95);
+                let button = Button::new("Continue", || {}).background(custom);
+                assert_eq!(button.style().paint.background, Some(custom.into()));
+                assert!(button.style().paint.box_shadow.is_none());
+            });
+        }
+    }
+
+    #[test]
+    fn loading_button_keeps_a_legible_background_while_noninteractive() {
+        creamui_reactive::with_context_scope(|| {
+            let theme = Theme::dark().with_accent(Color::rgb(181, 139, 255));
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+            let mut button = Button::state(ButtonSize::Md, "Working", ButtonState::Loading, || {});
+            assert!(!button.focusable());
+            let fill = button
+                .style()
+                .resolve(creamui_core::StyleState::NORMAL.with_disabled(true))
+                .paint
+                .background
+                .unwrap();
+            assert_eq!(fill, theme.accent.into());
+            let mut content = button.children().remove(0);
+            let label = content.children().remove(1);
+            let text_color = label
+                .style()
+                .typography
+                .color
+                .unwrap()
+                .resolve(&theme.colors);
+            assert!(text_color.contrast_ratio(theme.accent) >= 4.5);
+        });
     }
 }

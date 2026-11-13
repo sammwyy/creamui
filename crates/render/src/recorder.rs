@@ -1188,12 +1188,9 @@ mod tests {
                 },
                 &mut recorder,
             );
-            let opaque = Color {
-                a: 255,
-                ..theme.surface_elevated
-            };
+            let opaque = creamui_widgets::elevation::overlay_fill(&theme);
             assert!(recorder.current_list().items.iter().any(|item| {
-                matches!(&item.primitive, Primitive::Quad(quad) if quad.background == opaque && quad.bounds == Bounds::new(0.0, 34.0, 176.0, 282.0))
+                matches!(&item.primitive, Primitive::Quad(quad) if quad.background == opaque && quad.bounds == Bounds::new(0.0, 38.0, 176.0, 292.0))
             }));
             let search = scene.drag_hit_test(Point { x: 20.0, y: 50.0 }).unwrap();
             let (rect, _) = scene.draggable_at(search).unwrap();

@@ -1,5 +1,6 @@
 use super::*;
 use crate::controller::SidebarNavController;
+
 /// Shared visual tokens for [`Tabs`]/[`Tab`] and [`Sidebar`]/[`SidebarItem`],
 /// the same pattern as [`MenuColors`]: derive from a theme, override
 /// individual colors if needed.
@@ -32,13 +33,13 @@ impl TabColors {
     pub fn dark() -> Self {
         let theme = use_theme();
         Self {
-            background: theme.surface,
-            inactive_background: Some(theme.surface_hover),
-            active_background: theme.accent,
-            hover_background: theme.surface_elevated,
+            background: elevation::track_fill(&theme),
+            inactive_background: None,
+            active_background: elevation::segment_fill(&theme),
+            hover_background: elevation::subtle(&theme, 1),
             indicator: theme.accent,
             text: theme.text_primary,
-            active_text: Color::rgb(0x33, 0x2e, 0x34),
+            active_text: theme.text_primary,
             muted_text: theme.text_secondary,
             radius: theme.tab_radius,
             container_radius: theme.tabs_radius,
@@ -61,11 +62,11 @@ impl TabColors {
             // encapsulated content card is the elevated material.
             background: theme.surface,
             inactive_background: None,
-            active_background: theme.accent,
-            hover_background: theme.surface_elevated,
+            active_background: elevation::with_alpha(theme.accent, 40),
+            hover_background: elevation::subtle(&theme, 1),
             indicator: theme.accent,
             text: theme.text_primary,
-            active_text: Color::rgb(0x33, 0x2e, 0x34),
+            active_text: theme.text_primary,
             muted_text: theme.text_secondary,
             radius: theme.sidebar_item_radius,
             container_radius: theme.sidebar_radius,
@@ -207,11 +208,9 @@ impl Tab {
             .child(Box::new(text));
         match colors.selection {
             SelectionStyle::Filled => {
-                if let Some(background) = if active {
-                    Some(colors.active_background)
-                } else {
-                    colors.inactive_background
-                } {
+                if active {
+                    inner = raise_selection(inner, colors.active_background, true);
+                } else if let Some(background) = colors.inactive_background {
                     inner = inner.background(background);
                 }
             }
@@ -227,9 +226,22 @@ impl Tab {
             inner.style.states.hover.paint.background = Some(colors.hover_background.into());
             inner.style.states.pressed.paint.background = Some(colors.hover_background.into());
         }
-        inner.style.states.focus.paint.outline =
-            Some(creamui_core::Border::new(colors.indicator, 2.0));
+        inner.style.states.focus.paint.outline = Some(creamui_core::Border::new(
+            elevation::with_alpha(colors.indicator, 120),
+            elevation::FOCUS_RING_WIDTH,
+        ));
         Self { inner }
+    }
+}
+
+/// Paints a selected tab or sidebar entry. Tabs sit on a recessed track, so
+/// a selected tab also casts the soft control shadow.
+fn raise_selection(inner: RawTab, fill: creamui_theme::Color, shadow: bool) -> RawTab {
+    let theme = use_theme();
+    let inner = inner.background(fill);
+    match elevation::control_shadow(&theme).filter(|_| shadow) {
+        Some(shadow) => inner.box_shadow(shadow),
+        None => inner,
     }
 }
 
@@ -479,7 +491,9 @@ impl SidebarItem {
         } else {
             colors.muted_text
         };
-        let text = RawText::new(label, text_color, 14.0).text_align(TextAlign::Start);
+        let text = RawText::new(label, text_color, 14.0)
+            .text_align(TextAlign::Start)
+            .bold(active);
         let content: BoxedWidget = if let Some(icon_color) = icon_color {
             let content_style = Style {
                 size: creamui_core::layout::Size {
@@ -517,7 +531,7 @@ impl SidebarItem {
                     .child(Box::new(text.layout(text_style))),
             )
         } else {
-            Box::new(text.layout(style.clone()))
+            Box::new(text)
         };
         let mut inner = RawTab::new(style, active, on_click)
             .corner_radius(colors.radius)
@@ -525,7 +539,7 @@ impl SidebarItem {
         match colors.selection {
             SelectionStyle::Filled => {
                 if active {
-                    inner = inner.background(colors.active_background);
+                    inner = raise_selection(inner, colors.active_background, false);
                 } else if hovered {
                     inner = inner.background(colors.hover_background);
                 } else if let Some(background) = colors.inactive_background {
@@ -545,8 +559,10 @@ impl SidebarItem {
             inner.style.states.pressed.paint.background = Some(colors.hover_background.into());
         }
         if !active {
-            inner.style.states.focus.paint.outline =
-                Some(creamui_core::Border::new(colors.indicator, 2.0));
+            inner.style.states.focus.paint.outline = Some(creamui_core::Border::new(
+                elevation::with_alpha(colors.indicator, 150),
+                2.0,
+            ));
         }
         inner.on_hover = on_hover;
         Self { inner }
@@ -734,4 +750,48 @@ pub fn nested_sidebar<T: Clone + PartialEq + 'static>(
     }
 
     Box::new(RawView::new(style).with_children(items))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_labels_remain_legible_with_custom_accent() {
+        for accent in [Color::rgb(12, 24, 48), Color::rgb(242, 224, 140)] {
+            for theme in [Theme::light(), Theme::dark()] {
+                creamui_reactive::with_context_scope(|| {
+                    let theme = theme.with_accent(accent);
+                    creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+                    for colors in [TabColors::dark(), TabColors::sidebar()] {
+                        let selected = elevation::opaque(&theme, colors.active_background);
+                        assert!(colors.active_text.contrast_ratio(selected) >= 4.5);
+                    }
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn sidebar_item_padding_is_not_reapplied_to_its_label() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let style = Style {
+                padding: LayoutRect {
+                    left: LengthPercentage::Length(16.0),
+                    ..Style::default().padding
+                },
+                ..Default::default()
+            };
+            let mut item = SidebarItem::new(TabColors::sidebar(), style, "Home", false, || {});
+            assert_eq!(
+                item.style().layout.padding.left,
+                LengthPercentage::Length(16.0)
+            );
+            assert_eq!(
+                item.children()[0].style().layout.padding.left,
+                LengthPercentage::Length(0.0)
+            );
+        });
+    }
 }

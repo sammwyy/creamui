@@ -69,8 +69,9 @@ impl Pre {
         Pre {
             inner: RawPre::new(style, text, theme.text_primary, theme.typography.caption)
                 .font_family(theme.font_family)
-                .background(theme.surface_elevated)
-                .corner_radius(theme.radius_medium)
+                .background(elevation::with_alpha(theme.text_primary, 10))
+                .border(elevation::with_alpha(theme.text_primary, 16), 1.0)
+                .corner_radius(theme.radius_small)
                 .padding(theme.spacing_medium),
         }
     }
@@ -112,6 +113,18 @@ impl_styled_inner!(Link);
 impl Link {
     pub fn new(text: impl Into<String>, on_click: impl Fn() + 'static) -> Self {
         let theme = use_theme();
+        let mut link_color = theme.accent;
+        for _ in 0..10 {
+            if link_color.contrast_ratio(theme.surface_elevated) >= 4.5 {
+                break;
+            }
+            link_color = link_color.mix(theme.text_primary, 0.2);
+        }
+        let hover_color = if link_color == theme.accent {
+            theme.accent_hover
+        } else {
+            link_color.mix(theme.text_primary, 0.15)
+        };
         let style = Style {
             size: creamui_core::layout::Size {
                 width: Dimension::Auto,
@@ -120,9 +133,9 @@ impl Link {
             ..Default::default()
         };
         Link {
-            inner: RawLink::new(style, text, theme.accent, theme.typography.body, on_click)
+            inner: RawLink::new(style, text, link_color, theme.typography.body, on_click)
                 .font_family(theme.font_family)
-                .hover_color(theme.accent_hover),
+                .hover_color(hover_color),
         }
     }
 
@@ -171,5 +184,32 @@ impl Widget for Link {
 
     fn cursor_icon(&self) -> Option<CursorIcon> {
         self.inner.cursor_icon()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn links_have_readable_text_on_light_and_dark_surfaces() {
+        for theme in [
+            Theme::light(),
+            Theme::light().with_accent(Color::rgb(235, 207, 153)),
+            Theme::dark(),
+            Theme::dark().with_accent(Color::rgb(25, 48, 85)),
+        ] {
+            creamui_reactive::with_context_scope(|| {
+                creamui_reactive::provide_context(creamui_theme::ThemeProvider::new(theme));
+                let link = Link::new("Read more", || {});
+                let color = link
+                    .style()
+                    .typography
+                    .color
+                    .unwrap()
+                    .resolve(&theme.colors);
+                assert!(color.contrast_ratio(theme.surface_elevated) >= 4.5);
+            });
+        }
     }
 }

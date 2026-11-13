@@ -8,6 +8,7 @@
 //! so writing a derived component (e.g. a `DangerButton`) is just writing a
 //! new constructor function in the same shape.
 
+use crate::elevation;
 use crate::raw::{
     RawButton, RawCheckbox, RawListView, RawScrollView, RawSidebar, RawSlider, RawSpinner,
     RawSwitch, RawTab, RawTable, RawTabs, RawText, RawTextArea, RawTextInput, RawView,

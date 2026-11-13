@@ -4,6 +4,24 @@ All notable changes to CreamUI will be documented in this file.
 
 ## 0.3.0
 
+- Give themed widgets one calm visual language through the new
+  `creamui_widgets::elevation` module: flat accent fills, neutral controls
+  with a quiet fill and hairline edge, soft neutral shadows reserved for
+  surfaces that float (`Elevation` tiers), and a translucent accent focus
+  halo. Every themed control, surface, list and overlay draws from it.
+- Align default control heights at 34px (buttons, fields, selects, number
+  inputs and pickers) and retune the default radius scale.
+- Add optional paint tokens to raw controls: `RawCheckbox::check_width`,
+  `RawSwitch::thumb_shadow`, `RawSlider::handle_shadow` and `handle_border`,
+  `RawPagination::item_styles` with `PaginationItemStyles`, and
+  `RawCalendar::navigation` with `CalendarNavigation` plus `day_hover`.
+- Add `Popover::elevation` so dialogs float at modal depth with window-like
+  corners.
+- Add `Text`, `Button`, `Toggle`, `List`, `Table`, `Bell`, `Calendar`,
+  `Star`, `Layers`, `Chart`, `Tag`, `Tree`, `Bolt`, `Code`, `Lock`,
+  `Message` and `Sidebar` symbols.
+- Size toolbar actions from measured label widths so labels no longer wrap
+  mid-word, and stretch table rows to the table width.
 - Move one-time code entry into the opt-in `creamui-otp-input` crate.
 - Move advanced sortable/filterable virtual tables into the opt-in
   `creamui-data-table` crate; keep basic tables in `creamui-widgets`.

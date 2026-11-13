@@ -41,6 +41,33 @@ impl Color {
             self.a as f32 / 255.,
         ]
     }
+
+    pub fn contrast_ratio(self, other: Self) -> f32 {
+        let luminance = |color: Self| {
+            let linear = |channel: u8| {
+                let value = channel as f32 / 255.0;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+        };
+        let a = luminance(self);
+        let b = luminance(other);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    pub fn readable_text(self) -> Self {
+        let dark = Self::rgb(20, 24, 30);
+        let light = Self::rgb(255, 255, 255);
+        if dark.contrast_ratio(self) >= light.contrast_ratio(self) {
+            dark
+        } else {
+            light
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,8 +184,8 @@ impl ColorScheme {
             selection_background: Color::rgba(0, 153, 211, 30),
             selection_text: Color::rgb(0xff, 0xff, 0xff),
             text_primary: Color::rgb(26, 33, 44),
-            text_secondary: Color::rgb(104, 114, 129),
-            text_disabled: Color::rgb(0x96, 0xa1, 0xb0),
+            text_secondary: Color::rgb(72, 82, 97),
+            text_disabled: Color::rgb(96, 106, 120),
             border: Color::rgba(27, 39, 55, 23),
             border_strong: Color::rgba(27, 39, 55, 32),
             danger: Color::rgb(0xd1, 0x3a, 0x3a),
@@ -209,10 +236,10 @@ pub struct Typography {
 }
 impl Typography {
     pub const DEFAULT: Self = Self {
-        caption: 11.,
-        body: 13.,
-        section: 15.,
-        title: 26.,
+        caption: 12.,
+        body: 14.,
+        section: 18.,
+        title: 28.,
     };
 }
 
@@ -268,24 +295,24 @@ impl Theme {
             font_family: creamui_fonts::DEFAULT_FAMILY,
             colors: ColorScheme::dark(),
             name: "Default",
-            radius_small: 8.,
-            radius_medium: 12.,
-            radius_large: 20.,
+            radius_small: 6.,
+            radius_medium: 10.,
+            radius_large: 16.,
             spacing_small: 4.,
             spacing_medium: 8.,
             spacing_large: 16.,
-            button_radius: 9.,
-            checkbox_radius: 4.,
-            input_radius: 9.,
-            textarea_radius: 14.,
+            button_radius: 8.,
+            checkbox_radius: 5.,
+            input_radius: 8.,
+            textarea_radius: 10.,
             input_border_width: 1.,
             card_radius: 12.,
-            scroll_radius: 16.,
-            tabs_radius: 8.,
-            tab_radius: 6.,
+            scroll_radius: 12.,
+            tabs_radius: 9.,
+            tab_radius: 7.,
             tab_selection: SelectionStyle::Filled,
-            sidebar_radius: 16.,
-            sidebar_item_radius: 7.,
+            sidebar_radius: 14.,
+            sidebar_item_radius: 8.,
             sidebar_selection: SelectionStyle::Filled,
             indicator_thickness: 3.,
             tab_gap: 4.,
@@ -293,8 +320,8 @@ impl Theme {
             sidebar_icon_size: 16.,
             sidebar_icon_radius: 5.,
             sidebar_item_gap: 9.,
-            menu_radius: 10.,
-            menu_item_radius: 7.,
+            menu_radius: 12.,
+            menu_item_radius: 6.,
         }
     }
     pub const fn with_colors(mut self, colors: ColorScheme) -> Self {
@@ -669,6 +696,28 @@ mod tests {
                 Color::rgba(accent.r, accent.g, accent.b, colors.selection_background.a)
             );
             assert_eq!(custom.with_accent(accent), custom);
+        }
+    }
+
+    #[test]
+    fn light_text_roles_remain_legible_on_white() {
+        let colors = ColorScheme::light();
+        let white = Color::rgb(255, 255, 255);
+        assert!(colors.text_primary.contrast_ratio(white) >= 7.0);
+        assert!(colors.text_secondary.contrast_ratio(white) >= 7.0);
+        assert!(colors.text_disabled.contrast_ratio(white) >= 4.5);
+        assert!(Typography::DEFAULT.body >= 14.0);
+        assert!(Typography::DEFAULT.caption >= 12.0);
+    }
+
+    #[test]
+    fn accent_foreground_uses_the_higher_contrast_color() {
+        let dark = Color::rgb(16, 28, 42);
+        let light = Color::rgb(244, 221, 160);
+        assert_eq!(dark.readable_text(), Color::rgb(255, 255, 255));
+        assert_eq!(light.readable_text(), Color::rgb(20, 24, 30));
+        for accent in [dark, light, ColorScheme::light().accent] {
+            assert!(accent.readable_text().contrast_ratio(accent) >= 4.5);
         }
     }
 }

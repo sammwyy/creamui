@@ -27,7 +27,10 @@ impl ResizablePanels {
                 axis,
                 states,
             )
-            .divider(6.0, theme.border_strong),
+            .divider(
+                6.0,
+                creamui_widgets::elevation::with_alpha(theme.text_primary, 20),
+            ),
         }
     }
 

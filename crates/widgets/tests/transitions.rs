@@ -44,6 +44,7 @@ impl Painter for FramePainter {
     fn fill_rect(&mut self, rect: Rect, color: Color, _: f32) {
         self.fills.push((rect, color));
     }
+    fn draw_box_shadow(&mut self, _: Rect, _: Color, _: f32, _: f32, _: f32, _: f32, _: f32) {}
     fn stroke_rect(&mut self, _: Rect, _: Color, _: f32, _: f32) {}
     fn stroke_line(&mut self, from: Point, to: Point, color: Color, _: f32) {
         self.lines.push((from, to, color));

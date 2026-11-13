@@ -36,6 +36,26 @@ impl Toast {
             theme.text_secondary,
             theme.typography.caption,
         )));
+        let indicator = RawView::new(Style {
+            size: crate::layout::fixed(8.0, 8.0),
+            flex_shrink: 0.0,
+            ..Default::default()
+        })
+        .background(status)
+        .corner_radius(4.0);
+        let body = RawView::new(Style {
+            flex_grow: 1.0,
+            min_size: creamui_core::layout::Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Auto,
+            },
+            ..Style::default()
+                .flex_row()
+                .align(Align::Center)
+                .gap(theme.spacing_medium + theme.spacing_small)
+        })
+        .child(Box::new(indicator))
+        .child(Box::new(body));
         let dismiss = on_dismiss.clone();
         let mut toast = RawToast::new(
             Style {
@@ -47,24 +67,28 @@ impl Toast {
                     .flex_row()
                     .align(Align::Center)
                     .gap(theme.spacing_medium)
-                    .padding_all(theme.spacing_medium)
+                    .padding_xy(theme.spacing_large, theme.spacing_medium + 4.0)
             },
             Box::new(body),
         )
-        .background(theme.surface_elevated)
-        .border(status, 1.5)
+        .background(elevation::overlay_fill(&theme))
+        .border(elevation::overlay_border(&theme), 1.0)
         .corner_radius(theme.card_radius)
+        .box_shadow(elevation::Elevation::Overlay.shadow(&theme))
         .dismiss(
-            Box::new(RawText::new(
-                "x",
-                theme.text_secondary,
-                theme.typography.caption,
-            )),
+            Box::new(crate::Icon::new(crate::Symbol::Close, theme.text_secondary).size(14.0)),
             move || dismiss(),
         );
         if let Some((label, action)) = entry.action {
             toast = toast.action(
-                Box::new(RawText::new(label, status, theme.typography.caption)),
+                Box::new(
+                    RawText::new(
+                        label,
+                        elevation::tinted_text(&theme, status),
+                        theme.typography.caption,
+                    )
+                    .bold(true),
+                ),
                 move || {
                     action();
                     on_dismiss();

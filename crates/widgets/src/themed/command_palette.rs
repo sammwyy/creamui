@@ -244,7 +244,7 @@ impl Widget for CommandPalette {
         Dialog::custom(|| {}).style()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        painter.fill_rect(rect, Color::rgba(0, 0, 0, 104), 0.0);
+        painter.fill_rect(rect, elevation::scrim(&use_theme()), 0.0);
     }
     fn on_click(&self) -> Option<Rc<dyn Fn()>> {
         Some(self.dismiss.clone())
@@ -270,8 +270,10 @@ impl Widget for CommandPalette {
             &self.controller.query,
         )
         .placeholder(self.placeholder.clone())
-        .background(theme.surface_elevated)
-        .border(theme.surface_elevated, 0.0)
+        .background(elevation::with_alpha(theme.text_primary, 0))
+        .border(elevation::with_alpha(theme.text_primary, 0), 0.0)
+        .hover_style(creamui_core::StateStyle::new())
+        .focus_style(creamui_core::StateStyle::new())
         .corner_radius(0.0)
         .on_submit(move || submit.activate(&commands))
         .on_key_press(move |input| match input.key {
@@ -350,13 +352,16 @@ impl Widget for CommandPalette {
                     move || action.invoke(),
                 )
                 .background(if !self.reference && index == selected {
-                    theme.surface_hover
+                    elevation::with_alpha(theme.accent, 46)
                 } else {
                     Color::rgba(0, 0, 0, 0)
                 })
-                .corner_radius(6.0)
+                .corner_radius(theme.menu_item_radius)
                 .keyboard_focus(false)
-                .hover_style(creamui_core::StateStyle::new().background(theme.surface_hover))
+                .hover_style(
+                    creamui_core::StateStyle::new()
+                        .background(elevation::with_alpha(theme.text_primary, 14)),
+                )
                 .with_children(vec![
                     Box::new(Text::new(&item.label).font_size(12.0)),
                     Box::new(RawView::new(Style {
@@ -498,10 +503,11 @@ mod tests {
                         .surfaces
                         .iter()
                         .filter(|(rect, color)| {
+                            let fill = elevation::overlay_fill(&theme);
                             rect.width > 400.0
-                                && color.r == theme.surface_elevated.r
-                                && color.g == theme.surface_elevated.g
-                                && color.b == theme.surface_elevated.b
+                                && color.r == fill.r
+                                && color.g == fill.g
+                                && color.b == fill.b
                         })
                         .map(|(rect, _)| rect.height)
                         .reduce(f32::max)

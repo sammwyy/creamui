@@ -11,11 +11,21 @@ impl Kbd {
     pub fn new(keys: impl IntoIterator<Item = String>) -> Self {
         let theme = use_theme();
         Self {
-            inner: RawKbd::new(Style::default().padding_xy(theme.spacing_small, 4.0), keys)
-                .text_style(theme.text_primary, theme.typography.caption)
-                .background(theme.surface_hover)
-                .border(theme.border, 1.0)
-                .corner_radius(theme.radius_small),
+            inner: RawKbd::new(
+                Style::default().padding_xy(theme.spacing_medium, theme.spacing_small),
+                keys,
+            )
+            .text_style(theme.text_primary, theme.typography.caption)
+            .background(elevation::control_fill(&theme))
+            .border(elevation::control_border(&theme), 1.0)
+            .box_shadow(creamui_core::BoxShadow::new(
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                elevation::control_border(&theme),
+            ))
+            .corner_radius(theme.radius_small - 2.0),
         }
     }
 }
@@ -35,16 +45,20 @@ impl Tag {
                 Style::default()
                     .flex_row()
                     .align(Align::Center)
-                    .gap(theme.spacing_small)
-                    .padding_xy(theme.spacing_small, 4.0),
+                    .gap(theme.spacing_medium)
+                    .padding_xy(
+                        theme.spacing_medium + theme.spacing_small,
+                        theme.spacing_small + 2.0,
+                    ),
                 Box::new(RawText::new(
                     label.clone(),
                     theme.text_primary,
                     theme.typography.caption,
                 )),
             )
-            .background(theme.surface_elevated)
-            .corner_radius(theme.radius_medium),
+            .background(elevation::with_alpha(theme.text_primary, 12))
+            .border(elevation::with_alpha(theme.text_primary, 18), 1.0)
+            .corner_radius(999.0),
             label,
         }
     }
@@ -55,12 +69,16 @@ impl Tag {
         if selected {
             self.inner = self
                 .inner
-                .background(theme.accent)
-                .label(Box::new(RawText::new(
-                    self.label.clone(),
-                    theme.selection_text,
-                    theme.typography.caption,
-                )));
+                .background(elevation::with_alpha(theme.accent, 44))
+                .border(elevation::with_alpha(theme.accent, 140), 1.0)
+                .label(Box::new(
+                    RawText::new(
+                        self.label.clone(),
+                        elevation::tinted_text(&theme, theme.accent),
+                        theme.typography.caption,
+                    )
+                    .bold(true),
+                ));
         }
         self
     }
@@ -68,11 +86,7 @@ impl Tag {
     pub fn removable(mut self, on_remove: impl Fn() + 'static) -> Self {
         let theme = use_theme();
         self.inner = self.inner.removable(
-            Box::new(RawText::new(
-                "×",
-                theme.text_secondary,
-                theme.typography.body,
-            )),
+            Box::new(crate::Icon::new(crate::Symbol::Close, theme.text_secondary).size(12.0)),
             on_remove,
         );
         self
@@ -111,6 +125,26 @@ mod tests {
             creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
             assert_eq!(Kbd::new(["Mod".into(), "S".into()]).children().len(), 1);
             assert_eq!(Tag::new("Review").removable(|| {}).children().len(), 2);
+        });
+    }
+
+    #[test]
+    fn compact_content_has_readable_insets_and_consistent_border() {
+        creamui_reactive::with_context_scope(|| {
+            creamui_reactive::provide_context(creamui_theme::ThemeProvider::default());
+            let tag = Tag::new("Review");
+            assert_eq!(
+                tag.style().layout.padding.left,
+                creamui_core::layout::LengthPercentage::Length(12.0)
+            );
+            assert!(tag.style().paint.border.is_some());
+            let selected = Tag::new("Review").selected(true, |_| {});
+            assert!(selected.style().paint.border.is_some());
+            let kbd = Kbd::new(["Mod".into()]);
+            assert_eq!(
+                kbd.style().layout.padding.left,
+                creamui_core::layout::LengthPercentage::Length(8.0)
+            );
         });
     }
 }

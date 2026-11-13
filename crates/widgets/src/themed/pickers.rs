@@ -37,11 +37,12 @@ fn popup_button(label: impl Into<String>, width: f32, on_click: impl Fn() + 'sta
         },
         on_click,
     )
-    .background(theme.surface_hover)
+    .background(elevation::subtle(&theme, 1))
     .corner_radius(theme.menu_item_radius)
-    .border(theme.border, 1.)
+    .hover_style(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 2)))
+    .pressed_style(creamui_core::StateStyle::new().background(elevation::subtle(&theme, 3)))
     .child(Box::new(
-        RawText::new(label, theme.text_primary, 12.).text_align(TextAlign::Center),
+        RawText::new(label, theme.text_primary, 13.).text_align(TextAlign::Center),
     ))
 }
 
@@ -100,7 +101,7 @@ pub struct DateTimePicker {
 impl DateTimePicker {
     pub fn default_style() -> Style {
         Style {
-            size: fixed(240., 38.),
+            size: fixed(240., 34.),
             flex_shrink: 0.,
             ..Default::default()
         }
@@ -227,23 +228,26 @@ impl DateTimePicker {
                     .background(if selected {
                         self.theme.accent
                     } else {
-                        self.theme.surface_elevated
+                        elevation::clear()
                     })
                     .corner_radius(self.theme.menu_item_radius)
-                    .child(Box::new(RawText::new(
-                        day.to_string(),
-                        if selected {
-                            self.theme.selection_text
-                        } else {
-                            self.theme.text_primary
-                        },
-                        12.,
-                    )));
+                    .child(Box::new(
+                        RawText::new(
+                            day.to_string(),
+                            if selected {
+                                self.theme.accent.readable_text()
+                            } else {
+                                self.theme.text_primary
+                            },
+                            12.,
+                        )
+                        .bold(selected),
+                    ));
                     button = button.hover_style(creamui_core::StateStyle::new().background(
                         if selected {
                             self.theme.accent_hover
                         } else {
-                            self.theme.surface_hover
+                            elevation::subtle(&self.theme, 1)
                         },
                     ));
                     row_view = row_view.child(Box::new(button));
@@ -311,24 +315,12 @@ impl Widget for DateTimePicker {
         self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        painter.fill_rect(
+        elevation::paint_trigger(
+            painter,
+            &self.theme,
             rect,
-            if !self.disabled && painter.hovered(rect) {
-                self.theme.surface_hover
-            } else {
-                self.theme.surface_elevated
-            },
-            self.theme.input_radius,
-        );
-        painter.stroke_rect(
-            rect,
-            if self.controller.is_open() {
-                self.theme.accent
-            } else {
-                self.theme.border_strong
-            },
-            self.theme.input_border_width,
-            self.theme.input_radius,
+            self.controller.is_open(),
+            !self.disabled,
         );
         painter.fill_text(
             Rect {
@@ -342,36 +334,17 @@ impl Widget for DateTimePicker {
             self.theme.typography.body,
             TextAlign::Start,
         );
-        let cx = rect.x + rect.width - 17.;
-        let cy = rect.y + rect.height / 2.;
-        let (a, b, c) = if self.controller.is_open() {
-            (
-                Point {
-                    x: cx - 4.,
-                    y: cy + 2.,
-                },
-                Point {
-                    x: cx + 4.,
-                    y: cy + 2.,
-                },
-                Point { x: cx, y: cy - 2. },
-            )
-        } else {
-            (
-                Point {
-                    x: cx - 4.,
-                    y: cy - 2.,
-                },
-                Point {
-                    x: cx + 4.,
-                    y: cy - 2.,
-                },
-                Point { x: cx, y: cy + 2. },
-            )
-        };
-        painter.stroke_line(a, b, self.theme.text_secondary, 1.5);
-        painter.stroke_line(b, c, self.theme.text_secondary, 1.5);
-        painter.stroke_line(c, a, self.theme.text_secondary, 1.5);
+        crate::Icon::draw(
+            crate::Symbol::ChevronDown,
+            painter,
+            Rect {
+                x: rect.x + rect.width - 26.,
+                y: rect.y + (rect.height - 14.) / 2.,
+                width: 14.,
+                height: 14.,
+            },
+            self.theme.text_secondary,
+        );
     }
     fn children(&mut self) -> Vec<BoxedWidget> {
         if !self.controller.is_open() || self.disabled {
@@ -582,7 +555,7 @@ pub struct ColorPicker {
 impl ColorPicker {
     pub fn default_style() -> Style {
         Style {
-            size: fixed(220., 38.),
+            size: fixed(220., 34.),
             flex_shrink: 0.,
             ..Default::default()
         }
@@ -625,24 +598,12 @@ impl Widget for ColorPicker {
         self.style.clone()
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        painter.fill_rect(
+        elevation::paint_trigger(
+            painter,
+            &self.theme,
             rect,
-            if !self.disabled && painter.hovered(rect) {
-                self.theme.surface_hover
-            } else {
-                self.theme.surface_elevated
-            },
-            self.theme.input_radius,
-        );
-        painter.stroke_rect(
-            rect,
-            if self.controller.is_open() {
-                self.theme.accent
-            } else {
-                self.theme.border_strong
-            },
-            self.theme.input_border_width,
-            self.theme.input_radius,
+            self.controller.is_open(),
+            !self.disabled,
         );
         painter.fill_rect(
             Rect {
@@ -717,10 +678,12 @@ impl Widget for ColorPicker {
                 theme.accent,
                 move |next| change(next),
             )
-            .background(theme.surface_elevated)
-            .border(theme.border_strong, theme.input_border_width)
+            .background(elevation::field_fill(&theme))
+            .border(elevation::control_border(&theme), theme.input_border_width)
             .corner_radius(theme.input_radius)
-            .focus_style(creamui_core::StateStyle::new().outline(theme.accent, 2.0));
+            .focus_style(
+                creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0),
+            );
             let summary = RawView::new(Style {
                 align_items: Some(AlignItems::Center),
                 justify_content: Some(JustifyContent::SpaceBetween),
@@ -820,7 +783,7 @@ pub struct FilePicker {
 impl FilePicker {
     pub fn default_style() -> Style {
         Style {
-            size: fixed(320., 40.),
+            size: fixed(320., 34.),
             flex_shrink: 0.,
             ..Default::default()
         }
@@ -839,11 +802,14 @@ impl FilePicker {
             style: creamui_core::Style::from(style)
                 .color(theme.text_primary)
                 .font_size(13.0)
-                .background(theme.surface_elevated)
-                .hover(creamui_core::StateStyle::new().background(theme.surface_hover))
-                .border(theme.border_strong, theme.input_border_width)
+                .background(elevation::field_fill(&theme))
+                .hover(
+                    creamui_core::StateStyle::new()
+                        .background(elevation::field_fill(&theme).mix(theme.text_primary, 0.03)),
+                )
+                .border(elevation::control_border(&theme), theme.input_border_width)
                 .corner_radius(theme.input_radius)
-                .focus(creamui_core::StateStyle::new().outline(theme.accent, 2.0)),
+                .focus(creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0)),
             value: value.into(),
             placeholder: "Choose a file…".into(),
             title: "Choose a file".into(),

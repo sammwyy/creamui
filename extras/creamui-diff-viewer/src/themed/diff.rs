@@ -39,7 +39,7 @@ impl Diff {
             deletion: theme.danger.mix(theme.surface, 0.87),
             conflict: theme.warning.mix(theme.surface, 0.84),
             selected: theme.accent.mix(theme.surface, 0.65),
-            header: theme.surface_elevated,
+            header: creamui_widgets::elevation::with_alpha(theme.text_primary, 10),
             text: theme.text_primary,
             gutter: theme.text_secondary,
         });

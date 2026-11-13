@@ -14,35 +14,37 @@ impl Toolbar {
         let menu_style = RawView::new(
             Style::default()
                 .flex_column()
-                .padding_all(theme.spacing_small),
+                .gap(theme.spacing_small)
+                .padding_all(theme.spacing_medium),
         )
-        .background(theme.surface_elevated)
-        .border(theme.border, 1.0)
-        .corner_radius(theme.radius_small)
+        .background(elevation::overlay_fill(&theme))
+        .border(elevation::overlay_border(&theme), 1.0)
+        .corner_radius(theme.menu_radius)
+        .box_shadow(elevation::Elevation::Overlay.shadow(&theme))
         .style();
         Self {
             inner: RawToolbar::new(
                 Style {
                     size: creamui_core::layout::Size {
                         width: Dimension::Percent(1.0),
-                        height: Dimension::Length(36.0),
+                        height: Dimension::Length(40.0),
                     },
                     ..Style::default()
                         .flex_row()
                         .align(Align::Center)
-                        .padding_xy(theme.spacing_small, 0.0)
+                        .padding_xy(theme.spacing_medium, 0.0)
                 },
                 controller,
             )
-            .group_gap(theme.spacing_small)
+            .group_gap(theme.spacing_medium)
             .menu_style(menu_style)
             .overflow_trigger(
                 Box::new(RawText::new(
                     "More",
                     theme.text_primary,
-                    theme.typography.caption,
+                    theme.typography.body,
                 )),
-                44.0,
+                56.0,
             ),
             groups: vec![Vec::new()],
         }
@@ -51,25 +53,35 @@ impl Toolbar {
     pub fn action(mut self, label: impl Into<String>, on_activate: impl Fn() + 'static) -> Self {
         let theme = use_theme();
         let label = label.into();
-        let width = label.chars().count() as f32 * 7.0 + 22.0;
+        let horizontal_padding = theme.spacing_medium + theme.spacing_small;
+        let font_size = theme.typography.body;
+        let text_width =
+            crate::text_metrics::measure(&label, font_size, crate::text_metrics::unbounded_width())
+                .0;
+        let width = (text_width + horizontal_padding * 2.0 + 2.0).ceil();
         let style = RawView::new(
             Style::default()
                 .flex_row()
                 .align(Align::Center)
-                .padding_xy(theme.spacing_small, 0.0),
+                .padding_xy(horizontal_padding, theme.spacing_small + 2.0),
         )
-        .hover_style(creamui_core::StateStyle::new().background(theme.surface_hover))
-        .pressed_style(creamui_core::StateStyle::new().background(theme.accent_hover))
-        .corner_radius(theme.radius_small)
+        .hover_style(
+            creamui_core::StateStyle::new()
+                .background(elevation::with_alpha(theme.text_primary, 16)),
+        )
+        .pressed_style(
+            creamui_core::StateStyle::new()
+                .background(elevation::with_alpha(theme.text_primary, 28)),
+        )
+        .focus_style(creamui_core::StateStyle::new().outline(elevation::focus_ring(&theme), 2.0))
+        .corner_radius(theme.menu_item_radius)
         .style();
         let command = ToolbarCommand::new(
             width,
             style,
-            Box::new(RawText::new(
-                label,
-                theme.text_primary,
-                theme.typography.caption,
-            )),
+            Box::new(
+                RawText::new(label, theme.text_primary, font_size).font_family(theme.font_family),
+            ),
             on_activate,
         );
         self.groups.last_mut().unwrap().push(command);
@@ -85,11 +97,15 @@ impl Toolbar {
 
     pub fn floating(mut self) -> Self {
         let theme = use_theme();
-        self.inner.style.paint.background = Some(theme.surface_elevated.into());
+        self.inner.style.paint.background = Some(elevation::group_fill(&theme).into());
         self.inner.style.paint.border = Some(creamui_core::Border {
             color: theme.border.into(),
             width: 1.0,
         });
+        self.inner.style.paint.corner_radius = Some(theme.radius_medium);
+        if !theme.high_contrast {
+            self.inner.style.paint.box_shadow = Some(elevation::Elevation::Raised.shadow(&theme));
+        }
         self
     }
 }

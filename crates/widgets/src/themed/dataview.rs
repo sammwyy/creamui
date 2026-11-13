@@ -110,7 +110,7 @@ impl TreeView {
             controller,
             rows: Rc::new(rows),
             row_height: 30.0,
-            indent: 18.0,
+            indent: 20.0,
         }
     }
 
@@ -142,16 +142,7 @@ impl TreeView {
             },
             ..crate::layout::row(6.0)
         };
-        let background = if row.selected {
-            self.theme.accent
-        } else {
-            self.theme.surface_elevated
-        };
-        let foreground = if row.selected {
-            self.theme.selection_text
-        } else {
-            self.theme.text_primary
-        };
+        let foreground = self.theme.text_primary;
 
         let chevron_style = Style {
             size: creamui_core::layout::Size {
@@ -166,11 +157,15 @@ impl TreeView {
         let chevron: BoxedWidget = if row.has_children {
             let controller = self.controller.clone();
             let id = row.id;
-            let glyph = if row.expanded { "v" } else { ">" };
+            let glyph = if row.expanded {
+                crate::Symbol::ChevronDown
+            } else {
+                crate::Symbol::ChevronRight
+            };
+            let color = self.theme.text_secondary;
             Box::new(
-                RawButton::new(chevron_style, move || controller.toggle(id)).child(Box::new(
-                    RawText::new(glyph, self.theme.text_secondary, 11.0),
-                )),
+                RawButton::new(chevron_style, move || controller.toggle(id))
+                    .child(Box::new(crate::Icon::new(glyph, color).size(13.0))),
             )
         } else {
             Box::new(RawView::new(chevron_style))
@@ -186,18 +181,28 @@ impl TreeView {
             ..Default::default()
         };
         let label = RawText::new(row.label.clone(), foreground, self.theme.typography.body)
+            .font_family(self.theme.font_family)
             .text_align(TextAlign::Start)
             .layout(label_style);
 
         let controller = self.controller.clone();
         let id = row.id;
-        let mut item =
-            RawButton::new(row_style, move || controller.select(id)).background(background);
-        item = item.hover_style(creamui_core::StateStyle::new().background(if row.selected {
-            self.theme.accent_hover
+        let mut item = RawButton::new(row_style, move || controller.select(id))
+            .corner_radius(self.theme.sidebar_item_radius)
+            .focus_style(
+                creamui_core::StateStyle::new().outline(elevation::focus_ring(&self.theme), 2.0),
+            );
+        item = if row.selected {
+            item.background(elevation::with_alpha(self.theme.accent, 40))
+                .hover_style(
+                    creamui_core::StateStyle::new()
+                        .background(elevation::with_alpha(self.theme.accent, 54)),
+                )
         } else {
-            self.theme.surface_hover
-        }));
+            item.background(elevation::clear()).hover_style(
+                creamui_core::StateStyle::new().background(elevation::subtle(&self.theme, 1)),
+            )
+        };
         Box::new(item.child(chevron).child(Box::new(label)))
     }
 }
@@ -212,7 +217,6 @@ impl Widget for TreeView {
     fn children(&mut self) -> Vec<BoxedWidget> {
         let mut scroll_view =
             RawScrollView::controlled(fill(Style::default()), self.scroll.clone())
-                .background(self.theme.surface_elevated)
                 .corner_radius(self.theme.input_radius);
         for row in self.rows.iter() {
             scroll_view = scroll_view.child(self.build_row(row));
@@ -342,7 +346,6 @@ impl Widget for VirtualTreeView {
         )
         .keyed_by(move |index| rows[index].id.into())
         .overscan(self.overscan)
-        .background(theme.surface_elevated)
         .corner_radius(theme.input_radius);
         vec![Box::new(list)]
     }
@@ -372,7 +375,8 @@ impl ListView {
     pub fn new(style: Style, scroll: ScrollController) -> Self {
         let theme = use_theme();
         let inner = RawListView::new(style, scroll)
-            .background(theme.surface_elevated)
+            .background(elevation::group_fill(&theme))
+            .border(theme.border, 1.0)
             .corner_radius(theme.input_radius)
             .divider(theme.border, 1.0);
         ListView { inner }
@@ -415,17 +419,20 @@ impl_styled_inner!(Table);
 
 fn apply_table_theme(table: &mut RawTable) {
     let theme = use_theme();
-    table.header_background = Some(theme.surface_elevated);
+    let light = elevation::is_light(&theme);
+    table.header_background = Some(elevation::with_alpha(
+        theme.text_primary,
+        if light { 9 } else { 10 },
+    ));
     table.header_text_color = theme.text_secondary;
     table.cell_text_color = theme.text_primary;
-    table.row_background = Some(theme.surface);
-    table.alt_row_background = Some(theme.surface_elevated);
-    table.selected_row_background = Some(Color::rgba(
-        theme.accent.r,
-        theme.accent.g,
-        theme.accent.b,
-        60,
+    table.cell_padding = table.cell_padding.max(10.0);
+    table.row_background = None;
+    table.alt_row_background = Some(elevation::with_alpha(
+        theme.text_primary,
+        if light { 5 } else { 6 },
     ));
+    table.selected_row_background = Some(elevation::with_alpha(theme.accent, 56));
     table.divider_color = Some(theme.border);
 }
 

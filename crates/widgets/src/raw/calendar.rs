@@ -61,6 +61,16 @@ pub struct RawCalendar {
     on_select: Rc<dyn Fn(DateTime)>,
     on_month: Rc<dyn Fn(DateTime)>,
     colors: CalendarColors,
+    navigation: Option<CalendarNavigation>,
+    day_hover: Option<Color>,
+}
+
+/// Content and style for the previous/next month buttons of a
+/// [`RawCalendar`], replacing the default text arrows.
+pub struct CalendarNavigation {
+    pub previous: BoxedWidget,
+    pub next: BoxedWidget,
+    pub button: creamui_core::Style,
 }
 
 impl RawCalendar {
@@ -87,7 +97,20 @@ impl RawCalendar {
                 selected: Color::rgb(35, 90, 180),
                 today: Color::rgb(35, 90, 180),
             },
+            navigation: None,
+            day_hover: None,
         }
+    }
+
+    pub fn navigation(mut self, navigation: CalendarNavigation) -> Self {
+        self.navigation = Some(navigation);
+        self
+    }
+
+    /// Background painted behind an unselected day under the pointer.
+    pub fn day_hover(mut self, color: Color) -> Self {
+        self.day_hover = Some(color);
+        self
     }
 
     pub fn week_start(mut self, day: usize) -> Self {
@@ -140,10 +163,19 @@ impl Widget for RawCalendar {
         let next = next_month(self.month);
         let on_previous = self.on_month.clone();
         let on_next = self.on_month.clone();
+        let (previous_content, next_content, button_style): (BoxedWidget, BoxedWidget, _) =
+            match self.navigation.take() {
+                Some(navigation) => (navigation.previous, navigation.next, navigation.button),
+                None => (
+                    Box::new(RawText::new("<", self.colors.text, 14.0)),
+                    Box::new(RawText::new(">", self.colors.text, 14.0)),
+                    Style::default().into(),
+                ),
+            };
         let header = RawView::new(header_style)
             .child(Box::new(
-                RawButton::new(Style::default(), move || on_previous(previous))
-                    .child(Box::new(RawText::new("<", self.colors.text, 14.0))),
+                RawButton::new(button_style.clone(), move || on_previous(previous))
+                    .child(previous_content),
             ))
             .child(Box::new(RawText::new(
                 format!(
@@ -155,8 +187,7 @@ impl Widget for RawCalendar {
                 14.0,
             )))
             .child(Box::new(
-                RawButton::new(Style::default(), move || on_next(next))
-                    .child(Box::new(RawText::new(">", self.colors.text, 14.0))),
+                RawButton::new(button_style, move || on_next(next)).child(next_content),
             ));
         let mut children = vec![Box::new(header) as BoxedWidget];
         let column_width = 36.0;
@@ -231,6 +262,11 @@ impl Widget for RawCalendar {
                     button = button
                         .border(self.colors.today, 1.5)
                         .corner_radius(column_width / 2.0);
+                }
+                if let Some(hover) = self.day_hover.filter(|_| !selected && !disabled) {
+                    button = button
+                        .corner_radius(column_width / 2.0)
+                        .hover_style(creamui_core::StateStyle::new().background(hover));
                 }
                 let on_select_key = self.on_select.clone();
                 let disabled_predicate = self.disabled.clone();

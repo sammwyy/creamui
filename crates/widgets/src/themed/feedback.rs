@@ -109,7 +109,7 @@ impl Widget for Overlay {
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         // The alpha deliberately leaves enough of the surrounding app visible
         // to preserve context while making the active layer unambiguous.
-        painter.fill_rect(rect, Color::rgba(0, 0, 0, 112), 0.0);
+        painter.fill_rect(rect, elevation::scrim(&use_theme()), 0.0);
     }
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -128,6 +128,7 @@ impl Widget for Overlay {
 pub struct Popover {
     theme: Theme,
     style: Style,
+    elevation: elevation::Elevation,
     children: Vec<BoxedWidget>,
 }
 
@@ -137,8 +138,23 @@ impl Popover {
         Self {
             theme,
             style,
+            elevation: elevation::Elevation::Overlay,
             children: Vec::new(),
         }
+    }
+    /// Raises the popover to [`elevation::Elevation::Modal`] for dialogs,
+    /// which also rounds it like a window instead of a menu.
+    pub fn elevation(mut self, elevation: elevation::Elevation) -> Self {
+        self.elevation = elevation;
+        self
+    }
+    fn radius(&self) -> f32 {
+        if self.elevation == elevation::Elevation::Modal {
+            self.theme.radius_large - 4.0
+        } else {
+            self.theme.menu_radius
+        }
+        .max(0.0)
     }
     pub fn child(mut self, child: BoxedWidget) -> Self {
         self.children.push(child);
@@ -158,34 +174,20 @@ impl Widget for Popover {
         true
     }
     fn clip_corner_radius(&self) -> f32 {
-        self.theme.menu_radius
+        self.radius()
     }
     fn style(&self) -> creamui_core::Style {
-        self.style.clone().into()
+        let style: creamui_core::Style = self.style.clone().into();
+        if self.theme.high_contrast {
+            style
+        } else {
+            style.box_shadow(self.elevation.shadow(&self.theme))
+        }
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
-        for spread in (1..=5).rev() {
-            let spread = spread as f32;
-            painter.fill_rect(
-                Rect {
-                    x: rect.x - spread,
-                    y: rect.y - spread + 3.0,
-                    width: rect.width + spread * 2.0,
-                    height: rect.height + spread * 2.0,
-                },
-                Color::rgba(0, 0, 0, 5),
-                self.theme.menu_radius + spread,
-            );
-        }
-        painter.fill_rect(
-            rect,
-            Color {
-                a: 255,
-                ..self.theme.surface_elevated
-            },
-            self.theme.menu_radius,
-        );
-        painter.stroke_rect(rect, self.theme.border_strong, 1.0, self.theme.menu_radius);
+        let radius = self.radius();
+        painter.fill_rect(rect, elevation::overlay_fill(&self.theme), radius);
+        painter.stroke_rect_inside(rect, elevation::overlay_border(&self.theme), 1.0, radius);
     }
     fn children(&mut self) -> Vec<BoxedWidget> {
         std::mem::take(&mut self.children)
@@ -265,7 +267,7 @@ impl ProgressBar {
     }
     pub fn default_style() -> Style {
         Style {
-            size: fixed(200.0, 10.0),
+            size: fixed(200.0, 8.0),
             ..Default::default()
         }
     }
@@ -277,7 +279,7 @@ impl Widget for ProgressBar {
     }
     fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
         let radius = rect.height / 2.0;
-        painter.fill_rect(rect, self.theme.surface_hover, radius);
+        painter.fill_rect(rect, elevation::rail_fill(&self.theme), radius);
         let (x, width) = match self.value {
             Some(value) => (rect.x, rect.width * value.clamp(0.0, 1.0)),
             None => {
@@ -365,7 +367,7 @@ impl Widget for ProgressRing {
             painter,
             0.0,
             std::f32::consts::TAU,
-            self.theme.surface_hover,
+            elevation::rail_fill(&self.theme),
         );
         let (start, amount) = match self.value {
             Some(value) => (

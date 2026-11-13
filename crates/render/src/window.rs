@@ -383,6 +383,11 @@ pub struct WindowOptions {
     /// Whether the layout viewport stops at the system bars or draws
     /// underneath them. See [`SystemBars`].
     pub system_bars: SystemBars,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`), e.g.
+    /// `"org.example.App"`. Match the `.desktop` file name so docks show the
+    /// app's name and icon; Flatpak requires it to equal the app ID. `None`
+    /// keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowOptions {
@@ -402,6 +407,7 @@ impl Default for WindowOptions {
             backend: RenderBackend::default(),
             theme: Theme::default(),
             system_bars: SystemBars::Inset,
+            app_id: None,
         }
     }
 }
@@ -1745,6 +1751,8 @@ pub struct WindowHandle {
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
+    /// Resolved desktop ID, inherited by popups opened from this window.
+    app_id: Option<String>,
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_device: Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)>,
 }
@@ -4031,6 +4039,13 @@ impl AppHandler {
             return;
         }
         let t0 = Instant::now();
+        // Popups are separate windows on some backends (winit): keep them in
+        // the parent's app so docks don't list them as an unknown one.
+        let app_id = spec.options.app_id.clone().or_else(|| {
+            spec.popup
+                .as_ref()
+                .and_then(|popup| popup.parent.app_id.clone())
+        });
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
             size: LogicalSize::new(spec.options.width as f64, spec.options.height as f64),
@@ -4042,6 +4057,7 @@ impl AppHandler {
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
             role: spec.options.role,
+            app_id: app_id.clone(),
         };
 
         let popup_parent = spec.popup.as_ref().and_then(|popup| {
@@ -4164,6 +4180,7 @@ impl AppHandler {
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
+            app_id,
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_device,
         });
@@ -5121,6 +5138,7 @@ mod tests {
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
+                app_id: None,
                 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
                 gpu_device: None,
             }

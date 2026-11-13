@@ -40,6 +40,7 @@ use creamui_platform::{
 };
 use creamui_reactive::{create_effect, Effect, Signal};
 use creamui_theme::{Color, Theme, ThemeProvider};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -1937,6 +1938,28 @@ impl WindowHandle {
             (size.width as f64 / scale) as i32,
             (size.height as f64 / scale) as i32,
         ))
+    }
+
+    /// The native window identifier (`HWND`, X11 window id, `wl_surface`),
+    /// per `raw-window-handle`. `None` if the window is closed or the
+    /// backend can't provide one.
+    ///
+    /// Advanced use only: external changes aren't tracked, and the OS may
+    /// reuse the id after the window closes — don't cache it.
+    pub fn raw_window_handle(&self) -> Option<raw_window_handle::RawWindowHandle> {
+        let window = self.window.borrow();
+        Some(window.as_ref()?.window_handle().ok()?.as_raw())
+    }
+
+    /// The display/connection handle (X11 `Display`, `wl_display`, ...),
+    /// per `raw-window-handle`. `None` if the window is closed or the
+    /// backend can't provide one.
+    ///
+    /// Advanced use only: external changes aren't tracked. The handle is
+    /// connection-scoped and can outlive the window.
+    pub fn raw_display_handle(&self) -> Option<raw_window_handle::RawDisplayHandle> {
+        let window = self.window.borrow();
+        Some(window.as_ref()?.display_handle().ok()?.as_raw())
     }
 
     /// Pins (or unpins) the window above all others — the standard
@@ -4977,20 +5000,38 @@ mod tests {
         minimized: std::sync::Mutex<Vec<bool>>,
         maximized: std::sync::Mutex<Vec<bool>>,
         size: std::sync::Mutex<Option<creamui_platform::PhysicalSize>>,
+        raw_handles: std::sync::Mutex<FakeRawHandles>,
     }
+
+    #[derive(Default)]
+    struct FakeRawHandles(
+        Option<raw_window_handle::RawWindowHandle>,
+        Option<raw_window_handle::RawDisplayHandle>,
+    );
+
+    // The fake handles are never dereferenced; the raw types are !Send/!Sync
+    // only because they can hold borrowed pointers.
+    unsafe impl Send for FakeRawHandles {}
+    unsafe impl Sync for FakeRawHandles {}
 
     impl raw_window_handle::HasDisplayHandle for InteractiveTestWindow {
         fn display_handle(
             &self,
         ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-            Err(raw_window_handle::HandleError::Unavailable)
+            match self.raw_handles.lock().unwrap().1 {
+                Some(raw) => Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(raw) }),
+                None => Err(raw_window_handle::HandleError::Unavailable),
+            }
         }
     }
     impl raw_window_handle::HasWindowHandle for InteractiveTestWindow {
         fn window_handle(
             &self,
         ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-            Err(raw_window_handle::HandleError::Unavailable)
+            match self.raw_handles.lock().unwrap().0 {
+                Some(raw) => Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) }),
+                None => Err(raw_window_handle::HandleError::Unavailable),
+            }
         }
     }
     impl PlatformWindow for InteractiveTestWindow {
@@ -5165,12 +5206,22 @@ mod tests {
             WindowEventHarness { state }
         }
 
+        #[cfg(target_os = "linux")]
+        fn window_handle(&self, app: AppHandle) -> WindowHandle {
+            self.handle_with(InteractiveTestWindow::default(), app)
+        }
+
         #[cfg(all(feature = "context-menu", target_os = "linux"))]
         fn menu_handle(&self, app: AppHandle, native: bool) -> WindowHandle {
             let platform = InteractiveTestWindow::default();
             platform
                 .native_popups
                 .store(native, std::sync::atomic::Ordering::Relaxed);
+            self.handle_with(platform, app)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn handle_with(&self, platform: InteractiveTestWindow, app: AppHandle) -> WindowHandle {
             *self.state.pipeline.window.borrow_mut() = Some(Arc::new(platform));
             let pipeline = &self.state.pipeline;
             WindowHandle {
@@ -5264,8 +5315,8 @@ mod tests {
         assert_eq!(secondary.get(), 2);
     }
 
-    #[cfg(all(feature = "context-menu", target_os = "linux"))]
-    fn menu_app() -> AppHandle {
+    #[cfg(target_os = "linux")]
+    fn test_app() -> AppHandle {
         AppHandle {
             commands: Rc::new(RefCell::new(AppCommands {
                 system_theme: None,
@@ -5283,7 +5334,7 @@ mod tests {
     #[test]
     fn native_context_menu_preserves_press_serial_and_uses_nested_popup_parents() {
         use creamui_widgets::{ContextMenu, ContextMenuItem};
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let parent_handle = parent.menu_handle(app.clone(), true);
         parent_handle.last_input_serial.set(Some(InputSerial(42)));
@@ -5362,7 +5413,7 @@ mod tests {
     #[cfg(all(feature = "context-menu", target_os = "linux"))]
     #[test]
     fn replacement_popups_capture_the_current_client_input_instead_of_the_root_press() {
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let handle = parent.menu_handle(app, true);
         handle.last_input_serial.set(Some(InputSerial(42)));
@@ -5379,10 +5430,36 @@ mod tests {
         assert_eq!(popup.input_serial, Some(InputSerial(77)));
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn raw_handles_report_the_platform_window_and_display() {
+        let app = test_app();
+        let harness = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        let handle = harness.window_handle(app);
+        assert!(handle.raw_window_handle().is_none());
+        assert!(handle.raw_display_handle().is_none());
+
+        let window =
+            raw_window_handle::RawWindowHandle::Xlib(raw_window_handle::XlibWindowHandle::new(7));
+        let display = raw_window_handle::RawDisplayHandle::Xlib(
+            raw_window_handle::XlibDisplayHandle::new(Some(std::ptr::NonNull::dangling()), 0),
+        );
+        let platform = Arc::new(InteractiveTestWindow::default());
+        *platform.raw_handles.lock().unwrap() = FakeRawHandles(Some(window), Some(display));
+        *handle.window.borrow_mut() = Some(platform);
+
+        assert_eq!(handle.raw_window_handle(), Some(window));
+        assert_eq!(handle.raw_display_handle(), Some(display));
+
+        *handle.window.borrow_mut() = None;
+        assert!(handle.raw_window_handle().is_none());
+        assert!(handle.raw_display_handle().is_none());
+    }
+
     #[cfg(all(feature = "context-menu", target_os = "linux"))]
     #[test]
     fn closing_a_parent_cancels_queued_native_menu_creation() {
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let handle = parent.menu_handle(app.clone(), true);
         handle.last_input_serial.set(Some(InputSerial(42)));
@@ -5401,7 +5478,7 @@ mod tests {
     #[test]
     fn context_menu_falls_back_and_discards_cancelled_popup_requests() {
         use creamui_widgets::ContextMenuItem;
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let handle = parent.menu_handle(app.clone(), false);
         handle.last_input_serial.set(Some(InputSerial(7)));
@@ -8064,7 +8141,7 @@ mod tests {
     #[test]
     fn native_context_menu_loses_focus_and_can_be_opened_again() {
         use creamui_widgets::ContextMenuItem;
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let parent_handle = parent.menu_handle(app.clone(), true);
         parent_handle.last_input_serial.set(Some(InputSerial(42)));
@@ -8091,7 +8168,7 @@ mod tests {
     #[test]
     fn context_menus_replace_other_hosts_and_cancel_their_queued_popups() {
         use creamui_widgets::ContextMenuItem;
-        let app = menu_app();
+        let app = test_app();
         let parent = WindowEventHarness::new(|_| Box::new(BlankWidget));
         let handle = parent.menu_handle(app.clone(), true);
         handle.last_input_serial.set(Some(InputSerial(42)));

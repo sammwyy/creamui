@@ -1744,6 +1744,7 @@ type KeyboardHandler =
     Rc<RefCell<Option<Rc<dyn Fn(creamui_platform::KeyEvent, PlatformModifiers) -> bool>>>>;
 type PointerPresenceHandler = Rc<RefCell<Option<Rc<dyn Fn(bool)>>>>;
 type PointerMoveHandler = Rc<RefCell<Option<Rc<dyn Fn(Point)>>>>;
+type MovedHandler = Rc<RefCell<Option<Rc<dyn Fn(i32, i32)>>>>;
 type PointerButtonHandler = Rc<RefCell<Option<Rc<dyn Fn(MouseButton, bool, Point) -> bool>>>>;
 type FileDropHandler = Rc<RefCell<Option<Rc<dyn Fn(Vec<std::path::PathBuf>, Point)>>>>;
 
@@ -1768,6 +1769,7 @@ pub struct WindowHandle {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    moved_handler: MovedHandler,
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -1906,6 +1908,13 @@ impl WindowHandle {
         if let Some(pipeline) = self.pipeline.upgrade() {
             pipeline.request_inner_size(LogicalSize::new(width as f64, height as f64));
         }
+    }
+
+    /// Reports the window's new top-left position in logical screen pixels
+    /// whenever it moves. Never fires on Wayland, where clients cannot know
+    /// their position. Registering a new callback replaces the previous one.
+    pub fn on_moved(&self, handler: impl Fn(i32, i32) + 'static) {
+        *self.moved_handler.borrow_mut() = Some(Rc::new(handler));
     }
 
     /// Moves the window's top-left corner to a logical-pixel screen position.
@@ -2198,6 +2207,7 @@ struct WindowSpec {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    moved_handler: MovedHandler,
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -2413,6 +2423,7 @@ struct WindowState {
     keyboard_handler: KeyboardHandler,
     pointer_presence_handler: PointerPresenceHandler,
     pointer_move_handler: PointerMoveHandler,
+    moved_handler: MovedHandler,
     pointer_button_handler: PointerButtonHandler,
     file_drop_handler: FileDropHandler,
     last_input_serial: Rc<Cell<Option<InputSerial>>>,
@@ -3796,6 +3807,14 @@ impl WindowState {
             // Mapped on X11 (startup, restore): the server dropped the pixels,
             // and its Expose can't be told apart from a redraw we queued.
             WindowEvent::Occluded(false) => self.pipeline.invalidate_surface(),
+            WindowEvent::Moved(position) => {
+                let scale = self.pipeline.scale_factor.peek();
+                let (x, y) = ((position.x / scale) as i32, (position.y / scale) as i32);
+                log::trace!("creamui-render: window moved to logical ({x}, {y})");
+                if let Some(handler) = self.moved_handler.borrow().clone() {
+                    handler(x, y);
+                }
+            }
             _ => {}
         }
     }
@@ -4218,6 +4237,7 @@ impl AppHandler {
             keyboard_handler: spec.keyboard_handler.clone(),
             pointer_presence_handler: spec.pointer_presence_handler.clone(),
             pointer_move_handler: spec.pointer_move_handler.clone(),
+            moved_handler: spec.moved_handler.clone(),
             pointer_button_handler: spec.pointer_button_handler.clone(),
             file_drop_handler: spec.file_drop_handler.clone(),
             last_input_serial: spec.last_input_serial.clone(),
@@ -4247,6 +4267,7 @@ impl AppHandler {
             keyboard_handler: spec.keyboard_handler,
             pointer_presence_handler: spec.pointer_presence_handler,
             pointer_move_handler: spec.pointer_move_handler,
+            moved_handler: spec.moved_handler,
             pointer_button_handler: spec.pointer_button_handler,
             file_drop_handler: spec.file_drop_handler,
             last_input_serial: spec.last_input_serial,
@@ -4952,6 +4973,7 @@ fn build_window_spec(
         keyboard_handler: Rc::new(RefCell::new(None)),
         pointer_presence_handler: Rc::new(RefCell::new(None)),
         pointer_move_handler: Rc::new(RefCell::new(None)),
+        moved_handler: Rc::new(RefCell::new(None)),
         pointer_button_handler: Rc::new(RefCell::new(None)),
         file_drop_handler: Rc::new(RefCell::new(None)),
         last_input_serial,
@@ -5122,6 +5144,7 @@ mod tests {
                 keyboard_handler: spec.keyboard_handler,
                 pointer_presence_handler: spec.pointer_presence_handler,
                 pointer_move_handler: spec.pointer_move_handler,
+                moved_handler: spec.moved_handler,
                 pointer_button_handler: spec.pointer_button_handler,
                 file_drop_handler: spec.file_drop_handler,
                 last_input_serial: spec.last_input_serial,
@@ -5185,6 +5208,7 @@ mod tests {
                 keyboard_handler: self.state.keyboard_handler.clone(),
                 pointer_presence_handler: self.state.pointer_presence_handler.clone(),
                 pointer_move_handler: self.state.pointer_move_handler.clone(),
+                moved_handler: self.state.moved_handler.clone(),
                 pointer_button_handler: self.state.pointer_button_handler.clone(),
                 file_drop_handler: self.state.file_drop_handler.clone(),
                 last_input_serial: self.state.last_input_serial.clone(),
@@ -7806,6 +7830,22 @@ mod tests {
                 paint_calls: self.paint_calls.clone(),
             })]
         }
+    }
+
+    #[test]
+    fn window_moves_report_logical_positions() {
+        let mut harness = WindowEventHarness::new(|_| Box::new(BlankWidget));
+        harness.state.pipeline.scale_factor.set(2.0);
+        let moved = Rc::new(Cell::new(None));
+        *harness.state.moved_handler.borrow_mut() = Some(Rc::new({
+            let moved = moved.clone();
+            move |x, y| moved.set(Some((x, y)))
+        }));
+        harness.send(WindowEvent::Moved(creamui_platform::PhysicalPosition {
+            x: 300.0,
+            y: -150.0,
+        }));
+        assert_eq!(moved.get(), Some((150, -75)));
     }
 
     #[test]

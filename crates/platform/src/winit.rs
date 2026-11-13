@@ -737,6 +737,10 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
             width: size.width,
             height: size.height,
         }),
+        winit::event::WindowEvent::Moved(position) => WindowEvent::Moved(PhysicalPosition {
+            x: position.x as f64,
+            y: position.y as f64,
+        }),
         winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
             WindowEvent::ScaleFactorChanged { scale_factor }
         }
@@ -917,6 +921,17 @@ mod tests {
         );
         assert_eq!(windows_repeat_values(4, 31), None);
         assert_eq!(windows_repeat_values(3, 32), None);
+    }
+
+    #[test]
+    fn window_moves_carry_the_physical_outer_position() {
+        let event = from_winit_window_event(winit::event::WindowEvent::Moved(
+            winit::dpi::PhysicalPosition::new(120, -40),
+        ));
+        assert!(matches!(
+            event,
+            WindowEvent::Moved(PhysicalPosition { x, y }) if x == 120.0 && y == -40.0
+        ));
     }
 
     #[test]

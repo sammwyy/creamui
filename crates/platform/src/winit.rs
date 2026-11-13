@@ -367,6 +367,12 @@ impl ActiveEventLoop<'_> {
         if let Some(position) = attributes.position {
             inner = inner.with_position(winit::dpi::LogicalPosition::new(position.x, position.y));
         }
+        // winit uses this name as the Wayland `app_id` and the X11 `WM_CLASS`.
+        #[cfg(all(target_os = "linux", any(feature = "desktop", feature = "x11")))]
+        if let Some(app_id) = attributes.app_id {
+            use winit::platform::x11::WindowAttributesExtX11;
+            inner = inner.with_name(app_id.clone(), app_id);
+        }
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowAttributesExtWebSys;
@@ -750,6 +756,7 @@ fn from_winit_window_event(event: winit::event::WindowEvent) -> WindowEvent {
         }
         winit::event::WindowEvent::CursorLeft { .. } => WindowEvent::CursorLeft,
         winit::event::WindowEvent::Focused(focused) => WindowEvent::Focused(focused),
+        winit::event::WindowEvent::Occluded(occluded) => WindowEvent::Occluded(occluded),
         winit::event::WindowEvent::MouseWheel { delta, .. } => WindowEvent::MouseWheel {
             delta: match delta {
                 WinitScrollDelta::LineDelta(x, y) => MouseScrollDelta::LineDelta(x, y),

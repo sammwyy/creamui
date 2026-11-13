@@ -496,6 +496,9 @@ pub struct WindowAttributes {
     pub decorations: bool,
     pub transparent: bool,
     pub role: WindowRole,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`) that matches the
+    /// app's `.desktop` file. `None` keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowAttributes {
@@ -508,6 +511,7 @@ impl Default for WindowAttributes {
             decorations: true,
             transparent: false,
             role: WindowRole::Normal,
+            app_id: None,
         }
     }
 }
@@ -518,6 +522,9 @@ pub enum WindowEvent {
     DecorationsChanged(WindowDecorations),
     CloseRequested,
     Resized(PhysicalSize),
+    /// X11 VisibilityNotify: `false` when the window became visible (mapped),
+    /// whose pixels the server dropped. Not sent on other platforms.
+    Occluded(bool),
     ScaleFactorChanged {
         scale_factor: f64,
     },

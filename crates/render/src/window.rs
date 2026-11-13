@@ -383,6 +383,11 @@ pub struct WindowOptions {
     /// Whether the layout viewport stops at the system bars or draws
     /// underneath them. See [`SystemBars`].
     pub system_bars: SystemBars,
+    /// Linux desktop ID (Wayland `app_id`, X11 `WM_CLASS`), e.g.
+    /// `"org.example.App"`. Match the `.desktop` file name so docks show the
+    /// app's name and icon; Flatpak requires it to equal the app ID. `None`
+    /// keeps the backend's default.
+    pub app_id: Option<String>,
 }
 
 impl Default for WindowOptions {
@@ -402,6 +407,7 @@ impl Default for WindowOptions {
             backend: RenderBackend::default(),
             theme: Theme::default(),
             system_bars: SystemBars::Inset,
+            app_id: None,
         }
     }
 }
@@ -859,6 +865,8 @@ struct Pipeline {
     pending_root: RefCell<Option<BoxedWidget>>,
     needs_layout: Cell<bool>,
     needs_paint: Cell<bool>,
+    /// A programmatic resize is pending; the next redraw rereads the window size.
+    size_requested: Cell<bool>,
     dump_frame_path: Option<String>,
 }
 
@@ -1019,6 +1027,16 @@ impl Pipeline {
         }
     }
 
+    /// winit on Wayland applies the size at once and sends no `Resized`, so
+    /// the next redraw rereads the window size instead of waiting for one.
+    fn request_inner_size(&self, size: LogicalSize) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.request_inner_size(size);
+        }
+        self.size_requested.set(true);
+        self.request_redraw();
+    }
+
     /// Rebuilds the widget tree from `build_ui`. Runs inside the window's
     /// reactive effect so it stays subscribed to whatever it reads; layout
     /// and paint wait for the next frame.
@@ -1050,6 +1068,18 @@ impl Pipeline {
         if !self.needs_paint.replace(true) {
             self.request_redraw();
         }
+    }
+
+    /// The platform dropped the window's pixels (restored from minimized,
+    /// shown again after `hide()`): forget the last presented frame so the next
+    /// one is a full repaint instead of a diff that would leave the rest blank.
+    fn invalidate_surface(&self) {
+        let mut frame = self.frame.borrow_mut();
+        if let Some(list) = frame.presented.take() {
+            frame.recorder.recycle(list);
+        }
+        drop(frame);
+        self.invalidate_paint();
     }
 
     fn physical_size(&self) -> (Size, u32, u32, f64) {
@@ -1745,6 +1775,8 @@ pub struct WindowHandle {
     app: AppHandle,
     runtime: Option<SharedRuntime>,
     pipeline: Weak<Pipeline>,
+    /// Resolved desktop ID, inherited by popups opened from this window.
+    app_id: Option<String>,
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_device: Option<(Rc<wgpu::Device>, Rc<wgpu::Queue>)>,
 }
@@ -1867,12 +1899,12 @@ impl WindowHandle {
         }
     }
 
-    /// Requests a new logical-pixel window size. The actual resize (and any
-    /// resulting `Resized` event) happens asynchronously, same as a user
-    /// dragging the window border.
+    /// Requests a new logical-pixel window size. Some platforms apply it
+    /// later with a `Resized` event, others (Wayland) at once; the next frame
+    /// is laid out for the new size either way.
     pub fn resize(&self, width: u32, height: u32) {
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.request_inner_size(LogicalSize::new(width as f64, height as f64));
+        if let Some(pipeline) = self.pipeline.upgrade() {
+            pipeline.request_inner_size(LogicalSize::new(width as f64, height as f64));
         }
     }
 
@@ -2043,6 +2075,11 @@ impl WindowHandle {
             window.set_visible(true);
             window.set_minimized(false);
             window.focus();
+            // Hidden or minimized windows lose their pixels on some platforms
+            // (Windows): the unchanged frame would otherwise never be presented.
+            if let Some(pipeline) = self.pipeline.upgrade() {
+                pipeline.invalidate_surface();
+            }
             window.request_redraw();
         }
     }
@@ -2388,6 +2425,9 @@ struct WindowState {
     backend: RenderBackend,
     transparent: bool,
     suspended: bool,
+    /// The platform reported a zero-sized surface (Windows: minimized). Its
+    /// pixels are discarded meanwhile, so the next real size repaints whole.
+    zero_sized: bool,
     pointer_pos: Point,
     last_click: Option<(Instant, Point)>,
     modifiers: PlatformModifiers,
@@ -3202,7 +3242,11 @@ impl WindowState {
             WindowEvent::Resized(new_size) => {
                 self.poll_decorations();
                 if new_size.width == 0 || new_size.height == 0 {
+                    self.zero_sized = true;
                     return;
+                }
+                if std::mem::take(&mut self.zero_sized) {
+                    self.pipeline.invalidate_surface();
                 }
                 let scale = self.pipeline.scale_factor.peek();
                 self.queue_viewport(Size {
@@ -3749,6 +3793,9 @@ impl WindowState {
                 self.poll_decorations();
                 self.redraw();
             }
+            // Mapped on X11 (startup, restore): the server dropped the pixels,
+            // and its Expose can't be told apart from a redraw we queued.
+            WindowEvent::Occluded(false) => self.pipeline.invalidate_surface(),
             _ => {}
         }
     }
@@ -3830,6 +3877,12 @@ impl WindowState {
             self.pipeline.invalidate_layout();
         }
         self.refresh_safe_area();
+        if self.pipeline.size_requested.take() {
+            let viewport = self.viewport_from_window();
+            if viewport.width > 0.0 && viewport.height > 0.0 {
+                self.queue_viewport(viewport);
+            }
+        }
         self.flush_pending_viewport();
         self.pipeline.update();
         let ready = self
@@ -4031,6 +4084,13 @@ impl AppHandler {
             return;
         }
         let t0 = Instant::now();
+        // Popups are separate windows on some backends (winit): keep them in
+        // the parent's app so docks don't list them as an unknown one.
+        let app_id = spec.options.app_id.clone().or_else(|| {
+            spec.popup
+                .as_ref()
+                .and_then(|popup| popup.parent.app_id.clone())
+        });
         let attrs = PlatformWindowAttributes {
             title: spec.options.title.clone(),
             size: LogicalSize::new(spec.options.width as f64, spec.options.height as f64),
@@ -4042,6 +4102,7 @@ impl AppHandler {
             decorations: spec.options.decorations,
             transparent: spec.options.transparent,
             role: spec.options.role,
+            app_id: app_id.clone(),
         };
 
         let popup_parent = spec.popup.as_ref().and_then(|popup| {
@@ -4164,6 +4225,7 @@ impl AppHandler {
             app: self.app.clone(),
             runtime,
             pipeline: Rc::downgrade(&pipeline),
+            app_id,
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_device,
         });
@@ -4197,6 +4259,7 @@ impl AppHandler {
             backend: spec.options.backend,
             transparent: spec.options.transparent,
             suspended: false,
+            zero_sized: false,
             pointer_pos: Point::default(),
             last_click: None,
             modifiers: PlatformModifiers::default(),
@@ -4844,6 +4907,7 @@ fn build_window_spec(
         pending_root: RefCell::new(None),
         needs_layout: Cell::new(true),
         needs_paint: Cell::new(true),
+        size_requested: Cell::new(false),
         dump_frame_path,
     });
     let effect = create_effect({
@@ -4945,7 +5009,13 @@ mod tests {
         }
         fn request_redraw(&self) {}
         fn close(&self) {}
-        fn request_inner_size(&self, _: LogicalSize) {}
+        // Applies at once without a `Resized`, like winit on Wayland.
+        fn request_inner_size(&self, size: LogicalSize) {
+            *self.size.lock().unwrap() = Some(creamui_platform::PhysicalSize {
+                width: size.width as u32,
+                height: size.height as u32,
+            });
+        }
         fn set_min_inner_size(&self, size: Option<LogicalSize>) {
             self.minimum.lock().unwrap().push(size);
         }
@@ -5064,6 +5134,7 @@ mod tests {
                 backend: RenderBackend::Cpu,
                 transparent: false,
                 suspended: false,
+                zero_sized: false,
                 pointer_pos: Point::default(),
                 last_click: None,
                 modifiers: PlatformModifiers::default(),
@@ -5121,6 +5192,7 @@ mod tests {
                 app,
                 runtime: None,
                 pipeline: Rc::downgrade(pipeline),
+                app_id: None,
                 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
                 gpu_device: None,
             }
@@ -7737,6 +7809,28 @@ mod tests {
     }
 
     #[test]
+    fn becoming_visible_forces_a_full_frame() {
+        let paint_calls = Rc::new(Cell::new(0));
+        let mut harness = WindowEventHarness::new({
+            let paint_calls = paint_calls.clone();
+            move |_| {
+                Box::new(SmallHoverRoot {
+                    paint_calls: paint_calls.clone(),
+                })
+            }
+        });
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+        harness.send(WindowEvent::Occluded(true));
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+        harness.send(WindowEvent::Occluded(false));
+        assert!(harness.state.pipeline.frame.borrow().presented.is_none());
+        let before = paint_calls.get();
+        harness.send(WindowEvent::RedrawRequested);
+        assert!(paint_calls.get() > before);
+        assert!(harness.state.pipeline.frame.borrow().presented.is_some());
+    }
+
+    #[test]
     fn many_invalidations_coalesce_into_one_frame() {
         let paint_calls = Rc::new(Cell::new(0));
         let mut harness = WindowEventHarness::new({
@@ -7808,6 +7902,103 @@ mod tests {
         assert_eq!(hook_sizes.borrow().last().unwrap().width, 160.0);
         let frame = harness.state.pipeline.frame.borrow();
         assert_eq!(frame.presented.as_ref().unwrap().width, 160);
+    }
+
+    #[test]
+    fn restoring_from_zero_size_presents_a_full_frame() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(SmallHoverRoot {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        let size = harness
+            .state
+            .pipeline
+            .frame
+            .borrow()
+            .presented
+            .as_ref()
+            .map(|l| (l.width, l.height));
+        let (width, height) = size.expect("the harness presents a first frame");
+        // A hover leaves a partial last frame, so only a fresh full frame passes below.
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        {
+            let frame = harness.state.pipeline.frame.borrow();
+            assert!(frame.last_report.damaged_pixels < frame.last_report.frame_pixels);
+        }
+        // Minimize: zero-sized surface, then restore at the same size.
+        harness.send(WindowEvent::Resized(creamui_platform::PhysicalSize {
+            width: 0,
+            height: 0,
+        }));
+        harness.send(WindowEvent::Resized(creamui_platform::PhysicalSize {
+            width,
+            height,
+        }));
+        harness.send(WindowEvent::RedrawRequested);
+        let frame = harness.state.pipeline.frame.borrow();
+        let report = &frame.last_report;
+        assert_eq!(
+            report.damaged_pixels, report.frame_pixels,
+            "an unchanged frame must still repaint whole after a restore: {report:?}"
+        );
+    }
+
+    #[test]
+    fn an_invalidated_surface_presents_a_full_frame() {
+        let mut harness = WindowEventHarness::new(|_| {
+            Box::new(SmallHoverRoot {
+                paint_calls: Rc::new(Cell::new(0)),
+            })
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        harness.send(WindowEvent::CursorMoved {
+            position: creamui_platform::PhysicalPosition { x: 10.0, y: 10.0 },
+        });
+        harness.send(WindowEvent::RedrawRequested);
+        // What `WindowHandle::show()` does after a `hide()` (tray "open").
+        harness.state.pipeline.invalidate_surface();
+        harness.send(WindowEvent::RedrawRequested);
+        let frame = harness.state.pipeline.frame.borrow();
+        let report = &frame.last_report;
+        assert_eq!(
+            report.damaged_pixels, report.frame_pixels,
+            "showing a hidden window must repaint it whole: {report:?}"
+        );
+    }
+
+    #[test]
+    fn a_programmatic_resize_without_a_resized_event_lays_out_the_new_size() {
+        let sizes = Rc::new(RefCell::new(Vec::new()));
+        let mut harness = WindowEventHarness::new({
+            let sizes = sizes.clone();
+            move |size| {
+                sizes.borrow_mut().push(size);
+                Box::new(BlankWidget)
+            }
+        });
+        let window = Arc::new(InteractiveTestWindow::default());
+        *harness.state.pipeline.window.borrow_mut() = Some(window);
+        // Wayland: the size applies at once and no `Resized` follows.
+        harness
+            .state
+            .pipeline
+            .request_inner_size(LogicalSize::new(250.0, 84.0));
+        harness.send(WindowEvent::RedrawRequested);
+        assert_eq!(
+            sizes.borrow().last().copied(),
+            Some(Size {
+                width: 250.0,
+                height: 84.0
+            })
+        );
+        let frame = harness.state.pipeline.frame.borrow();
+        let presented = frame.presented.as_ref().unwrap();
+        assert_eq!((presented.width, presented.height), (250, 84));
     }
 
     #[test]

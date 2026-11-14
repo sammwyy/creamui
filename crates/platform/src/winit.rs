@@ -1,6 +1,8 @@
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle};
 use std::collections::HashMap;
 use std::fmt;
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::application::ApplicationHandler as WinitApplicationHandler;
@@ -41,6 +43,10 @@ pub struct Window {
     inner: winit::window::Window,
     /// Present while the application draws the titlebar itself.
     titlebar: Mutex<Option<Titlebar>>,
+    /// Last backdrop state applied through DWM; the Win32 backdrop covers
+    /// the whole window, so `BlurRegion` geometry never reaches this point.
+    #[cfg(target_os = "windows")]
+    blur: AtomicBool,
     #[cfg(target_os = "android")]
     ids: WindowIds,
     id: WindowId,
@@ -200,6 +206,19 @@ impl PlatformWindow for Window {
         } else if let Some(Titlebar::Frameless) = titlebar.take() {
             self.inner.set_decorations(true);
         }
+    }
+    #[cfg(target_os = "windows")]
+    fn set_blur_region(&self, region: Option<crate::BlurRegion>) {
+        let Ok(RawWindowHandle::Win32(handle)) =
+            self.inner.window_handle().map(|handle| handle.as_raw())
+        else {
+            return;
+        };
+        let enabled = region.is_some();
+        if self.blur.swap(enabled, Ordering::Relaxed) == enabled {
+            return;
+        }
+        crate::windows_blur::set(handle.hwnd.get() as _, enabled);
     }
     fn id(&self) -> WindowId {
         self.id()
@@ -389,6 +408,8 @@ impl ActiveEventLoop<'_> {
                 Arc::new(Window {
                     inner,
                     titlebar: Mutex::new(None),
+                    #[cfg(target_os = "windows")]
+                    blur: AtomicBool::new(false),
                     #[cfg(target_os = "android")]
                     ids: self.ids.clone(),
                     id,

@@ -502,6 +502,12 @@ All notable changes to CreamUI will be documented in this file.
 - Added retained per-node clipping to the persistent runtime tree,
   intersecting each clipping ancestor's own rect into its children's
   effective clip region.
+- Added Windows support for `WindowOptions::blur` and
+  `WindowHandle::set_blur_region` through the DWM backdrop: Acrylic on
+  Windows 11 22H2+, accent-policy blur on Windows 10 and Windows 11
+  before 22H2. On Windows the blur is always full-window — `BlurRegion`
+  geometry (`Rect`, `Regions`, `Content`) is ignored — and on Windows 10
+  it protrudes over the invisible resize borders.
 
 ## 0.1.1
 

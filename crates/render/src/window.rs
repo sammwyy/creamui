@@ -365,8 +365,10 @@ pub struct WindowOptions {
     pub transparent: bool,
     /// Compositor-side background blur. `Content` follows the painted
     /// translucent backgrounds each frame; other regions apply at creation. Requires
-    /// `transparent` and the `blur-kwin`/`blur-blair` platform feature
-    /// matching the running compositor; `None` otherwise.
+    /// `transparent`. On Wayland this needs the `blur-kwin`/`blur-blair`
+    /// platform feature matching the running compositor; on Windows the DWM
+    /// backdrop covers the whole window regardless of region. `None`
+    /// otherwise.
     pub blur: Option<BlurRegion>,
     /// Gives keyboard focus to the first focusable widget on the initial frame.
     pub focus_first: bool,
@@ -1952,7 +1954,8 @@ impl WindowHandle {
     }
 
     /// Requests (or clears, with `None`) compositor-side background blur
-    /// behind the window. A no-op without a matching `blur-*` platform
+    /// behind the window. On Windows the DWM backdrop always covers the
+    /// whole window; elsewhere a no-op without a matching `blur-*` platform
     /// feature or compositor support.
     pub fn set_blur_region(&self, region: Option<BlurRegion>) {
         if let Some(window) = self.window.borrow().as_ref() {

@@ -115,13 +115,6 @@ fn default_style() -> CStyle {
 }
 
 fn cdylib_path() -> std::path::PathBuf {
-    let mut deps_dir = std::env::current_exe().unwrap();
-    deps_dir.pop(); // this test binary lives directly in .../target/debug/deps/
-    let debug_dir = deps_dir
-        .parent()
-        .expect("deps/ always has a target/debug/ parent")
-        .to_path_buf();
-
     let name = if cfg!(target_os = "macos") {
         "libcreamui.dylib"
     } else if cfg!(target_os = "windows") {
@@ -130,15 +123,18 @@ fn cdylib_path() -> std::path::PathBuf {
         "libcreamui.so"
     };
 
-    // `cargo build` uplifts the cdylib to target/debug/; `cargo test` alone
-    // (with no prior `cargo build`) only leaves it in target/debug/deps/ —
-    // cdylib filenames aren't hash-suffixed, so that path is stable too.
-    let uplifted = debug_dir.join(name);
-    if uplifted.exists() {
-        uplifted
-    } else {
-        deps_dir.join(name)
-    }
+    // Old layout: this test binary sits in target/debug/deps/ next to the
+    // cdylib. New build-dir layout (target/debug/build/<pkg>/<hash>/out/):
+    // the cdylib lands in another unit's dir, so only the copy `cargo build`
+    // uplifts to target/debug/ is reachable. Walk up and take the first hit.
+    let exe = std::env::current_exe().unwrap();
+    exe.ancestors()
+        .skip(1)
+        .map(|dir| dir.join(name))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| {
+            panic!("{name} not found above {exe:?}; run `cargo build -p creamui-ffi` first")
+        })
 }
 
 #[test]

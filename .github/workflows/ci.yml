@@ -28,6 +28,9 @@ jobs:
         run: cargo check -p creamui -p creamui-render -p creamui-ffi -p hello-world -p showcase
       - name: Check opt-in GPU build
         run: cargo check -p creamui --features gpu
+      # Uplifts the cdylib to target/debug/ for the ffi dynamic_load tests.
+      - name: Build FFI cdylib
+        run: cargo build -p creamui-ffi
       - name: Test workspace (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum cargo test --workspace

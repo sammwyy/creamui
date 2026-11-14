@@ -46,6 +46,7 @@ members = [
     "examples/flex",
     "examples/grid",
     "examples/transparent-window",
+    "examples/blurred-window",
     "examples/frameless-window",
     "examples/tray",
     "examples/interaction-styles",
